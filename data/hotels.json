@@ -1,8 +1,7 @@
 {
-  "_comment": "Phase 1 고정 시드 데이터. 가격/평점은 예시값이며 실제 값이 아님. thumbnail_url 은 임시 플레이스홀더이므로 실제 서비스 전에 교체할 것. target_url 은 애드픽 캠페인 딥링크로 교체.",
+  "_comment": "static provider(폴백/데모)용 고정 데이터. 실제 운영 데이터는 AI/크롤링 provider 가 런타임에 만들어낸다. DB 시드가 아니다 — 호텔 마스터 테이블은 없다. source_url 은 예시용 가짜 주소이며 애드픽 API 로 커미션 링크로 변환된 뒤 노출된다. thumbnail_url 도 임시 플레이스홀더.",
   "hotels": [
     {
-      "external_id": "osaka-001",
       "name": "호텔 그란비아 오사카",
       "city_slug": "osaka",
       "address": "오사카 기타구 우메다 (JR 오사카역 직결)",
@@ -11,11 +10,17 @@
       "price_from": 185000,
       "thumbnail_url": "https://picsum.photos/seed/osaka-001/800/400",
       "description": "JR 오사카역 바로 위. 공항 리무진·신칸센 환승 편해서 첫 일본 여행에 무난",
-      "tags": ["우메다", "역직결", "가족"],
-      "target_url": "https://example.com/adpick/osaka-001"
+      "tags": [
+        "우메다",
+        "역직결",
+        "가족"
+      ],
+      "source": "manual",
+      "merchant": "agoda",
+      "source_url": "https://example.com/agoda/hotel/osaka-001",
+      "source_ref": "osaka-001"
     },
     {
-      "external_id": "osaka-002",
       "name": "크로스 호텔 오사카",
       "city_slug": "osaka",
       "address": "오사카 주오구 신사이바시",
@@ -24,11 +29,17 @@
       "price_from": 152000,
       "thumbnail_url": "https://picsum.photos/seed/osaka-002/800/400",
       "description": "도톤보리·신사이바시 도보권. 밤늦게까지 놀 계획이면 여기",
-      "tags": ["신사이바시", "도톤보리", "쇼핑"],
-      "target_url": "https://example.com/adpick/osaka-002"
+      "tags": [
+        "신사이바시",
+        "도톤보리",
+        "쇼핑"
+      ],
+      "source": "manual",
+      "merchant": "agoda",
+      "source_url": "https://example.com/agoda/hotel/osaka-002",
+      "source_ref": "osaka-002"
     },
     {
-      "external_id": "osaka-003",
       "name": "칸데오 호텔 오사카 남바",
       "city_slug": "osaka",
       "address": "오사카 주오구 남바",
@@ -37,11 +48,17 @@
       "price_from": 138000,
       "thumbnail_url": "https://picsum.photos/seed/osaka-003/800/400",
       "description": "옥상 노천탕이 있는 가성비 호텔. 남바역까지 도보 5분",
-      "tags": ["남바", "온천", "가성비"],
-      "target_url": "https://example.com/adpick/osaka-003"
+      "tags": [
+        "남바",
+        "온천",
+        "가성비"
+      ],
+      "source": "manual",
+      "merchant": "agoda",
+      "source_url": "https://example.com/agoda/hotel/osaka-003",
+      "source_ref": "osaka-003"
     },
     {
-      "external_id": "osaka-004",
       "name": "스위소텔 난카이 오사카",
       "city_slug": "osaka",
       "address": "오사카 주오구 난바 (난카이 난바역 직결)",
@@ -50,11 +67,17 @@
       "price_from": 210000,
       "thumbnail_url": "https://picsum.photos/seed/osaka-004/800/400",
       "description": "간사이공항 특급 직결. 짐 많은 여행이나 늦은 도착에 유리",
-      "tags": ["난바", "역직결", "공항접근"],
-      "target_url": "https://example.com/adpick/osaka-004"
+      "tags": [
+        "난바",
+        "역직결",
+        "공항접근"
+      ],
+      "source": "manual",
+      "merchant": "agoda",
+      "source_url": "https://example.com/agoda/hotel/osaka-004",
+      "source_ref": "osaka-004"
     },
     {
-      "external_id": "osaka-005",
       "name": "호텔 한큐 리스파이어 오사카",
       "city_slug": "osaka",
       "address": "오사카 기타구 우메다",
@@ -63,12 +86,17 @@
       "price_from": 172000,
       "thumbnail_url": "https://picsum.photos/seed/osaka-005/800/400",
       "description": "2022년 오픈 신축. 우메다 백화점 상권 한가운데라 쇼핑 동선이 짧음",
-      "tags": ["우메다", "신축", "쇼핑"],
-      "target_url": "https://example.com/adpick/osaka-005"
+      "tags": [
+        "우메다",
+        "신축",
+        "쇼핑"
+      ],
+      "source": "manual",
+      "merchant": "agoda",
+      "source_url": "https://example.com/agoda/hotel/osaka-005",
+      "source_ref": "osaka-005"
     },
-
     {
-      "external_id": "tokyo-001",
       "name": "시타딘 신주쿠 도쿄",
       "city_slug": "tokyo",
       "address": "도쿄 신주쿠구",
@@ -77,11 +105,17 @@
       "price_from": 168000,
       "thumbnail_url": "https://picsum.photos/seed/tokyo-001/800/400",
       "description": "취사 가능한 레지던스형. 신주쿠산초메역 도보 3분",
-      "tags": ["신주쿠", "레지던스", "장기숙박"],
-      "target_url": "https://example.com/adpick/tokyo-001"
+      "tags": [
+        "신주쿠",
+        "레지던스",
+        "장기숙박"
+      ],
+      "source": "manual",
+      "merchant": "agoda",
+      "source_url": "https://example.com/agoda/hotel/tokyo-001",
+      "source_ref": "tokyo-001"
     },
     {
-      "external_id": "tokyo-002",
       "name": "시부야 스트림 엑셀 호텔 도큐",
       "city_slug": "tokyo",
       "address": "도쿄 시부야구 (시부야역 직결)",
@@ -90,11 +124,17 @@
       "price_from": 225000,
       "thumbnail_url": "https://picsum.photos/seed/tokyo-002/800/400",
       "description": "시부야역 직결. 나리타·하네다 어느 쪽에서 와도 환승이 단순",
-      "tags": ["시부야", "역직결", "커플"],
-      "target_url": "https://example.com/adpick/tokyo-002"
+      "tags": [
+        "시부야",
+        "역직결",
+        "커플"
+      ],
+      "source": "manual",
+      "merchant": "agoda",
+      "source_url": "https://example.com/agoda/hotel/tokyo-002",
+      "source_ref": "tokyo-002"
     },
     {
-      "external_id": "tokyo-003",
       "name": "미마루 도쿄 우에노 이스트",
       "city_slug": "tokyo",
       "address": "도쿄 다이토구 우에노",
@@ -103,11 +143,17 @@
       "price_from": 195000,
       "thumbnail_url": "https://picsum.photos/seed/tokyo-003/800/400",
       "description": "4~6인 아파트먼트형. 아이 동반 가족 여행에 방 넓이가 확실한 선택",
-      "tags": ["우에노", "가족", "넓은객실"],
-      "target_url": "https://example.com/adpick/tokyo-003"
+      "tags": [
+        "우에노",
+        "가족",
+        "넓은객실"
+      ],
+      "source": "manual",
+      "merchant": "agoda",
+      "source_url": "https://example.com/agoda/hotel/tokyo-003",
+      "source_ref": "tokyo-003"
     },
     {
-      "external_id": "tokyo-004",
       "name": "도미 인 프리미엄 긴자",
       "city_slug": "tokyo",
       "address": "도쿄 주오구 긴자",
@@ -116,11 +162,17 @@
       "price_from": 178000,
       "thumbnail_url": "https://picsum.photos/seed/tokyo-004/800/400",
       "description": "대욕장 + 밤 라멘 무료 서비스. 긴자·쓰키지 도보권",
-      "tags": ["긴자", "온천", "조식"],
-      "target_url": "https://example.com/adpick/tokyo-004"
+      "tags": [
+        "긴자",
+        "온천",
+        "조식"
+      ],
+      "source": "manual",
+      "merchant": "agoda",
+      "source_url": "https://example.com/agoda/hotel/tokyo-004",
+      "source_ref": "tokyo-004"
     },
     {
-      "external_id": "tokyo-005",
       "name": "호텔 그레이서리 신주쿠",
       "city_slug": "tokyo",
       "address": "도쿄 신주쿠구 가부키초",
@@ -129,12 +181,17 @@
       "price_from": 149000,
       "thumbnail_url": "https://picsum.photos/seed/tokyo-005/800/400",
       "description": "고질라 헤드로 유명한 곳. 신주쿠역 도보 5분, 가성비 무난",
-      "tags": ["신주쿠", "가성비", "번화가"],
-      "target_url": "https://example.com/adpick/tokyo-005"
+      "tags": [
+        "신주쿠",
+        "가성비",
+        "번화가"
+      ],
+      "source": "manual",
+      "merchant": "agoda",
+      "source_url": "https://example.com/agoda/hotel/tokyo-005",
+      "source_ref": "tokyo-005"
     },
-
     {
-      "external_id": "fukuoka-001",
       "name": "그랜드 하얏트 후쿠오카",
       "city_slug": "fukuoka",
       "address": "후쿠오카 하카타구 (캐널시티 인접)",
@@ -143,11 +200,17 @@
       "price_from": 205000,
       "thumbnail_url": "https://picsum.photos/seed/fukuoka-001/800/400",
       "description": "캐널시티 바로 옆. 하카타역·나카스 양쪽 다 걸어갈 만한 위치",
-      "tags": ["하카타", "럭셔리", "쇼핑"],
-      "target_url": "https://example.com/adpick/fukuoka-001"
+      "tags": [
+        "하카타",
+        "럭셔리",
+        "쇼핑"
+      ],
+      "source": "manual",
+      "merchant": "agoda",
+      "source_url": "https://example.com/agoda/hotel/fukuoka-001",
+      "source_ref": "fukuoka-001"
     },
     {
-      "external_id": "fukuoka-002",
       "name": "더 라이블리 후쿠오카 하카타",
       "city_slug": "fukuoka",
       "address": "후쿠오카 하카타구",
@@ -156,11 +219,17 @@
       "price_from": 118000,
       "thumbnail_url": "https://picsum.photos/seed/fukuoka-002/800/400",
       "description": "감성 인테리어 + 루프탑 바. 20~30대 친구 여행에 잘 맞음",
-      "tags": ["하카타", "가성비", "루프탑"],
-      "target_url": "https://example.com/adpick/fukuoka-002"
+      "tags": [
+        "하카타",
+        "가성비",
+        "루프탑"
+      ],
+      "source": "manual",
+      "merchant": "agoda",
+      "source_url": "https://example.com/agoda/hotel/fukuoka-002",
+      "source_ref": "fukuoka-002"
     },
     {
-      "external_id": "fukuoka-003",
       "name": "미츠이 가든 호텔 후쿠오카 기온",
       "city_slug": "fukuoka",
       "address": "후쿠오카 하카타구 기온",
@@ -169,11 +238,17 @@
       "price_from": 132000,
       "thumbnail_url": "https://picsum.photos/seed/fukuoka-003/800/400",
       "description": "대욕장 있는 무난한 4성. 기온역 도보 1분, 하카타역 도보 10분",
-      "tags": ["기온", "온천", "역근처"],
-      "target_url": "https://example.com/adpick/fukuoka-003"
+      "tags": [
+        "기온",
+        "온천",
+        "역근처"
+      ],
+      "source": "manual",
+      "merchant": "agoda",
+      "source_url": "https://example.com/agoda/hotel/fukuoka-003",
+      "source_ref": "fukuoka-003"
     },
     {
-      "external_id": "fukuoka-004",
       "name": "호텔 닛코 후쿠오카",
       "city_slug": "fukuoka",
       "address": "후쿠오카 하카타구 (하카타역 도보 3분)",
@@ -182,11 +257,17 @@
       "price_from": 158000,
       "thumbnail_url": "https://picsum.photos/seed/fukuoka-004/800/400",
       "description": "하카타역 도보 3분. 유후인·벳푸 당일치기 붙이기 좋은 베이스",
-      "tags": ["하카타역", "가족", "교통"],
-      "target_url": "https://example.com/adpick/fukuoka-004"
+      "tags": [
+        "하카타역",
+        "가족",
+        "교통"
+      ],
+      "source": "manual",
+      "merchant": "agoda",
+      "source_url": "https://example.com/agoda/hotel/fukuoka-004",
+      "source_ref": "fukuoka-004"
     },
     {
-      "external_id": "fukuoka-005",
       "name": "위드 더 스타일 후쿠오카",
       "city_slug": "fukuoka",
       "address": "후쿠오카 하카타구",
@@ -195,8 +276,15 @@
       "price_from": 244000,
       "thumbnail_url": "https://picsum.photos/seed/fukuoka-005/800/400",
       "description": "객실 16개뿐인 부티크. 조식·칵테일 포함이라 커플 기념일용",
-      "tags": ["부티크", "커플", "올인클루시브"],
-      "target_url": "https://example.com/adpick/fukuoka-005"
+      "tags": [
+        "부티크",
+        "커플",
+        "올인클루시브"
+      ],
+      "source": "manual",
+      "merchant": "agoda",
+      "source_url": "https://example.com/agoda/hotel/fukuoka-005",
+      "source_ref": "fukuoka-005"
     }
   ]
 }

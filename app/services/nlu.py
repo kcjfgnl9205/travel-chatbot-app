@@ -7,8 +7,9 @@ Phase 3에서 LLM 파서로 교체할 자리.
 import re
 from dataclasses import dataclass
 
-# 도시 마스터. supabase `cities` 테이블과 동일한 내용을 코드에도 둬서
-# DB 없이도(no-op 모드) 챗봇이 동작하게 한다.
+# 도시 마스터. 단일 소스는 여기다.
+# DB 없이도(no-op 모드) 챗봇이 동작해야 해서 코드 쪽에 둔다.
+# (cities 테이블을 따로 두면 같은 목록을 두 곳에서 관리하게 되어 반드시 어긋난다)
 CITIES: list[dict] = [
     {
         "slug": "osaka",

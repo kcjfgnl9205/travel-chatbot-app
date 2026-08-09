@@ -12,4 +12,6 @@ ignore = ["B008"]  # FastAPI Depends() 기본값 패턴
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 filterwarnings = ["ignore::DeprecationWarning"]

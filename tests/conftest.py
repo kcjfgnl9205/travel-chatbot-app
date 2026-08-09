@@ -9,7 +9,9 @@ os.environ.update(
         "SUPABASE_URL": "",
         "SUPABASE_SERVICE_ROLE_KEY": "",
         "PUBLIC_BASE_URL": "http://testserver",
-        "ADPICK_SUBID_PARAM": "subid",
+        "ADPICK_API_KEY": "",  # 실제 애드픽 API 는 타지 않는다 (템플릿 폴백)
+        "ADPICK_LINK_TEMPLATE": "https://adpick.test/click/AB12?url={source_url}",
+        "ADPICK_SUBID_PARAM": "",
         "KAKAO_SKILL_TOKEN": "",
     }
 )

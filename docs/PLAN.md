@@ -3,6 +3,8 @@
 카카오톡 챗봇용 스킬 서버. FastAPI + Supabase(Postgres).
 1차 목표: **"오사카 호텔 추천해줘" → 호텔 목록 카드 노출 → 사용자 클릭 → 애드픽 링크로 이동 + 클릭 로그 적재**
 
+DB 상세는 [DB.md](DB.md).
+
 ---
 
 ## 1. 전체 구조
@@ -10,21 +12,26 @@
 ```
 [카카오톡] --(skill webhook)--> [FastAPI 스킬 서버] --> [Supabase]
                                       |
-                                      +--> HotelProvider (1단계: 고정 JSON / 2단계: AI·크롤링)
-                                      +--> AdpickLinkBuilder (제휴 링크 생성)
+                                      +--> HotelProvider   호텔 + 원본주소(아고다 등)
+                                      |     (1단계: 고정 / 2단계: AI·크롤링)
+                                      +--> AdpickClient    원본주소 → 제휴주소 변환 (캐시)
 
-[사용자 카드 클릭] --> [FastAPI /r/{click_id}] --(302)--> [애드픽 딥링크] --> 아고다/부킹
-                              |
-                              +--> click 로그 적재
+[카드 클릭] --> [FastAPI /r/{click_id}] --(302)--> [애드픽 제휴주소] --> 아고다/부킹
+                        |
+                        +--> click_count + 1
 ```
 
-### 핵심 설계 판단 3가지
+**호텔 마스터를 우리가 소유하지 않는다.** AI/크롤링이 런타임에 호텔과 원본 주소를 찾아오고, 애드픽 API 가 그걸 제휴 주소로 바꾼다. 사용자에게는 제휴 주소만 보인다.
+
+### 핵심 설계 판단 4가지
 
 | 판단 | 이유 |
 |---|---|
-| **애드픽 링크를 카드에 직접 넣지 않고 `/r/{click_id}` 자체 리다이렉트를 경유** | 카카오 `webLink` 버튼은 브라우저를 바로 열기 때문에 **우리 서버로 콜백이 오지 않음**. 즉 "사용자가 어떤 호텔을 골랐는지"를 알 방법이 없음. 리다이렉트 1홉을 끼워야 선택 추적이 가능하고, 나중에 애드픽 링크가 바뀌어도 DB만 고치면 됨 |
-| **응답은 무조건 5초 안에** | 카카오 스킬 서버 타임아웃 5초. 고정 데이터는 문제 없지만 **AI/크롤링을 붙이는 순간 초과**함. 그 시점에 `useCallback` (AI 챗봇 콜백) 방식으로 전환하는 것을 전제로 provider 인터페이스를 비동기로 설계 |
-| **`hotel` 도메인을 provider 패턴으로 격리** | 나중에 `flight`, `activity`가 붙을 때 카카오 응답 조립/DB 로깅/리다이렉트는 그대로 재사용하고 provider만 추가 |
+| **애드픽 링크를 카드에 직접 넣지 않고 `/r/{click_id}` 자체 리다이렉트를 경유** | 카카오 `webLink` 버튼은 브라우저를 바로 열기 때문에 **우리 서버로 콜백이 오지 않음**. 즉 "사용자가 어떤 호텔을 골랐는지"를 알 방법이 없다. 리다이렉트 1홉을 끼워야 선택 추적이 되고, 링크가 바뀌어도 DB만 고치면 된다 |
+| **제휴 링크 변환 결과를 `affiliate_links` 에 캐시** | 애드픽 API 는 **분당 60회** 제한이고 **180일 무클릭 링크를 삭제**한다. 호텔 5건이면 요청 1건에 5회를 쓰므로 캐시 없이는 분당 12요청에서 막힌다. `source_url` 하나당 링크 하나를 만들어 재사용하고, 미스만 동시에 변환한다 |
+| **응답은 캐러셀이 아니라 `listCard` 한 장** | 호텔 추천은 **비교**가 목적이다. 캐러셀은 좌우로 스와이프해야 해서 한 번에 하나만 보이지만, listCard 는 5곳이 한 화면에 세로로 나열된다. 각 줄의 `link.web` 이 호텔별 `click_id` 를 가리켜 줄 클릭만으로 추적된다 |
+| **응답은 무조건 5초 안에** | 카카오 스킬 서버 타임아웃 5초. 고정 데이터는 여유롭지만 **AI/크롤링을 붙이는 순간 초과**한다. 그 시점에 `useCallback`(AI 챗봇 콜백)으로 전환하는 것을 전제로 provider 인터페이스를 비동기로 설계했고, `recommendations.latency_ms` 로 여유를 추적한다 |
+| **`hotel` 도메인을 provider 패턴으로 격리** | 나중에 `flight`, `activity` 가 붙을 때 카카오 응답 조립 / DB 로깅 / 리다이렉트 / 제휴링크 변환은 그대로 재사용하고 provider 만 추가 |
 
 ---
 
@@ -32,112 +39,145 @@
 
 ```
 사용자: "오사카 호텔 추천해줘"
-   ↓ 카카오 i 오픈빌더 [호텔추천] 블록 (엔티티: sys.location 또는 커스텀 city 엔티티)
+   ↓ 카카오 i 오픈빌더 [호텔추천] 블록
    ↓ POST /api/v1/kakao/hotels/recommend
 서버:
-   1) 발화 로깅            → messages
-   2) 도시 파싱            → "오사카" (엔티티 우선, 없으면 발화 텍스트 폴백)
-   3) HotelProvider 조회   → 고정 호텔 5건
-   4) recommendation + recommendation_items 저장 (클릭 전에 미리 저장)
-   5) 각 item마다 click_id 발급 → 버튼 URL = https://{도메인}/r/{click_id}
-   6) carousel(basicCard) JSON 응답
+   1) 발화 로깅                → messages
+   2) 도시 파싱                → "오사카" (엔티티 우선, 없으면 발화 텍스트 폴백)
+   3) HotelProvider 조회       → 호텔 5건 + 각각의 원본 주소
+   4) 원본주소 → 커미션링크 변환 → affiliate_links (캐시 히트면 API 안 탐)
+   5) recommendation + items 저장 (클릭 전에 미리)
+   6) 각 item 마다 click_id 발급 → 줄 링크 = https://{도메인}/r/{click_id}
+   7) listCard 응답 (최대 5줄)
    ↓
-카카오: 호텔 카드 5장 가로 스와이프 + 하단 quickReplies("도쿄 호텔", "후쿠오카 호텔", "다시 추천")
-   ↓ 사용자가 "예약하러 가기" 클릭
+카카오: 호텔 5곳 리스트 + 하단 quickReplies
+   ↓ 호텔 줄 클릭
    ↓ GET /r/{click_id}
 서버:
-   7) clicks INSERT (누가/어떤 호텔/언제)
-   8) 302 → 애드픽 딥링크
+   8) register_click() → click_count + 1 (DB 왕복 1회)
+   9) 302 → 애드픽 커미션 링크
 ```
 
-**도시를 못 알아들었을 때**: 도시 quickReplies를 붙인 되묻기 응답 (`"어느 도시 호텔을 찾으세요?"`).
+**도시를 못 알아들었을 때**: 도시 quickReplies 를 붙인 되묻기 응답.
 
 ---
 
-## 3. DB 스키마 (Supabase)
+## 3. 실패해도 죽지 않는다
 
-`supabase/migrations/0001_init.sql` 참고. 테이블 8개.
+이 서비스는 외부 의존이 3개(Supabase / 애드픽 API / AI·크롤링)라 부분 실패가 일상이다. 각각 폴백을 정해뒀다.
 
-| 테이블 | 역할 |
+| 실패 | 결과 |
 |---|---|
-| `users` | 카카오 `botUserKey` 기준 사용자. 개인정보 없음(카카오가 안 줌) |
-| `messages` | 사용자 발화 원문 + 파싱 결과 + raw payload(디버깅용) |
-| `cities` | 도시 마스터 + 별칭(`오사카`, `osaka`, `大阪`) 매칭용 |
-| `hotels` | 호텔 마스터. MVP는 시드 JSON을 그대로 적재 |
-| `hotel_offers` | 호텔 × 제휴사(애드픽 캠페인) 링크. 호텔 하나에 아고다/부킹 여러 개 가능 |
-| `recommendations` | "이 요청에 이렇게 응답했다" 1건 |
-| `recommendation_items` | 그 응답에 담긴 호텔 N건 (노출 순서, 그 시점 링크 스냅샷, click_id) |
-| `clicks` | 실제 클릭. `recommendation_item_id` FK |
-
-> `recommendation_items`에 링크를 **스냅샷**으로 남기는 게 포인트. 나중에 애드픽 캠페인이 바뀌어도 "그때 그 유저가 뭘 눌렀는지" 정확히 복원됨.
-
-### 나중에 붙일 것 (스키마 자리만 잡아둠)
-- `conversions` — 애드픽 postback/리포트로 실제 예약 전환 매칭 (`click_id` 기준)
-- `flights`, `flight_offers` — 항공권 도메인. `recommendations.domain` 컬럼으로 이미 구분해둠
+| Supabase 다운 | 호텔 목록 **정상 응답**. 그 요청만 기록 안 됨 (repository 가 예외 대신 None 반환) |
+| 애드픽 API 실패 | 카드 **정상 노출**. 원본 주소로 폴백 — 수익화만 안 됨. 실패 사유는 `affiliate_links.error` 에 기록 |
+| provider 결과 0건 | "아직 준비 중인 도시" 안내 + 다른 도시 quickReplies |
+| 그 외 모든 예외 | 카카오에 **200 + 안내 문구**. 500 을 주면 사용자에게 원인 불명 오류만 뜬다 |
 
 ---
 
-## 4. 폴더 구조
+## 4. DB
+
+테이블 6개(전부 사용 중). 상세는 [DB.md](DB.md).
+
+| 그룹 | 테이블 |
+|---|---|
+| 캐시 | `search_cache`, `affiliate_links` |
+| 행동 로그 | `users`, `messages`, `recommendations`, `recommendation_items` |
+
+흐름: 발화 1건 → `messages` 1행 → `recommendations` 1행 → `recommendation_items` N행 → 클릭 시 그 행의 `click_count` 증가
+
+**호텔 마스터 테이블은 없다.** 호텔 목록을 매번 AI/크롤링으로 새로 받는데 이름으로는 "같은 호텔"을 못 묶는다 — `호텔 그란비아 오사카` / `그란비아 오사카` / `Hotel Granvia Osaka` 가 전부 다른 행이 된다. 호텔 신원은 **`source_url`**(기계가 부여한 원본 주소)로 잡고, 이미 `affiliate_links` 가 `(partner, source_url)` 유니크로 그 역할을 한다. 도시 목록도 DB 대신 [`nlu.py`](../app/services/nlu.py) 상수 하나로 관리한다.
+
+**`recommendation_items` 가 설계의 중심.** `click_id` 발급 + 노출 스냅샷(호텔명/가격/원본주소/최종링크) + 미클릭 줄 기록을 동시에 한다. 덕분에 CTR 과 "그때 사용자가 본 화면"을 둘 다 복원할 수 있다.
+
+---
+
+## 5. 폴더 구조
 
 ```
 travel-chatbot-app/
 ├── app/
-│   ├── main.py                     # FastAPI 엔트리
-│   ├── core/
-│   │   ├── config.py               # pydantic-settings 환경변수
-│   │   └── logging.py
+│   ├── main.py
+│   ├── core/config.py
 │   ├── api/v1/
-│   │   ├── router.py
-│   │   ├── kakao_hotel.py          # POST /kakao/hotels/recommend, /kakao/fallback
-│   │   └── redirect.py             # GET /r/{click_id}
+│   │   ├── kakao_hotel.py          POST /kakao/hotels/recommend, /kakao/fallback
+│   │   └── redirect.py             GET /r/{click_id}
 │   ├── kakao/
-│   │   ├── schemas.py              # 카카오 스킬 요청 payload 모델
-│   │   └── templates.py            # simpleText / basicCard carousel / quickReplies 빌더
+│   │   ├── schemas.py              오픈빌더 요청 모델
+│   │   └── templates.py            listCard 빌더 (카카오 제한 처리)
 │   ├── domain/hotel/
-│   │   ├── schemas.py              # Hotel, HotelQuery
-│   │   ├── service.py              # 유스케이스 (조회 + 저장 + 링크 생성)
+│   │   ├── schemas.py              Hotel, HotelQuery
+│   │   ├── service.py              유스케이스 전체 흐름
 │   │   └── providers/
-│   │       ├── base.py             # HotelProvider 인터페이스 (async)
-│   │       └── static_provider.py  # 고정 JSON  ← 지금
-│   │       # ai_provider.py, crawler_provider.py ← 나중
+│   │       ├── base.py             HotelProvider 인터페이스 (async)
+│   │       └── static_provider.py  고정 JSON  ← 지금
+│   │       # ai_provider.py, crawler_provider.py ← Phase 3
 │   ├── services/
-│   │   ├── nlu.py                  # 도시 파싱
-│   │   └── adpick.py               # 애드픽 링크 빌더
+│   │   ├── nlu.py                  도시·인원·박수 파싱
+│   │   ├── search_cache.py         검색 결과 캐시 (provider 재호출 방지)
+│   │   ├── adpick.py               애드픽 변환 클라이언트
+│   │   └── affiliate.py            캐시 우선 링크 해석
 │   └── db/
-│       ├── supabase_client.py      # 없으면 no-op 모드로 동작
-│       └── repositories/           # users / messages / recommendations / clicks
-├── data/hotels.json                # 고정 호텔 시드
-├── supabase/migrations/0001_init.sql
-├── tests/
-└── docs/PLAN.md
+│       ├── supabase_client.py      없으면 no-op 모드
+│       ├── memory_store.py         no-op 모드 리다이렉트 폴백
+│       └── repositories/
+├── data/hotels.json                static provider 폴백/데모 데이터 (DB 시드 아님)
+├── supabase/migrations/
+│   └── 0001_init.sql              테이블 6개 + register_click()
+├── tests/                          34개
+└── docs/{PLAN,DB}.md
 ```
 
 ---
 
-## 5. 카카오 오픈빌더 설정
+## 6. 카카오 오픈빌더 설정
 
 1. **스킬 등록**: URL `https://{도메인}/api/v1/kakao/hotels/recommend`
-2. **블록 `호텔추천`**: 예시 발화 `오사카 호텔 추천해줘`, `도쿄 숙소 알려줘`, `호텔 추천`
-3. **엔티티**: `sys.location` 또는 커스텀 엔티티 `city`(오사카/도쿄/후쿠오카… 별칭 포함)를 파라미터 `city`로 매핑
-   - 서버는 파라미터가 비어도 **발화 텍스트에서 폴백 파싱**하므로 엔티티 설정 없이도 동작함
+2. **블록 `호텔추천`**: 예시 발화 `오사카 호텔 추천해줘`, `도쿄 숙소 알려줘`
+3. **엔티티**: `sys.location` 또는 커스텀 `city` 를 파라미터 `city` 로 매핑
+   - 서버가 발화 텍스트에서 폴백 파싱하므로 **엔티티 없이도 동작**한다
 4. **폴백 블록**: `/api/v1/kakao/fallback`
-5. 배포 후 **HTTPS 필수**, 응답 5초 제한
+5. 배포 후 **HTTPS 필수**, 응답 **5초 제한**
+6. (선택) 스킬 헤더 `X-Skill-Token` + `.env` 의 `KAKAO_SKILL_TOKEN` 으로 외부 호출 차단
 
 ---
 
-## 6. 개발 단계
+## 7. 개발 단계
 
-- **Phase 1 (지금)** — 고정 호텔 5건 × 3도시, 캐러셀 응답, 클릭 추적, DB 적재
-- **Phase 2** — 날짜/인원 파싱(체크인·체크아웃), 도시별 호텔 확대, 애드픽 실제 캠페인 링크 연결
-- **Phase 3** — provider 교체: 아고다/부킹 API 또는 크롤링 + LLM 요약 추천 이유. 이때 카카오 **콜백(useCallback)** 전환
-- **Phase 4** — 항공권 도메인 추가, 전환(conversion) 리포트 매칭, 재방문 유저 개인화
+- **Phase 1 (지금)** — 고정 호텔 데이터, listCard 응답, 제휴링크 변환/캐시, 클릭 추적, DB 적재
+- **Phase 2** — 애드픽 실제 API 스펙 연결, 날짜/인원 파싱(체크인·체크아웃), 썸네일 실제 이미지
+- **Phase 3** — provider 교체(크롤링 또는 LLM). 결과 캐시는 이미 붙어 있으므로 provider 만 갈아끼우면 되고, 호출 로그 테이블을 그때 추가한다. 카카오 **콜백(useCallback)** 전환
+- **Phase 4** — 항공권 도메인, 재방문 개인화
+
+예약 전환 추적은 범위 밖이다. 노출 → 클릭(`recommendation_items.click_count`)까지만 본다. 필요해지면 `affiliate_links.p_data` 로 애드픽 성과 데이터를 붙일 수 있게 열어뒀다.
 
 ---
 
-## 7. 지금 결정이 필요한 것 (열린 이슈)
+## 8. 열린 이슈
 
-1. **애드픽 링크 형태** — 캠페인별 고정 URL인지, `?subid=` 같은 서브 파라미터로 유저 구분이 가능한지. 서브 파라미터를 지원하면 `click_id`를 실어 보내 **전환까지 정확히 매칭** 가능 (`app/services/adpick.py`에 자리 준비해둠)
-2. **배포처** — Railway / Fly.io / Cloudtype / Vercel(Serverless). 리다이렉트 응답이 빨라야 하니 한국·일본 리전 권장
-3. **호텔 이미지** — 카카오 카드 썸네일은 외부 HTTPS URL이 필요. 제휴사 이미지 직링크 허용 여부 확인 필요 (안 되면 Supabase Storage에 올려서 사용)
-4. **날짜 처리** — MVP는 날짜 없이 "추천"만 할지, `체크인/체크아웃`을 물어볼지. 애드픽 링크에 날짜를 실을 수 있으면 전환율이 오름
-5. **Supabase RLS** — 서버가 service_role 키로만 접근하므로 전 테이블 RLS ON + 정책 없음(=서버 전용)으로 마이그레이션에 넣어둠. 나중에 어드민 대시보드를 붙이면 정책 추가 필요
+1. **애드픽 rate limit(분당 60회)** — 캐시로 대부분 막히지만, 신규 도시가 한꺼번에 들어오면 걸릴 수 있다. 현재는 실패 시 원본 주소로 폴백하고 `affiliate_links.error` 에 남긴다. 트래픽이 늘면 백그라운드 사전 변환(큐)이 필요하다
+2. **호텔 이미지** — 카카오 리스트 썸네일은 외부 HTTPS URL 필요. 크롤링 이미지 직링크가 막히면 Supabase Storage 경유 필요. (listCard 는 `imageUrl` 이 줄마다 선택이라 일부만 없어도 렌더링은 된다)
+3. **한 번에 5곳까지** — listCard 제한. 더 보여주려면 "더보기" 버튼으로 다음 5곳을 주는 페이지네이션이 필요하다. `recommendation_items.position` 에 이미 순서가 남으므로 이어붙이기는 어렵지 않다
+4. **날짜를 원본 URL 에 넣을 것인가** (Phase 2 의 핵심 결정)
+
+   `source_url` 이 곧 링크의 신원이라, 날짜를 URL 에 넣으면 `affiliate_links` 행이
+   `호텔 수` 에서 `호텔 수 × 날짜조합 수` 로 늘어난다. 스키마는 그대로 동작하지만
+   성격이 달라진다.
+
+   | | 날짜 포함 | 미포함(호텔 페이지만) |
+   |---|---|---|
+   | 사용자 | 본인 날짜 가격이 바로 보임 → 전환율 높음 | 랜딩 후 날짜 재선택 → 이탈 |
+   | 링크 수 | 호텔 × 날짜조합 | 호텔당 1개 |
+   | rate limit | 압박 있음 (분당 60회) | 여유 |
+   | 캐시 수명 | **체크아웃까지만 유효** | 사실상 무기한 |
+
+   권장: **넣는다.** "5월 20일부터 4박"이라고 말한 사람에게 날짜 없는 페이지를 주면
+   이탈한다. 인기 날짜는 반복되므로 캐시가 rate limit 을 상당히 흡수한다.
+
+   ⚠️ **넣기로 하면 반드시 같이 고쳐야 할 것**: 지금 `affiliate_links.expires_at` 은
+   `ADPICK_LINK_TTL_DAYS`(30일) 고정이다. 5/20~5/24 링크를 5/1에 만들면 5/31까지
+   재사용되어 **이미 지난 날짜를 계속 보여준다.** `min(생성일 + TTL, 체크아웃일)` 로
+   잘라야 한다. `search_cache` 의 TTL 도 마찬가지.
+5. **배포처** — Railway / Fly.io / Cloudtype 등. 리다이렉트 응답 속도가 곧 이탈률이라 한국·일본 리전 권장
+6. **AI 결과 검증** — LLM 으로 호텔을 생성하면 존재하지 않는 호텔이나 틀린 가격이 나올 수 있다. provider 를 정할 때 원본 응답을 남길 테이블을 함께 만들어 검증 로직을 얹는 게 맞다. 크롤링으로 실제 URL 을 확보하는 방식이면 이 문제는 상당 부분 사라진다
+7. **도시 확장** — 도시 목록이 [`nlu.py`](../app/services/nlu.py) 상수 하나에 있다. 수십 개로 늘어나면 별칭 매칭이 선형 탐색이라 느려지고, 코드 배포 없이 추가할 수 없다. 그때 DB + 캐시로 옮기는 게 맞다

@@ -1,17 +1,23 @@
 """카카오 스킬 응답(SkillResponse) JSON 빌더.
 
-카카오 렌더링 제한이 있어서 길이를 넘기면 카드가 통째로 안 보인다.
-빌더에서 잘라 넣는 이유.
+https://kakaobusiness.gitbook.io/main/tool/chatbot/skill_guide/answer_json_format
+
+카카오는 길이/개수 제한을 넘기면 말풍선이 통째로 렌더링되지 않는다.
+그래서 빌더 단계에서 잘라 넣는다.
 """
 
 from typing import Any
 
-MAX_CAROUSEL_ITEMS = 10
 MAX_QUICK_REPLIES = 10
-MAX_CARD_TITLE = 40
-MAX_CARD_DESC = 76
-MAX_BUTTON_LABEL = 14
 MAX_QUICK_REPLY_LABEL = 14
+MAX_BUTTON_LABEL = 14
+
+# --- listCard
+MAX_LIST_ITEMS = 5           # 단독형 5개 (캐러셀에 넣으면 4개로 줄어든다)
+MAX_LIST_BUTTONS = 2
+MAX_LIST_HEADER_TITLE = 40
+MAX_LIST_ITEM_TITLE = 40     # 2줄
+MAX_LIST_ITEM_DESC = 40      # 1줄
 
 
 def _cut(text: str | None, limit: int) -> str:
@@ -21,6 +27,7 @@ def _cut(text: str | None, limit: int) -> str:
     return text[: limit - 1].rstrip() + "…"
 
 
+# ------------------------------------------------------------------ 공통 조각
 def quick_reply(label: str, message_text: str | None = None) -> dict[str, Any]:
     return {
         "label": _cut(label, MAX_QUICK_REPLY_LABEL),
@@ -29,7 +36,9 @@ def quick_reply(label: str, message_text: str | None = None) -> dict[str, Any]:
     }
 
 
-def quick_reply_block(label: str, block_id: str, extra: dict | None = None) -> dict[str, Any]:
+def quick_reply_block(
+    label: str, block_id: str, extra: dict | None = None
+) -> dict[str, Any]:
     """다음 블록을 직접 호출하는 퀵리플라이. extra 는 다음 스킬의 clientExtra 로 전달된다."""
     item: dict[str, Any] = {
         "label": _cut(label, MAX_QUICK_REPLY_LABEL),
@@ -41,30 +50,20 @@ def quick_reply_block(label: str, block_id: str, extra: dict | None = None) -> d
     return item
 
 
+def message_button(label: str, message_text: str) -> dict[str, Any]:
+    return {
+        "label": _cut(label, MAX_BUTTON_LABEL),
+        "action": "message",
+        "messageText": message_text,
+    }
+
+
 def web_link_button(label: str, url: str) -> dict[str, Any]:
     return {
         "action": "webLink",
         "label": _cut(label, MAX_BUTTON_LABEL),
         "webLinkUrl": url,
     }
-
-
-def basic_card(
-    *,
-    title: str,
-    description: str = "",
-    thumbnail_url: str | None = None,
-    buttons: list[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
-    card: dict[str, Any] = {
-        "title": _cut(title, MAX_CARD_TITLE),
-        "description": _cut(description, MAX_CARD_DESC),
-    }
-    if thumbnail_url:
-        card["thumbnail"] = {"imageUrl": thumbnail_url}
-    if buttons:
-        card["buttons"] = buttons[:3]
-    return card
 
 
 def skill_response(
@@ -83,16 +82,41 @@ def simple_text(
     return skill_response([{"simpleText": {"text": text}}], quick_replies)
 
 
-def carousel_of_cards(
-    cards: list[dict[str, Any]],
+# ------------------------------------------------------------------- listCard
+def list_item(
     *,
-    header_text: str | None = None,
+    title: str,
+    description: str | None = None,
+    image_url: str | None = None,
+    link_url: str | None = None,
+) -> dict[str, Any]:
+    """리스트 한 줄. `link` 를 주면 줄 전체가 클릭 가능해진다.
+
+    호텔 목록에서는 이 링크가 우리 리다이렉트(`/r/{click_id}`)를 가리켜야
+    "사용자가 어떤 호텔을 골랐는지"가 기록된다.
+    """
+    item: dict[str, Any] = {"title": _cut(title, MAX_LIST_ITEM_TITLE)}
+    if description:
+        item["description"] = _cut(description, MAX_LIST_ITEM_DESC)
+    if image_url:
+        item["imageUrl"] = image_url
+    if link_url:
+        item["link"] = {"web": link_url}
+    return item
+
+
+def list_card(
+    *,
+    header_title: str,
+    items: list[dict[str, Any]],
+    buttons: list[dict[str, Any]] | None = None,
     quick_replies: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    outputs: list[dict[str, Any]] = []
-    if header_text:
-        outputs.append({"simpleText": {"text": header_text}})
-    outputs.append(
-        {"carousel": {"type": "basicCard", "items": cards[:MAX_CAROUSEL_ITEMS]}}
-    )
-    return skill_response(outputs, quick_replies)
+    """제목 + 항목 리스트 말풍선. `items` 는 최소 1개 필요하다."""
+    card: dict[str, Any] = {
+        "header": {"title": _cut(header_title, MAX_LIST_HEADER_TITLE)},
+        "items": items[:MAX_LIST_ITEMS],
+    }
+    if buttons:
+        card["buttons"] = buttons[:MAX_LIST_BUTTONS]
+    return skill_response([{"listCard": card}], quick_replies)

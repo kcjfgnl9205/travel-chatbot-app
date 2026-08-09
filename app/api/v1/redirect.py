@@ -1,19 +1,20 @@
 """클릭 추적 리다이렉트.
 
-카카오 카드 버튼이 가리키는 곳. 여기를 한 번 거쳐야
-"어떤 사용자가 어떤 호텔을 눌렀는지"를 DB에 남길 수 있다.
-사용자 체감이 나빠지지 않도록 로깅은 하되 실패해도 무조건 리다이렉트한다.
+카카오 listCard 의 줄 링크가 가리키는 곳. 여기를 한 번 거쳐야
+"사용자가 어떤 호텔을 눌렀는지"를 DB에 남길 수 있다.
+
+DB 왕복은 **한 번**이다. register_click() 함수가 조회·카운터 증가·목적지 반환을
+동시에 한다. 사용자가 302 를 기다리는 경로라 왕복 수가 곧 체감 지연이다.
 """
 
-import hashlib
 import logging
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.api.deps import DbDep, SettingsDep
 from app.db import memory_store
-from app.db.repositories import ClickRepository, RecommendationItemRepository
+from app.db.repositories import RecommendationItemRepository
 
 logger = logging.getLogger(__name__)
 
@@ -29,39 +30,21 @@ _EXPIRED_HTML = """<!doctype html>
 </body></html>"""
 
 
-def _hash_ip(ip: str | None) -> str | None:
-    """원본 IP는 저장하지 않는다. 중복 클릭 판별용 해시만 남김."""
-    if not ip:
-        return None
-    return hashlib.sha256(ip.encode()).hexdigest()[:32]
-
-
 @router.get("/r/{click_id}")
-async def redirect_click(
-    click_id: str, request: Request, settings: SettingsDep, db: DbDep
-):
+async def redirect_click(click_id: str, settings: SettingsDep, db: DbDep):
     items = RecommendationItemRepository(db)
-    clicks = ClickRepository(db)
 
-    item = await items.find_by_click_id(click_id) or memory_store.get(click_id)
+    # DB 가 없거나 실패하면 인메모리 폴백으로 떨어진다 (로컬 개발용).
+    item = await items.register_click(click_id) or memory_store.register_click(click_id)
+
     if not item or not item.get("target_url"):
         logger.warning("unknown click_id=%s", click_id)
         return HTMLResponse(_EXPIRED_HTML, status_code=404)
 
-    try:
-        await clicks.log(
-            click_id=click_id,
-            recommendation_item_id=item.get("id"),
-            recommendation_id=item.get("recommendation_id"),
-            user_id=item.get("user_id"),
-            hotel_id=item.get("hotel_id"),
-            target_url=item["target_url"],
-            user_agent=request.headers.get("user-agent"),
-            referer=request.headers.get("referer"),
-            ip_hash=_hash_ip(request.client.host if request.client else None),
-        )
-    except Exception:
-        logger.exception("click log failed click_id=%s", click_id)
-
-    logger.info("click click_id=%s hotel=%s", click_id, item.get("hotel_name"))
+    logger.info(
+        "click click_id=%s hotel=%s count=%s",
+        click_id,
+        item.get("hotel_name"),
+        item.get("click_count"),
+    )
     return RedirectResponse(item["target_url"], status_code=302)
