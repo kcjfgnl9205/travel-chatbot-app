@@ -15,6 +15,25 @@ def test_health(client):
     assert res.json()["status"] == "ok"
 
 
+def test_health_db_reports_disabled_without_credentials(client):
+    """/health 는 환경변수만 본다. 실제 연결 여부는 /health/db 가 판단한다."""
+    res = client.get("/health/db")
+    assert res.status_code == 503
+    body = res.json()
+    assert body["status"] == "disabled"
+    assert "SUPABASE_URL" in body["reason"]
+
+
+def test_health_db_is_repeatable(client):
+    """반복 호출해도 깨지지 않아야 한다.
+
+    Supabase 클라이언트는 만들어진 이벤트 루프에 묶이는데, TestClient 는
+    요청마다 새 루프를 만든다. 캐시를 그대로 재사용하면 Event loop is closed.
+    """
+    for _ in range(3):
+        assert client.get("/health/db").status_code == 503
+
+
 def test_osaka_returns_list_card(client):
     res = client.post(ENDPOINT, json=kakao_payload("오사카 호텔 추천해줘"))
     assert res.status_code == 200

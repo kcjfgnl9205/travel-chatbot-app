@@ -2,10 +2,15 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
-.env
-.env.local
 .pytest_cache/
 .ruff_cache/
 .DS_Store
 *.egg-info/
 .claude/settings.local.json
+
+# 시크릿. 이름을 뭐라 붙이든(.env / .env.prod / dev.env / zz.env) 전부 제외한다.
+# .env.example 만 예외 — 값 없이 항목만 들어 있다.
+.env
+.env.*
+*.env
+!.env.example

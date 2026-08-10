@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api.v1 import redirect
+from app.api.v1 import health, redirect
 from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.core.logging import setup_logging
@@ -26,14 +26,4 @@ app = FastAPI(
 app.include_router(api_router)
 # 리다이렉트는 링크 길이를 줄이려고 루트에 붙인다: /r/{click_id}
 app.include_router(redirect.router)
-
-
-@app.get("/health", tags=["ops"])
-async def health() -> dict:
-    settings = get_settings()
-    return {
-        "status": "ok",
-        "env": settings.app_env,
-        "db": "supabase" if settings.db_enabled else "disabled(no-op)",
-        "provider": settings.hotel_provider,
-    }
+app.include_router(health.router)
