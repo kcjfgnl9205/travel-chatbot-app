@@ -103,11 +103,14 @@ AI/크롤링 → 원본 주소 (agoda.com/hotel/12345)
 
 1. Supabase 프로젝트 생성
 2. SQL Editor 에 [`0001_init.sql`](supabase/migrations/0001_init.sql) 을 붙여넣고 실행 (파일 하나, 재실행 안전)
-3. `.env` 에 `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (Settings → API → **service_role**) 입력
+3. `.env` 에 `SUPABASE_URL` (Settings → API → `Project URL`) 과
+   `SUPABASE_SERVICE_ROLE_KEY` (Settings → **API Keys** → `sb_secret_...`,
+   또는 `Legacy API Keys` 탭의 `service_role`) 입력 → [자세히](docs/DEPLOY.md)
 
 시드 스크립트는 없다. **호텔 데이터는 전부 provider 가 런타임에 만든다.**
 
-> service_role 키는 RLS를 우회한다. **절대 클라이언트에 노출 금지**, 서버 환경변수로만.
+> secret / `service_role` 키는 RLS를 우회한다. **절대 클라이언트에 노출 금지**, 서버 환경변수로만.
+> `anon` / `publishable` 키로는 아무것도 못 읽는다 (RLS 활성 + 정책 없음).
 
 ### 테이블 (6개)
 

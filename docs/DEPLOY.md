@@ -50,13 +50,30 @@ KAKAO_SKILL_TOKEN=아무거나_긴_랜덤값
 
 1. [supabase.com](https://supabase.com) 프로젝트 생성 — **리전은 Seoul(ap-northeast-2)** 로. 오라클 서버와 가까울수록 요청당 왕복 7회가 싸진다.
 2. SQL Editor 에 [`supabase/migrations/0001_init.sql`](../supabase/migrations/0001_init.sql) 붙여넣고 실행
-3. **Settings → API** 에서 두 값 복사
-   - `Project URL` → `SUPABASE_URL`
-   - `service_role` **secret** → `SUPABASE_SERVICE_ROLE_KEY`
+3. 대시보드에서 두 값 복사
 
-> `anon` 키가 아니라 **`service_role`** 이다. 전 테이블이 RLS 활성 + 정책 없음이라 `anon` 으로는 아무것도 못 읽는다.
+### `SUPABASE_URL`
+
+**Dashboard → 프로젝트 선택 → Settings → API** 의 `Project URL`.
+형태는 `https://{project-ref}.supabase.co` 이고, 브라우저 주소창의 `/project/{ref}/` 에 있는 값이 그 `ref` 다.
+
+### `SUPABASE_SERVICE_ROLE_KEY`
+
+**Settings → API Keys** (직접 주소: `supabase.com/dashboard/project/_/settings/api`)
+
+Supabase 가 키 체계를 새로 바꿔서 **두 세대가 공존한다. 어느 쪽이든 이 변수에 넣으면 동작한다.**
+
+| | 어디에 | 형태 |
+|---|---|---|
+| 신규 (권장) | `API Keys` 탭의 **Secret keys** | `sb_secret_...` |
+| 레거시 | `Legacy API Keys` 탭의 **`service_role`** | `eyJ...` (JWT) |
+
+레거시 키는 **곧 지원 종료 예정**이므로 새로 시작한다면 `sb_secret_...` 쪽을 쓰는 게 좋다.
+환경변수 이름은 `SUPABASE_SERVICE_ROLE_KEY` 그대로 둔다 — "RLS 를 우회하는 서버 전용 키"라는 뜻으로 쓰고 있고, 두 세대 모두 그 역할이다.
+
+> **`anon` / `publishable` 키는 안 된다.** 전 테이블이 RLS 활성 + 정책 없음이라 그 키로는 아무것도 못 읽는다.
 >
-> 반대로 `service_role` 은 RLS 를 완전히 우회한다. **클라이언트·저장소·로그 어디에도 남기면 안 된다.**
+> 반대로 secret / `service_role` 키는 **RLS 를 완전히 우회한다.** 클라이언트·저장소·로그·채팅 어디에도 남기면 안 된다.
 
 연결 확인:
 
