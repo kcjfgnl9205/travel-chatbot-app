@@ -138,7 +138,9 @@ ERD와 컬럼별 설명은 **[docs/DB.md](docs/DB.md)**.
 | **배포 플랫폼 환경변수** | **운영 서버 실행 중** | 진짜 키 ← 운영은 여기 |
 | GitHub Secrets | GitHub Actions 워크플로 실행 중에만 | 배포/CI 용 토큰 |
 
-**GitHub Secrets 는 런타임 저장소가 아니다.** Railway 에서 도는 앱은 GitHub Secrets 를 읽지 못한다. CI 에서 마이그레이션을 돌리거나 배포 명령에 토큰이 필요할 때만 쓴다.
+**GitHub Secrets 는 런타임 저장소가 아니다.** 배포된 서버에서 도는 앱은 GitHub Secrets 를 읽지 못한다. CI 에서 마이그레이션을 돌리거나 배포 명령에 토큰이 필요할 때만 쓴다.
+
+Oracle Cloud 같은 **일반 VM 은 환경변수 대시보드가 없으므로 서버의 `.env` 파일**(`chmod 600`)이 그 역할을 한다. → [docs/DEPLOY.md](docs/DEPLOY.md)
 
 | 값 | 위험도 | 어디에 |
 |---|---|---|

@@ -1,0 +1,18 @@
+# {$DOMAIN} 을 실제 도메인으로 바꾸거나, compose 에서 환경변수로 넘긴다.
+# Caddy 가 Let's Encrypt 인증서를 자동 발급·갱신한다.
+# 카카오 스킬 서버는 HTTPS 가 필수라 이 단계를 건너뛸 수 없다.
+
+{$DOMAIN} {
+	encode gzip
+
+	# 리다이렉트(/r/*)는 사용자가 302 를 기다리는 경로다. 로그를 남겨 지연을 본다.
+	log {
+		output stdout
+		format console
+	}
+
+	reverse_proxy app:8000 {
+		health_uri /health
+		health_interval 30s
+	}
+}
