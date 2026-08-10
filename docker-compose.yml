@@ -1,9 +1,15 @@
-# Oracle Cloud VM 배포용.
+# 배포용 compose.
 #
-#   서버에서:  docker compose up -d --build
+#   기본:  docker compose up -d --build
+#          → app 만 127.0.0.1:8000 에 띄운다. 호스트의 웹서버(nginx 등)가 프록시한다.
+#            서버에 이미 nginx 가 80/443 을 쓰고 있을 때 이 방식이다.
+#            nginx 설정 예시: deploy/nginx/travel-chatbot.conf
 #
-# 시크릿은 이 파일이 아니라 같은 디렉터리의 .env 에서 읽는다.
-# .env 는 절대 커밋하지 않는다 (.gitignore 에 있음).
+#   웹서버가 없는 깨끗한 서버라면:
+#          docker compose --profile caddy up -d --build
+#          → Caddy 가 80/443 을 잡고 Let's Encrypt 인증서를 자동 발급한다.
+#
+# 시크릿은 이 파일이 아니라 같은 디렉터리의 .env 에서 읽는다 (.gitignore 대상).
 
 services:
   app:
@@ -12,17 +18,16 @@ services:
     env_file: .env
     environment:
       PORT: 8000
-    expose:
-      - "8000"
-    # 바깥에 직접 열지 않는다. Caddy 를 통해서만 들어온다.
-    # (카카오 스킬은 HTTPS 필수라 어차피 프록시가 필요하다)
+    ports:
+      # 127.0.0.1 에만 바인딩한다. 바깥에서 8000 으로 직접 못 들어온다.
+      # 앞단(nginx 또는 Caddy)을 반드시 거치게 하려는 것.
+      - "127.0.0.1:8000:8000"
 
   caddy:
+    profiles: ["caddy"]
     image: caddy:2-alpine
     restart: unless-stopped
     environment:
-      # .env 에서 읽는다. 없으면 여기서 바로 실패한다 (인증서 발급이 조용히 깨지는 것보다 낫다).
-      # 앱 시크릿은 넘기지 않는다 — Caddy 에 필요 없다.
       DOMAIN: "${DOMAIN:?DOMAIN 을 .env 에 설정하세요. 예 bot.example.com}"
     ports:
       - "80:80"
