@@ -92,33 +92,68 @@ async def health_db(settings: SettingsDep, db: DbDep):
     return {"status": "ok", "latency_ms": latency_ms, "tables": tables}
 
 
-async def _probe(db: Any, table: str) -> tuple[str, Any]:
-    """테이블 하나에 최소 쿼리를 날려본다. 성공하면 True, 실패하면 사유 문자열."""
-    try:
-        await db.table(table).select("*", head=True, count="exact").limit(1).execute()
-    except Exception as exc:  # noqa: BLE001 — 사유를 그대로 보여주는 게 목적
-        logger.warning("health/db probe failed table=%s err=%s", table, exc)
-        return table, _short(exc)
-    return table, True
+async def _probe(db: Any, table: str, attempts: int = 2) -> tuple[str, Any]:
+    """테이블 하나에 최소 쿼리를 날려본다. 성공하면 True, 실패하면 사유 문자열.
+
+    한 번은 재시도한다. 6개를 동시에 찌르면 Supabase 게이트웨이가 그중 하나를
+    순간 거절하는 일이 있는데(빈 본문 401), 그걸로 "DB 고장" 이라고 보고하면
+    진짜 문제를 찾는 데 방해가 된다.
+    """
+    last: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            await (
+                db.table(table).select("*", head=True, count="exact").limit(1).execute()
+            )
+        except Exception as exc:  # noqa: BLE001 — 사유를 그대로 보여주는 게 목적
+            last = exc
+            logger.warning(
+                "health/db probe failed table=%s attempt=%d err=%s",
+                table,
+                attempt + 1,
+                exc,
+            )
+            if attempt + 1 < attempts:
+                await asyncio.sleep(0.2)
+            continue
+        return table, True
+    return table, _short(last)
 
 
-def _short(exc: Exception) -> str:
+def _short(exc: Exception | None) -> str:
+    if exc is None:
+        return "unknown error"
     text = " ".join(str(exc).split())
     return text[:200] if text else exc.__class__.__name__
 
 
 def _hint(tables: dict[str, Any]) -> str:
-    """가장 흔한 원인 순으로 안내한다."""
-    reasons = " ".join(str(v) for v in tables.values() if v is not True).lower()
+    """실패 **내용**으로 먼저 분류하고, 그 다음 범위를 본다.
 
-    if all(v is not True for v in tables.values()):
-        if "invalid" in reasons or "jwt" in reasons or "api key" in reasons:
+    (예전엔 범위부터 봐서 401 을 '테이블 없음' 이라고 잘못 안내했다.)
+    """
+    failed = {k: str(v) for k, v in tables.items() if v is not True}
+    if not failed:
+        return ""
+
+    blob = " ".join(failed.values()).lower()
+    everything = len(failed) == len(tables)
+
+    if "not exist" in blob or "schema cache" in blob or "pgrst205" in blob:
+        return "테이블이 없습니다. SQL Editor 에서 0001_init.sql 을 실행하세요."
+
+    if "401" in blob or "invalid" in blob or "jwt" in blob or "api key" in blob:
+        if everything:
             return (
                 "키가 거부되었습니다. anon/publishable 이 아니라 "
                 "Settings → API Keys 의 secret(sb_secret_...) 또는 "
                 "Legacy 탭의 service_role 인지 확인하세요."
             )
-        if "not exist" in reasons or "schema cache" in reasons or "404" in reasons:
-            return "테이블이 없습니다. SQL Editor 에서 0001_init.sql 을 실행하세요."
-        return "전 테이블 실패. URL·키·네트워크를 확인하세요."
-    return "일부 테이블만 없습니다. 0001_init.sql 을 다시 실행하세요."
+        return (
+            "일부만 401 입니다. 키가 틀렸다면 전부 실패해야 하므로, "
+            "동시 요청에 대한 일시적 거절일 가능성이 큽니다. 다시 호출해보세요."
+        )
+
+    if everything:
+        return "전 테이블 실패. SUPABASE_URL·키·네트워크를 확인하세요."
+    return f"{', '.join(failed)} 만 실패했습니다. 다시 호출해도 같으면 스키마를 확인하세요."
