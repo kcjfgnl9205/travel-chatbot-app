@@ -20,8 +20,9 @@ Oracle Cloud 는 Railway 같은 PaaS 가 아니라 **그냥 리눅스 서버**�
 ### 서버에서
 
 ```bash
-mkdir -p ~/travel-chatbot && cd ~/travel-chatbot
-git clone https://github.com/kcjfgnl9205/travel-chatbot-app.git .
+# 경로는 ~/travel-chatbot-app 로 맞춘다 (deploy/remote.sh 의 APP_DIR 기본값)
+git clone https://github.com/kcjfgnl9205/travel-chatbot-app.git ~/travel-chatbot-app
+cd ~/travel-chatbot-app
 
 cp .env.example .env
 nano .env            # 실제 키 입력
@@ -120,17 +121,65 @@ sudo firewall-cmd --permanent --add-service=http --add-service=https
 sudo firewall-cmd --reload
 ```
 
-### 도메인
+### 도메인 (Cloudflare)
 
-카카오 스킬 서버는 **HTTPS 필수**다. 도메인 A 레코드를 인스턴스 공인 IP 로 지정한다.
-Caddy 가 Let's Encrypt 인증서를 자동 발급·갱신하므로 별도 작업은 없다.
+카카오 스킬 서버는 **HTTPS 필수**다.
+
+**1) DNS 레코드 추가** — Cloudflare 대시보드 → 해당 도메인 → DNS → Records
+
+| Type | Name | Content | Proxy status |
+|---|---|---|---|
+| A | `bot` (또는 `@`) | 오라클 인스턴스 공인 IP | **DNS only (회색 구름)** |
+
+**2) `.env` 에 반영**
+
+```bash
+DOMAIN=bot.example.com
+PUBLIC_BASE_URL=https://bot.example.com
+```
+
+**3) `docker compose up -d`** → Caddy 가 Let's Encrypt 인증서를 자동 발급한다.
+
+```bash
+docker compose logs caddy | grep -i certificate
+curl -sI https://bot.example.com/health | head -1
+```
+
+#### ⚠️ 처음엔 반드시 "DNS only(회색)" 로
+
+프록시(주황 구름)를 켠 채로 시작하면 인증서 발급이 실패하거나 **무한 리다이렉트**에 빠진다.
+Cloudflare 가 자체 인증서로 TLS 를 끊고 오리진으로 다시 붙는 구조인데,
+SSL/TLS 모드가 `Flexible` 이면 오리진에 HTTP 로 오고 → Caddy 가 HTTPS 로 리다이렉트 →
+Cloudflare 가 다시 HTTP 로 요청하는 루프가 된다.
+
+인증서를 받은 뒤 프록시를 켜고 싶다면 **반드시 이 순서로**:
+
+1. 회색 구름 상태에서 `https://도메인/health` 가 뜨는 것 확인
+2. SSL/TLS → Overview → **Full (strict)** 로 변경 (Flexible 절대 금지)
+3. 그 다음 주황 구름으로 전환
+
+#### ⚠️ 프록시를 켤 거면 봇 방어를 풀어라
+
+Cloudflare 의 Bot Fight Mode / Managed Challenge 는 **카카오 서버의 요청을 봇으로 판단해
+막을 수 있다.** 그러면 챗봇이 조용히 죽는다(카카오 쪽에는 그냥 타임아웃으로 보인다).
+
+Security → WAF → Custom rules 에 예외를 둔다.
+
+```
+(http.request.uri.path contains "/api/v1/kakao/")  →  Skip: All remaining custom rules, Bot Fight Mode
+```
+
+리다이렉트 경로(`/r/*`)도 사용자 브라우저가 직접 타므로 챌린지가 걸리면 이탈한다. 같이 예외 처리하는 게 안전하다.
+
+> 프록시가 굳이 필요 없다면 **회색 구름 그대로 두는 게 가장 단순하다.** Caddy 가
+> 인증서를 알아서 갱신하고, 카카오·애드픽 요청 경로에 변수가 하나 줄어든다.
 
 ---
 
 ## 4. 실행
 
 ```bash
-cd ~/travel-chatbot
+cd ~/travel-chatbot-app
 docker compose up -d --build
 docker compose logs -f
 ```
@@ -160,7 +209,68 @@ git pull && docker compose up -d --build
 
 ---
 
-## 5. 구성
+## 5. main 에 push 하면 자동 배포
+
+`.github/workflows/deploy.yml` 이 이미 들어 있다. `main` 에 push 하면
+**테스트 → SSH 접속 → `git pull` → 재빌드 → 헬스체크** 까지 자동으로 돈다.
+테스트가 깨지면 배포하지 않는다.
+
+### 왜 이미지를 CI 에서 안 굽고 서버에서 빌드하나
+
+오라클 Always Free 는 **ARM64** 인데 GitHub Actions 기본 러너는 x86 이다.
+크로스 빌드(QEMU)는 몇 배로 느리다. 우리 이미지는 `pip install` 뿐이라
+서버에서 굽는 게 훨씬 빠르고 단순하다.
+
+### 서버 준비
+
+배포 전용 SSH 키를 만든다 (개인 키를 재사용하지 말 것).
+
+```bash
+# 로컬에서
+ssh-keygen -t ed25519 -f ~/.ssh/travel_deploy -N "" -C "github-actions-deploy"
+
+# 공개 키를 서버에 등록
+ssh-copy-id -i ~/.ssh/travel_deploy.pub ubuntu@<서버IP>
+```
+
+서버에 저장소가 `~/travel-chatbot-app` 에 있어야 한다(다른 경로면 `APP_DIR` 환경변수).
+
+### GitHub Secrets 등록
+
+저장소 → Settings → Secrets and variables → **Actions** → New repository secret
+
+| 이름 | 값 |
+|---|---|
+| `SSH_HOST` | 오라클 인스턴스 공인 IP |
+| `SSH_USER` | `ubuntu` (Oracle Linux 면 `opc`) |
+| `SSH_KEY` | `cat ~/.ssh/travel_deploy` **전체** (`-----BEGIN...` 포함) |
+| `SSH_KNOWN_HOSTS` | `ssh-keyscan -H <서버IP>` 결과 (선택, 권장) |
+| `SSH_PORT` | 22 가 아니면 (선택) |
+
+**여기가 GitHub Secrets 를 쓰는 유일한 곳이다.** 앱 시크릿(Supabase·애드픽)은
+서버의 `.env` 에 있고 GitHub 은 알 필요가 없다.
+
+### 동작 확인
+
+```bash
+git commit --allow-empty -m "test: 배포 확인" && git push
+```
+
+저장소 Actions 탭에서 진행 상황을 본다. 수동 실행은 Actions → `test & deploy` → Run workflow.
+
+### 수동 배포
+
+```bash
+ssh ubuntu@<서버IP>
+cd ~/travel-chatbot-app && bash deploy/remote.sh
+```
+
+> `deploy/remote.sh` 는 `git reset --hard origin/main` 을 쓴다. **서버는 읽기 전용으로 취급**하고
+> 서버에서 코드를 직접 고치지 않는다. `.env` 는 추적 대상이 아니라 그대로 남는다.
+
+---
+
+## 6. 구성
 
 ```
 인터넷 → :443 Caddy (TLS 종료, 자동 인증서)
@@ -175,7 +285,7 @@ git pull && docker compose up -d --build
 
 ---
 
-## 6. 배포 후 체크리스트
+## 7. 배포 후 체크리스트
 
 - [ ] `chmod 600 .env`
 - [ ] `PUBLIC_BASE_URL` 이 실제 HTTPS 도메인인가 (localhost 아님)
@@ -185,11 +295,15 @@ git pull && docker compose up -d --build
 - [ ] 카드 링크를 실제로 눌러 애드픽까지 이동되는지 확인
 - [ ] Supabase Table Editor 에서 `messages` / `recommendation_items` 에 행이 쌓이는지 확인
 
-## 7. 안 될 때
+## 8. 안 될 때
 
 | 증상 | 원인 |
 |---|---|
 | 인증서 발급 실패 | 80/443 이 **두 군데**(콘솔 + iptables) 다 열렸는지. DNS 전파 대기 |
+| 무한 리다이렉트 | Cloudflare SSL/TLS 모드가 `Flexible`. **Full (strict)** 로 바꾼다 |
+| 프록시 켠 뒤 카카오가 응답 없음 | Bot Fight Mode 가 카카오 요청을 막는 중. `/api/v1/kakao/*` WAF 예외 |
+| Actions 는 성공인데 서버가 그대로 | `SSH_HOST` 가 다른 서버이거나 저장소 경로가 `~/travel-chatbot-app` 이 아님 |
+| Actions 에서 Permission denied (publickey) | `SSH_KEY` 에 개인 키 **전문**(BEGIN/END 줄 포함)을 넣었는지. 공개 키를 넣으면 안 된다 |
 | 카카오에서 타임아웃 | 응답 5초 제한. `recommendations.latency_ms` 확인 |
 | 카드는 뜨는데 링크가 안 열림 | `PUBLIC_BASE_URL` 이 localhost 로 남아 있음 |
 | `db: disabled(no-op)` | `SUPABASE_*` 미설정. 챗봇은 돌지만 아무것도 기록되지 않는다 |
