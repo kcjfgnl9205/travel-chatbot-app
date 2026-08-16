@@ -5,7 +5,7 @@ WORKDIR /build
 COPY package.json package-lock.json* ./
 RUN npm ci
 
-COPY tsconfig.json nest-cli.json ./
+COPY tsconfig.json tsconfig.build.json nest-cli.json ./
 COPY src ./src
 COPY test ./test
 COPY data ./data
