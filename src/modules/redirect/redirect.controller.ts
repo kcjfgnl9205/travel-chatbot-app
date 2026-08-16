@@ -1,4 +1,5 @@
 import { Controller, Get, Logger, Param, Res } from '@nestjs/common';
+import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 
 import { MemoryStoreService } from '../database/memory-store.service';
@@ -22,6 +23,7 @@ const EXPIRED_HTML = `<!doctype html>
 <p>챗봇에서 호텔을 다시 추천받아 주세요.</p>
 </body></html>`;
 
+@ApiTags('리다이렉트')
 @Controller()
 export class RedirectController {
   private readonly logger = new Logger(RedirectController.name);
@@ -32,6 +34,15 @@ export class RedirectController {
   ) {}
 
   @Get('r/:clickId')
+  @ApiOperation({
+    summary: '클릭 추적 후 제휴 주소로 이동',
+    description:
+      '카카오 listCard 줄 링크가 가리키는 곳. click_count 를 올리고 302 로 보낸다.\n' +
+      'DB 왕복은 한 번이다 (register_click 함수가 조회·증가·목적지 반환을 동시에 한다).',
+  })
+  @ApiParam({ name: 'clickId', description: '추천 응답 시 호텔마다 발급된 12자 키' })
+  @ApiResponse({ status: 302, description: '애드픽 커미션 링크로 이동' })
+  @ApiResponse({ status: 404, description: '없거나 만료된 clickId' })
   async redirect(@Param('clickId') clickId: string, @Res() res: Response): Promise<void> {
     // DB 가 없거나 실패하면 인메모리 폴백으로 떨어진다 (로컬 개발용).
     const row = await this.items.registerClick(clickId);

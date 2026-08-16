@@ -1,4 +1,5 @@
 import { Controller, Get, Inject, Logger, Res } from '@nestjs/common';
+import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 
 import { AppConfig, CONFIG, adpickApiEnabled, dbEnabled } from '../../config/app.config';
@@ -17,6 +18,7 @@ import { SupabaseService } from '../database/supabase.service';
 
 type ProbeResult = true | string;
 
+@ApiTags('운영')
 @Controller()
 export class HealthController {
   private readonly logger = new Logger(HealthController.name);
@@ -28,6 +30,10 @@ export class HealthController {
 
   /** 앱 생존 확인. DB 는 건드리지 않는다. */
   @Get('health')
+  @ApiOperation({
+    summary: '앱 생존 확인 (liveness)',
+    description: 'DB 를 건드리지 않는다. DB 가 잠깐 흔들렸다고 컨테이너가 재시작되면 안 되기 때문.',
+  })
   health(): Record<string, unknown> {
     return {
       status: 'ok',
@@ -40,6 +46,14 @@ export class HealthController {
 
   /** Supabase 에 실제로 붙는지, 테이블이 다 있는지 확인한다. */
   @Get('health/db')
+  @ApiOperation({
+    summary: 'Supabase 실제 연결 진단',
+    description:
+      '환경변수가 채워졌는지가 아니라 6개 테이블에 진짜 쿼리를 날려본다.\n' +
+      '실패하면 원인별로 안내한다 (키 거부 / 마이그레이션 미실행 / URL 형식).',
+  })
+  @ApiResponse({ status: 200, description: '전 테이블 정상' })
+  @ApiResponse({ status: 503, description: '미설정 · 키 거부 · 테이블 없음' })
   async healthDb(@Res() res: Response): Promise<void> {
     if (!dbEnabled(this.config)) {
       res.status(503).json({

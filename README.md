@@ -12,10 +12,16 @@
 ## 빠른 실행
 
 ```bash
-npm install
+npm install                   # Node 24 (LTS)
 cp .env.example .env          # Supabase 없이도 그대로 뜬다
 npm run start:dev             # http://localhost:8000
 ```
+
+**API 문서(Swagger): http://localhost:8000/docs**
+
+예시 요청이 채워져 있어서 열자마자 *Try it out → Execute* 로 동작 확인이 된다.
+`APP_ENV=production` 이면 자동으로 꺼진다 — 스킬 URL 과 토큰 헤더 이름이 노출되고,
+공개 IP 는 이미 스캐너가 훑고 있기 때문. 운영에서 열려면 `SWAGGER_ENABLED=true`.
 
 ```bash
 # 스킬 호출 테스트
@@ -42,6 +48,7 @@ npx tsc --noEmit
 | GET | `/r/{clickId}` | **클릭 카운트 → 애드픽 302 리다이렉트** (DB 왕복 1회) |
 | GET | `/health` | 앱 생존 (DB 안 건드림) |
 | GET | `/health/db` | Supabase 실제 연결 진단 |
+| GET | `/docs` | Swagger (운영에서는 기본 비활성) |
 
 ### 링크는 이렇게 만들어진다
 
