@@ -23,10 +23,10 @@
 
 ### 호텔 마스터 테이블이 없는 이유
 
-`hotels` 와 `cities` 는 만들었다가 **0003 에서 지웠다.**
+`hotels` 와 `cities` 는 만들었다가 **지웠다.** (마이그레이션은 이후 하나로 합쳐져 흔적이 없다)
 
 - **`hotels`** — 이름으로 "같은 호텔"을 못 묶는다. 정규화 키(도시+공백제거 이름)는 공백·대소문자만 흡수해서, `호텔 그란비아 오사카` / `그란비아 오사카` / `Hotel Granvia Osaka` 가 전부 다른 행이 된다. LLM 은 매번 표기가 흔들리므로 **틀린 집계를 진짜처럼 보이게 만들 뿐**이었다. 호텔 신원은 `affiliate_links` 가 `(partner, source_url)` 유니크로 이미, 더 정확하게 들고 있다.
-- **`cities`** — 코드가 읽지 않았다. DB 없이도 챗봇이 돌아야 해서 [`nlu.py`](../app/services/nlu.py) 의 `CITIES` 상수를 쓴다. 같은 목록을 두 곳에서 관리하면 반드시 어긋난다.
+- **`cities`** — 코드가 읽지 않았다. DB 없이도 챗봇이 돌아야 해서 [`nlu.ts`](../src/modules/nlu/nlu.ts) 의 `CITIES` 상수를 쓴다. 같은 목록을 두 곳에서 관리하면 반드시 어긋난다.
 
 `hotels` 가 하던 역할은 전부 다른 곳에 있다:
 
@@ -195,7 +195,7 @@ expires_at     = 2026-09-08      ← ADPICK_LINK_TTL_DAYS
 
 동작:
 - 캐시 히트 → DB 조회 1번으로 끝, API 안 탐
-- 미스만 `asyncio.gather` 로 동시 변환 (`ADPICK_MAX_CONCURRENCY` 세마포어로 버스트 억제)
+- 미스만 `Promise.all` 로 동시 변환 (`ADPICK_MAX_CONCURRENCY` 동시 호출 상한으로 버스트 억제)
 - `status = 'ok'` + 미만료만 재사용. `failed`/`fallback` 도 **기록은 한다** — 실패 이유를 봐야 하니까
 
 #### `p_data` 는 왜 `click_id` 가 아닌가
@@ -242,7 +242,7 @@ latency_ms = 143          ← 카카오 5초 예산 대비 여유 추적
 
 ### ⑥ 클릭은 행이 아니라 카운터다
 
-`/r/{click_id}` 를 통과하면 그 행의 `click_count` 가 1 올라간다. 같은 사람이 10번 눌러도 **행은 그대로, 숫자만 10.**
+`/r/{clickId}` 를 통과하면 그 행의 `click_count` 가 1 올라간다. 같은 사람이 10번 눌러도 **행은 그대로, 숫자만 10.**
 
 ```sql
 -- 조회 + 증가 + 목적지 반환을 한 번에 (0005)
@@ -260,7 +260,7 @@ Postgres 함수로 만든 이유는 두 가지다:
 
 ### ⑦ 예약 전환은 추적하지 않는다
 
-애드픽이 "이 클릭이 실제 예약으로 이어졌다"고 알려주는 부분은 뺐다(`0004`). 지금 필요한 건 **노출 → 클릭**까지다.
+애드픽이 "이 클릭이 실제 예약으로 이어졌다"고 알려주는 부분은 뺐다. 지금 필요한 건 **노출 → 클릭**까지다.
 
 나중에 필요해지면 애드픽 성과 데이터를 `affiliate_links.p_data` 로 조인하면 된다. 그래서 **`p_data` 는 남겨뒀다** — 커미션 링크를 만들 때 박히고 나중에 못 바꾸므로, 지금 빼면 그 사이 생성된 링크들은 영영 조인 키가 없는 상태가 된다. 요청 파라미터 하나라 유지 비용은 0이다.
 
@@ -273,7 +273,7 @@ Postgres 함수로 만든 이유는 두 가지다:
 | 뺀 것 | 이유 |
 |---|---|
 | `hotels` | 이름으로 같은 호텔을 못 묶는다. 신원은 `source_url`, 그건 `affiliate_links` 가 이미 들고 있다 |
-| `cities` | 코드가 안 읽었다. 도시 목록은 `nlu.py` 상수 하나로 단일화 |
+| `cities` | 코드가 안 읽었다. 도시 목록은 `nlu.ts` 상수 하나로 단일화 |
 | `hotel_offers` | 호텔마다 링크를 미리 넣어두는 구조는 호텔이 실시간으로 나오면 성립하지 않는다 |
 | `clicks` | 클릭 1건 = 1행 → 카운터로. 노출과 같은 행에 두니 CTR 에 join 이 사라지고 리다이렉트 왕복도 준다 |
 | `conversions` | 예약 전환은 당장 범위 밖. `p_data` 만 남겨 나중에 붙일 수 있게 해뒀다 |
@@ -319,7 +319,7 @@ API 호출이 5회가 아니라 500회가 되어 **분당 60회 제한에 즉시
 
 > 단, **한 리스트 안에서는** 중복되면 안 된다. AI 가 같은 호텔을 이름만 다르게
 > 두 번 주면 사용자에게 같은 호텔이 두 줄로 보인다.
-> [`service.py`](../app/domain/hotel/service.py) 의 `_dedupe()` 가 `source_url` 기준으로 거른다.
+> [`hotel.service.ts`](../src/modules/hotel/hotel.service.ts) 의 `dedupe()` 가 `source_url` 기준으로 거른다.
 
 ---
 
@@ -327,16 +327,16 @@ API 호출이 5회가 아니라 500회가 되어 **분당 60회 제한에 즉시
 
 | 테이블 | 쓰기 | 읽기 |
 |---|---|---|
-| `users` | [`service.py`](../app/domain/hotel/service.py) 요청마다 upsert | — |
-| `messages` | `service.py` 요청마다 insert | — |
-| `affiliate_links` | [`affiliate.py`](../app/services/affiliate.py) 변환 후 upsert | `affiliate.py` 캐시 조회 |
+| `users` | [`hotel.service.ts`](../src/modules/hotel/hotel.service.ts) 요청마다 upsert | — |
+| `messages` | `hotel.service.ts` 요청마다 insert | — |
+| `affiliate_links` | [`affiliate.service.ts`](../src/modules/affiliate/affiliate.service.ts) 변환 후 upsert | 같은 파일에서 캐시 조회 |
 
-| `search_cache` | [`search_cache.py`](../app/services/search_cache.py) provider 호출 후 저장 | 매 요청 첫 조회 |
-| `recommendations` | `service.py` 응답 직전 insert | — |
-| `recommendation_items` | `service.py` 리스트 조립 시 bulk insert | [`redirect.py`](../app/api/v1/redirect.py) `click_id` 조회 |
-| (클릭) | `redirect.py` 가 `register_click()` RPC 로 `recommendation_items.click_count` 증가 | 같은 호출이 목적지도 반환 |
+| `search_cache` | [`search-cache.service.ts`](../src/modules/search-cache/search-cache.service.ts) provider 호출 후 저장 | 매 요청 첫 조회 |
+| `recommendations` | `hotel.service.ts` 응답 직전 insert | — |
+| `recommendation_items` | `hotel.service.ts` 리스트 조립 시 bulk insert | [`redirect.controller.ts`](../src/modules/redirect/redirect.controller.ts) `clickId` 조회 |
+| (클릭) | `redirect.controller.ts` 가 `register_click()` RPC 로 `recommendation_items.click_count` 증가 | 같은 호출이 목적지도 반환 |
 
-**모든 쓰기는 실패해도 예외를 던지지 않는다** ([repositories/base.py](../app/db/repositories/base.py)). DB가 죽어도 사용자는 호텔 목록을 받는다. 대신 그 요청은 기록되지 않는다 — 로깅보다 응답이 우선이라는 판단.
+**모든 쓰기는 실패해도 예외를 던지지 않는다** ([repositories/base.repository.ts](../src/modules/database/repositories/base.repository.ts)). DB가 죽어도 사용자는 호텔 목록을 받는다. 대신 그 요청은 기록되지 않는다 — 로깅보다 응답이 우선이라는 판단.
 
 마찬가지로 **애드픽 변환이 실패해도 카드는 나간다.** 원본 주소로 폴백한다 — 수익화는 못 해도 사용자는 호텔을 본다.
 

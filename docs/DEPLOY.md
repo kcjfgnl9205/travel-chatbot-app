@@ -11,7 +11,7 @@ Oracle Cloud 는 Railway 같은 PaaS 가 아니라 **그냥 리눅스 서버**�
 
 | | 언제 읽히나 | 이 프로젝트에서 |
 |---|---|---|
-| 내 PC 의 `.env` | 로컬에서 `uvicorn` 돌릴 때 | 개발용 값 |
+| 내 PC 의 `.env` | 로컬에서 `npm run start:dev` 할 때 | 개발용 값 |
 | **서버의 `.env`** | **컨테이너가 실행 중일 때** | **운영 키 ← 여기** |
 | GitHub Secrets | GitHub Actions 워크플로 실행 중에만 | 나중에 CI 배포를 붙이면 SSH 키 |
 
@@ -275,7 +275,7 @@ cd ~/travel-chatbot-app && bash deploy/remote.sh
 ```
 인터넷 → :443 Caddy (TLS 종료, 자동 인증서)
               ↓ 내부 네트워크
-           app:8000 (uvicorn, 비루트 유저, healthcheck)
+           app:8000 (Nest, 비루트 유저, healthcheck)
               ↓
            Supabase (Seoul)
 ```

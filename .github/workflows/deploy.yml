@@ -16,14 +16,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-node@v4
         with:
-          python-version: "3.12"
-          cache: pip
+          node-version: "22"
+          cache: npm
 
-      - run: pip install -r requirements-dev.txt
-      - run: ruff check .
-      - run: pytest
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm test
 
   deploy:
     needs: test

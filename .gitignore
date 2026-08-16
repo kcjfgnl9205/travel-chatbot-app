@@ -1,11 +1,8 @@
-__pycache__/
-*.py[cod]
-.venv/
-venv/
-.pytest_cache/
-.ruff_cache/
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
 .DS_Store
-*.egg-info/
 .claude/settings.local.json
 
 # 시크릿. 이름을 뭐라 붙이든(.env / .env.prod / dev.env / zz.env) 전부 제외한다.

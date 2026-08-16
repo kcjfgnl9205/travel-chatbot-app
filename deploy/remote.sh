@@ -20,9 +20,8 @@ docker compose up -d --build
 echo "▸ 헬스체크"
 # 도메인·DNS 와 무관하게 컨테이너 안에서 직접 확인한다.
 for i in $(seq 1 30); do
-    if docker compose exec -T app python -c "
-import urllib.request, sys
-sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).status == 200 else 1)
+    if docker compose exec -T app node -e "
+fetch('http://127.0.0.1:8000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))
 " 2>/dev/null; then
         echo "  앱 정상 (${i}회차)"
         break
@@ -37,16 +36,13 @@ done
 
 # DB 는 붙었는지만 알려주고 실패해도 배포를 되돌리지는 않는다.
 # Supabase 가 잠깐 흔들렸다고 배포가 실패로 뜨면 안 된다.
-docker compose exec -T app python -c "
-import json, urllib.request, urllib.error
-try:
-    r = urllib.request.urlopen('http://127.0.0.1:8000/health/db', timeout=10)
-    print('  DB:', json.loads(r.read())['status'])
-except urllib.error.HTTPError as e:
-    body = json.loads(e.read() or b'{}')
-    print('  DB:', body.get('status'), '-', body.get('hint', ''))
-except Exception as e:
-    print('  DB: 확인 실패 -', e)
+docker compose exec -T app node -e "
+fetch('http://127.0.0.1:8000/health/db')
+  .then(async (r) => {
+    const b = await r.json();
+    console.log('  DB:', b.status, b.hint ? '- ' + b.hint : '');
+  })
+  .catch((e) => console.log('  DB: 확인 실패 -', e.message));
 " || true
 
 echo "▸ 오래된 이미지 정리"

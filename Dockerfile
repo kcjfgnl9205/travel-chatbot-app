@@ -1,15 +1,22 @@
-FROM python:3.12-slim
+# 빌드 스테이지
+FROM node:22-slim AS build
+WORKDIR /build
 
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1
+COPY package.json package-lock.json* ./
+RUN npm ci
 
+COPY tsconfig.json nest-cli.json ./
+COPY src ./src
+RUN npx nest build && npm prune --omit=dev
+
+# 실행 스테이지
+FROM node:22-slim
+ENV NODE_ENV=production
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY app ./app
+COPY --from=build /build/node_modules ./node_modules
+COPY --from=build /build/dist ./dist
+# static provider 가 읽는 고정 데이터.
 COPY data ./data
 
 # 루트로 돌리지 않는다. 컨테이너가 뚫려도 권한을 제한한다.
@@ -18,9 +25,7 @@ USER appuser
 
 EXPOSE 8000
 
-# 리버스 프록시(Caddy)와 compose 가 살아있는지 판단하는 근거
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request,os,sys; \
-sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:'+os.getenv('PORT','8000')+'/health', timeout=2).status==200 else 1)"
+    CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8000)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["node", "dist/main"]

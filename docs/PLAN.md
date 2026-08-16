@@ -1,6 +1,7 @@
 # travel-chatbot-app — 초기 기획 (호텔 MVP)
 
-카카오톡 챗봇용 스킬 서버. FastAPI + Supabase(Postgres).
+카카오톡 챗봇용 스킬 서버. NestJS + Supabase(Postgres).
+(FastAPI 로 시작했다가 전환했다 — [MIGRATION.md](MIGRATION.md))
 1차 목표: **"오사카 호텔 추천해줘" → 호텔 목록 카드 노출 → 사용자 클릭 → 애드픽 링크로 이동 + 클릭 로그 적재**
 
 DB 상세는 [DB.md](DB.md).
@@ -10,13 +11,13 @@ DB 상세는 [DB.md](DB.md).
 ## 1. 전체 구조
 
 ```
-[카카오톡] --(skill webhook)--> [FastAPI 스킬 서버] --> [Supabase]
+[카카오톡] --(skill webhook)--> [NestJS 스킬 서버] --> [Supabase]
                                       |
                                       +--> HotelProvider   호텔 + 원본주소(아고다 등)
                                       |     (1단계: 고정 / 2단계: AI·크롤링)
                                       +--> AdpickClient    원본주소 → 제휴주소 변환 (캐시)
 
-[카드 클릭] --> [FastAPI /r/{click_id}] --(302)--> [애드픽 제휴주소] --> 아고다/부킹
+[줄 클릭] --> [/r/{clickId}] --(302)--> [애드픽 커미션 링크] --> 아고다/부킹
                         |
                         +--> click_count + 1
 ```
@@ -68,7 +69,7 @@ DB 상세는 [DB.md](DB.md).
 
 | 실패 | 결과 |
 |---|---|
-| Supabase 다운 | 호텔 목록 **정상 응답**. 그 요청만 기록 안 됨 (repository 가 예외 대신 None 반환) |
+| Supabase 다운 | 호텔 목록 **정상 응답**. 그 요청만 기록 안 됨 (repository 가 예외 대신 null 반환) |
 | 애드픽 API 실패 | 카드 **정상 노출**. 원본 주소로 폴백 — 수익화만 안 됨. 실패 사유는 `affiliate_links.error` 에 기록 |
 | provider 결과 0건 | "아직 준비 중인 도시" 안내 + 다른 도시 quickReplies |
 | 그 외 모든 예외 | 카카오에 **200 + 안내 문구**. 500 을 주면 사용자에게 원인 불명 오류만 뜬다 |
@@ -86,7 +87,7 @@ DB 상세는 [DB.md](DB.md).
 
 흐름: 발화 1건 → `messages` 1행 → `recommendations` 1행 → `recommendation_items` N행 → 클릭 시 그 행의 `click_count` 증가
 
-**호텔 마스터 테이블은 없다.** 호텔 목록을 매번 AI/크롤링으로 새로 받는데 이름으로는 "같은 호텔"을 못 묶는다 — `호텔 그란비아 오사카` / `그란비아 오사카` / `Hotel Granvia Osaka` 가 전부 다른 행이 된다. 호텔 신원은 **`source_url`**(기계가 부여한 원본 주소)로 잡고, 이미 `affiliate_links` 가 `(partner, source_url)` 유니크로 그 역할을 한다. 도시 목록도 DB 대신 [`nlu.py`](../app/services/nlu.py) 상수 하나로 관리한다.
+**호텔 마스터 테이블은 없다.** 호텔 목록을 매번 AI/크롤링으로 새로 받는데 이름으로는 "같은 호텔"을 못 묶는다 — `호텔 그란비아 오사카` / `그란비아 오사카` / `Hotel Granvia Osaka` 가 전부 다른 행이 된다. 호텔 신원은 **`source_url`**(기계가 부여한 원본 주소)로 잡고, 이미 `affiliate_links` 가 `(partner, source_url)` 유니크로 그 역할을 한다. 도시 목록도 DB 대신 [`nlu.ts`](../src/modules/nlu/nlu.ts) 상수 하나로 관리한다.
 
 **`recommendation_items` 가 설계의 중심.** `click_id` 발급 + 노출 스냅샷(호텔명/가격/원본주소/최종링크) + 미클릭 줄 기록을 동시에 한다. 덕분에 CTR 과 "그때 사용자가 본 화면"을 둘 다 복원할 수 있다.
 
@@ -96,36 +97,26 @@ DB 상세는 [DB.md](DB.md).
 
 ```
 travel-chatbot-app/
-├── app/
-│   ├── main.py
-│   ├── core/config.py
-│   ├── api/v1/
-│   │   ├── kakao_hotel.py          POST /kakao/hotels/recommend, /kakao/fallback
-│   │   └── redirect.py             GET /r/{click_id}
-│   ├── kakao/
-│   │   ├── schemas.py              오픈빌더 요청 모델
-│   │   └── templates.py            listCard 빌더 (카카오 제한 처리)
-│   ├── domain/hotel/
-│   │   ├── schemas.py              Hotel, HotelQuery
-│   │   ├── service.py              유스케이스 전체 흐름
-│   │   └── providers/
-│   │       ├── base.py             HotelProvider 인터페이스 (async)
-│   │       └── static_provider.py  고정 JSON  ← 지금
-│   │       # ai_provider.py, crawler_provider.py ← Phase 3
-│   ├── services/
-│   │   ├── nlu.py                  도시·인원·박수 파싱
-│   │   ├── search_cache.py         검색 결과 캐시 (provider 재호출 방지)
-│   │   ├── adpick.py               애드픽 변환 클라이언트
-│   │   └── affiliate.py            캐시 우선 링크 해석
-│   └── db/
-│       ├── supabase_client.py      없으면 no-op 모드
-│       ├── memory_store.py         no-op 모드 리다이렉트 폴백
-│       └── repositories/
-├── data/hotels.json                static provider 폴백/데모 데이터 (DB 시드 아님)
+├── src/
+│   ├── common/guards/              X-Skill-Token 검증
+│   ├── config/                     환경변수 · DB 활성 판단
+│   ├── modules/
+│   │   ├── kakao/                  스킬 엔드포인트 + listCard 빌더
+│   │   ├── hotel/                  유스케이스 + providers/ (static ← 지금)
+│   │   ├── nlu/                    도시·인원·박수 파싱
+│   │   ├── adpick/                 커미션 링크 생성
+│   │   ├── affiliate/              캐시 우선 링크 해석
+│   │   ├── search-cache/           검색 결과 캐시
+│   │   ├── redirect/               /r/{clickId}
+│   │   ├── health/                 /health, /health/db
+│   │   └── database/               Supabase + repositories (@Global)
+│   ├── app.module.ts
+│   └── main.ts
+├── data/hotels.json                static provider 데이터 (DB 시드 아님)
 ├── supabase/migrations/
-│   └── 0001_init.sql              테이블 6개 + register_click()
-├── tests/                          34개
-└── docs/{PLAN,DB}.md
+│   └── 0001_init.sql               테이블 6개 + register_click()
+├── test/                           39개
+└── docs/{PLAN,DB,DEPLOY,MIGRATION}.md
 ```
 
 ---
@@ -180,4 +171,4 @@ travel-chatbot-app/
    잘라야 한다. `search_cache` 의 TTL 도 마찬가지.
 5. **배포처** — Railway / Fly.io / Cloudtype 등. 리다이렉트 응답 속도가 곧 이탈률이라 한국·일본 리전 권장
 6. **AI 결과 검증** — LLM 으로 호텔을 생성하면 존재하지 않는 호텔이나 틀린 가격이 나올 수 있다. provider 를 정할 때 원본 응답을 남길 테이블을 함께 만들어 검증 로직을 얹는 게 맞다. 크롤링으로 실제 URL 을 확보하는 방식이면 이 문제는 상당 부분 사라진다
-7. **도시 확장** — 도시 목록이 [`nlu.py`](../app/services/nlu.py) 상수 하나에 있다. 수십 개로 늘어나면 별칭 매칭이 선형 탐색이라 느려지고, 코드 배포 없이 추가할 수 없다. 그때 DB + 캐시로 옮기는 게 맞다
+7. **도시 확장** — 도시 목록이 [`nlu.ts`](../src/modules/nlu/nlu.ts) 상수 하나에 있다. 수십 개로 늘어나면 별칭 매칭이 선형 탐색이라 느려지고, 코드 배포 없이 추가할 수 없다. 그때 DB + 캐시로 옮기는 게 맞다
