@@ -2,9 +2,12 @@
 #
 #   docker compose up -d --build
 #
-# TLS 종료는 호스트의 nginx 가 한다 (Cloudflare Origin 인증서 사용).
+# TLS 종료는 호스트의 nginx 가 한다 (Cloudflare Origin 인증서).
 # 이 앱은 127.0.0.1:8000 에만 붙고, nginx 가 proxy_pass 로 넘겨준다.
 #   nginx 설정: deploy/nginx/bot-nolmoa.conf
+#
+# ⚠️ Origin CA 인증서는 브라우저가 신뢰하지 않는다.
+#    Cloudflare 프록시(주황)를 켜고 SSL/TLS 를 Full (strict) 로 둬야 정상 동작한다.
 #
 # 시크릿은 이 파일이 아니라 같은 디렉터리의 .env 에서 읽는다 (.gitignore 대상).
 
@@ -17,5 +20,4 @@ services:
       PORT: 8000
     ports:
       # 127.0.0.1 에만 바인딩한다. 바깥에서 8000 으로 직접 못 들어온다.
-      # 반드시 nginx(→ Cloudflare)를 거치게 하려는 것.
       - "127.0.0.1:8000:8000"
