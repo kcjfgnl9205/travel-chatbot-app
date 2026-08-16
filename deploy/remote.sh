@@ -7,6 +7,19 @@ set -euo pipefail
 APP_DIR="${APP_DIR:-$HOME/travel-chatbot-app}"
 cd "$APP_DIR"
 
+# 배포가 겹치면 안 된다.
+#
+# 워크플로의 concurrency 는 **GitHub Actions 끼리만** 직렬화한다. CI 배포가 도는 중에
+# 서버에서 손으로 이 스크립트를 돌리면 `docker compose up` 두 개가 같은 컨테이너를
+# 동시에 재생성하려다 이름 충돌로 둘 다 죽는다. 실제로 그렇게 앱이 잠시 내려간 적 있다.
+#
+# 200 은 "다른 배포가 돌고 있다"는 뜻의 자체 종료 코드다.
+exec 9>"$APP_DIR/.deploy.lock"
+if ! flock -n 9; then
+    echo "다른 배포가 진행 중입니다. 끝난 뒤 다시 실행하세요."
+    exit 200
+fi
+
 echo "▸ 코드 갱신"
 git fetch --prune origin
 # 서버는 읽기 전용으로 취급한다. 서버에서 직접 고친 추적 파일은 버린다.
@@ -15,7 +28,7 @@ git reset --hard origin/main
 git log --oneline -1
 
 echo "▸ 빌드 & 기동"
-docker compose up -d --build
+docker compose up -d --build --remove-orphans
 
 echo "▸ 헬스체크"
 # 도메인·DNS 와 무관하게 컨테이너 안에서 직접 확인한다.

@@ -11,3 +11,6 @@ coverage/
 .env.*
 *.env
 !.env.example
+
+# 배포 잠금 파일 (deploy/remote.sh)
+.deploy.lock
