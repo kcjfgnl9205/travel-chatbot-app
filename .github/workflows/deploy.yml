@@ -3,7 +3,12 @@ name: Deploy to Oracle VM
 # main → 운영 스택 (~/travel-chatbot-app, app:8000, nginx 가 bot.nolmoa.com 으로 프록시)
 #
 # game-project-be 와 같은 방식이다: appleboy/ssh-action 으로 SSH 접속해서
-# 서버의 배포 스크립트를 돌린다. 시크릿 이름도 동일하게 맞췄다.
+# 서버의 배포 스크립트를 돌린다.
+#
+# 시크릿 이름만 다르다. game-project-be 는 ORACLE_* 를 쓰지만, 이 저장소에는
+# 이미 SSH_* 로 등록해서 동작을 확인해둔 값이 있다. GitHub Secrets 는 저장 후
+# 값을 다시 읽을 수 없으므로(설계상 그렇다), 굳이 이름을 맞추려고 키를 새로
+# 발급하는 것보다 이미 되는 걸 쓰는 게 낫다.
 on:
   push:
     branches: [main]
@@ -37,9 +42,9 @@ jobs:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.ORACLE_HOST }}
-          username: ${{ secrets.ORACLE_USER }}
-          key: ${{ secrets.ORACLE_SSH_KEY }}
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
           script: |
             set -e
             cd ~/travel-chatbot-app
