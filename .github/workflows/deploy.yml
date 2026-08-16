@@ -1,0 +1,52 @@
+name: Deploy to Oracle VM
+
+# main → 운영 스택 (~/travel-chatbot-app, app:8000, nginx 가 bot.nolmoa.com 으로 프록시)
+#
+# game-project-be 와 같은 방식이다: appleboy/ssh-action 으로 SSH 접속해서
+# 서버의 배포 스크립트를 돌린다. 시크릿 이름도 동일하게 맞췄다.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 배포가 겹치면 같은 컨테이너를 동시에 재생성하려다 이름 충돌로 둘 다 죽는다.
+# (서버의 remote.sh 에도 flock 이 있어 이중 안전장치)
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.ORACLE_HOST }}
+          username: ${{ secrets.ORACLE_USER }}
+          key: ${{ secrets.ORACLE_SSH_KEY }}
+          script: |
+            set -e
+            cd ~/travel-chatbot-app
+            git fetch --prune origin
+            git reset --hard origin/main
+            bash deploy/remote.sh
+
+# develop 브랜치로 개발 스택을 굴리려면 game-project-be 처럼 분기하면 된다.
+# 다만 서버에 별도 디렉터리·.env·포트(예: 8001)와 nginx vhost(dev-bot.nolmoa.com)가
+# 먼저 있어야 한다. 지금은 운영 스택 하나뿐이라 main 만 둔다.
