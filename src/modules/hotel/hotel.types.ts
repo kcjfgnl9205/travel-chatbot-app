@@ -61,5 +61,17 @@ export function listDescription(h: Hotel): string {
 
 export interface HotelProvider {
   readonly name: string;
+  /**
+   * ⚠️ 느릴 수 있다(AI provider 는 7~30초). 호출부는 반드시 백그라운드에서만 부른다.
+   * 카카오 5초 예산 안에서 도는 건 캐시 조회뿐이다.
+   */
   search(query: HotelQuery): Promise<Hotel[]>;
 }
+
+/**
+ * provider DI 토큰.
+ *
+ * 구현을 직접 주입하지 않는 이유: 테스트에서 가짜 provider 로 갈아끼워야 하고
+ * (실제 OpenAI 를 부르면 안 된다), HOTEL_PROVIDER 설정으로도 바뀐다.
+ */
+export const HOTEL_PROVIDER = 'HOTEL_PROVIDER';

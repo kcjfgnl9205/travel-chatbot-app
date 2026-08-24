@@ -15,7 +15,6 @@
 | | |
 |---|---|
 | 환경변수 이름 | `SUPABASE_URL`, `ADPICK_API_KEY`, `ADPICK_TIMEOUT_SECONDS` … 전부 동일 |
-| `data/hotels.json` | 같은 파일, 같은 스키마 |
 | DB 스키마 | `supabase/migrations/0001_init.sql` 그대로. 마이그레이션 재실행 불필요 |
 | 엔드포인트 경로 | `/api/v1/kakao/hotels/recommend`, `/r/{clickId}`, `/health`, `/health/db` |
 | 응답 JSON | **바이트 단위로 동일** (아래 참고) |

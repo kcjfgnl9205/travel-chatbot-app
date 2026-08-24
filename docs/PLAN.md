@@ -102,7 +102,8 @@ travel-chatbot-app/
 │   ├── config/                     환경변수 · DB 활성 판단
 │   ├── modules/
 │   │   ├── kakao/                  스킬 엔드포인트 + listCard 빌더
-│   │   ├── hotel/                  유스케이스 + providers/ (static ← 지금)
+│   │   ├── hotel/                  유스케이스 + providers/ (openai ← 지금)
+│   │   ├── openai/                 Responses API 클라이언트
 │   │   ├── nlu/                    도시·인원·박수 파싱
 │   │   ├── adpick/                 커미션 링크 생성
 │   │   ├── affiliate/              캐시 우선 링크 해석
@@ -112,10 +113,9 @@ travel-chatbot-app/
 │   │   └── database/               Supabase + repositories (@Global)
 │   ├── app.module.ts
 │   └── main.ts
-├── data/hotels.json                static provider 데이터 (DB 시드 아님)
 ├── supabase/migrations/
 │   └── 0001_init.sql               테이블 6개 + register_click()
-├── test/                           39개
+├── test/                           80개
 └── docs/{PLAN,DB,DEPLOY,MIGRATION}.md
 ```
 
@@ -135,9 +135,9 @@ travel-chatbot-app/
 
 ## 7. 개발 단계
 
-- **Phase 1 (지금)** — 고정 호텔 데이터, listCard 응답, 제휴링크 변환/캐시, 클릭 추적, DB 적재
-- **Phase 2** — 애드픽 실제 API 스펙 연결, 날짜/인원 파싱(체크인·체크아웃), 썸네일 실제 이미지
-- **Phase 3** — provider 교체(크롤링 또는 LLM). 결과 캐시는 이미 붙어 있으므로 provider 만 갈아끼우면 되고, 호출 로그 테이블을 그때 추가한다. 카카오 **콜백(useCallback)** 전환
+- **Phase 1 (완료)** — 고정 호텔 데이터, listCard 응답, 제휴링크 변환/캐시, 클릭 추적, DB 적재
+- **Phase 3 (지금)** — provider 를 gpt-5-mini + 웹 검색으로 교체, 도시 화이트리스트 제거, 카카오 **콜백(useCallback)** 전환. 남은 것: OpenAI 호출 로그 테이블
+- **Phase 2 (남음)** — 애드픽 실제 API 스펙 연결, 날짜 파싱(체크인·체크아웃), 썸네일 품질
 - **Phase 4** — 항공권 도메인, 재방문 개인화
 
 예약 전환 추적은 범위 밖이다. 노출 → 클릭(`recommendation_items.click_count`)까지만 본다. 필요해지면 `affiliate_links.p_data` 로 애드픽 성과 데이터를 붙일 수 있게 열어뒀다.

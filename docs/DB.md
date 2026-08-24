@@ -115,7 +115,7 @@ erDiagram
         uuid user_id FK
         uuid message_id FK
         text city_slug
-        text provider "static|ai|crawler"
+        text provider "openai|crawler"
         int item_count
         bool cache_hit
         int latency_ms
@@ -218,7 +218,7 @@ expires_at     = 2026-09-08      ← ADPICK_LINK_TTL_DAYS
 ```
 message_id = ②의 id       ← 요청 ↔ 응답 연결
 city_slug  = "osaka"
-provider   = "static"     ← ai 로 바뀌면 성능/품질 비교 가능
+provider   = "openai"     ← provider 를 바꾸면 성능/품질 비교 가능
 item_count = 5
 latency_ms = 143          ← 카카오 5초 예산 대비 여유 추적
 ```

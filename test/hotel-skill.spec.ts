@@ -2,24 +2,48 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 
 import { MemoryStoreService } from '../src/modules/database/memory-store.service';
+import { HotelService } from '../src/modules/hotel/hotel.service';
+import { NluService } from '../src/modules/nlu/nlu.service';
+import { SearchCacheService } from '../src/modules/search-cache/search-cache.service';
 import * as t from '../src/modules/kakao/templates';
-import { createApp, kakaoPayload, listCardOf } from './helpers';
-
-const ENDPOINT = '/api/v1/kakao/hotels/recommend';
+import { FakeHotelProvider } from './fake-provider';
+import {
+  RECOMMEND,
+  callbackReceiver,
+  createApp,
+  kakaoPayload,
+  listCardOf,
+  recommendUntilCard,
+} from './helpers';
 
 describe('카카오 호텔 스킬', () => {
   let app: INestApplication;
+  let provider: FakeHotelProvider;
   let memory: MemoryStoreService;
+  let cache: SearchCacheService;
+  let hotels: HotelService;
+  let nlu: NluService;
 
   beforeAll(async () => {
-    app = await createApp();
+    ({ app, provider } = await createApp());
     memory = app.get(MemoryStoreService);
+    cache = app.get(SearchCacheService);
+    hotels = app.get(HotelService);
+    nlu = app.get(NluService);
   });
   afterAll(async () => app.close());
-  beforeEach(() => memory.clear());
+  beforeEach(() => {
+    memory.clear();
+    cache.clearMemory();
+    hotels.forgetEmpty();
+    nlu.clearCache();
+    provider.reset();
+  });
 
   const post = (body: Record<string, unknown>) =>
-    request(app.getHttpServer()).post(ENDPOINT).send(body);
+    request(app.getHttpServer()).post(RECOMMEND).send(body);
+
+  const textOf = (body: any) => body.template?.outputs?.[0]?.simpleText?.text ?? '';
 
   it('앱 생존 확인', async () => {
     const res = await request(app.getHttpServer()).get('/health').expect(200);
@@ -32,81 +56,200 @@ describe('카카오 호텔 스킬', () => {
     expect(res.body.reason).toContain('SUPABASE_URL');
   });
 
-  it('반복 호출해도 깨지지 않는다', async () => {
-    for (let i = 0; i < 3; i += 1) {
-      await request(app.getHttpServer()).get('/health/db').expect(503);
-    }
+  // ------------------------------------------------------------ 5초 예산
+  describe('캐시 미스는 요청 경로에서 검색하지 않는다', () => {
+    it('콜백이 없으면 "찾고 있어요" 로 넘기고 백그라운드에서 검색한다', async () => {
+      const res = await post(kakaoPayload('방콕 호텔 추천해줘')).expect(201);
+
+      expect(listCardOf(res.body)).toBeUndefined();
+      expect(textOf(res.body)).toContain('찾고 있어요');
+
+      // 검색은 시작됐다 — 다시 물으면 캐시에서 카드가 나온다.
+      const card = await recommendUntilCard(app, '방콕 호텔 추천해줘');
+      expect(card.header.title).toContain('방콕');
+    });
+
+    it('응답이 5초 예산 안에 떨어진다 — provider 가 아무리 느려도', async () => {
+      provider.delayMs = 3000; // AI 검색이 느린 상황
+
+      const started = Date.now();
+      const res = await post(kakaoPayload('이스탄불 호텔 추천해줘')).expect(201);
+      const elapsed = Date.now() - started;
+
+      expect(elapsed).toBeLessThan(1000);
+      expect(textOf(res.body)).toContain('찾고 있어요');
+    });
+
+    it('같은 도시를 동시에 물어도 검색은 한 번만 나간다', async () => {
+      provider.delayMs = 200;
+
+      await Promise.all(
+        Array.from({ length: 5 }, () => post(kakaoPayload('하노이 호텔 추천해줘'))),
+      );
+      await recommendUntilCard(app, '하노이 호텔 추천해줘');
+
+      const hanoi = provider.calls.filter((c) => c.cityName === '하노이');
+      expect(hanoi).toHaveLength(1);
+    });
+
+    it('빈손으로 끝난 도시를 연타해도 검색은 한 번만 나간다', async () => {
+      // 빈 결과는 캐시에 안 남는다. 그것만 두면 오타 연타가 그대로 OpenAI 요금이 된다.
+      provider.reply = () => [];
+
+      for (let i = 0; i < 4; i += 1) {
+        const res = await post(kakaoPayload('asdf 호텔 추천해줘')).expect(201);
+        expect(textOf(res.body)).toBeTruthy();
+        await new Promise((r) => setTimeout(r, 20));
+      }
+
+      expect(provider.calls.filter((c) => c.cityName === 'asdf')).toHaveLength(1);
+    });
+
+    it('연타 2회째부터는 못 찾았다고 바로 답한다', async () => {
+      provider.reply = () => [];
+      await post(kakaoPayload('zxcv 호텔 추천해줘')).expect(201);
+      await new Promise((r) => setTimeout(r, 50));
+
+      const res = await post(kakaoPayload('zxcv 호텔 추천해줘')).expect(201);
+      expect(textOf(res.body)).toContain('찾지 못했어요');
+    });
+
+    it('캐시에 있으면 provider 를 아예 안 부른다', async () => {
+      await recommendUntilCard(app, '오사카 호텔 추천해줘');
+      const before = provider.calls.length;
+
+      const res = await post(kakaoPayload('오사카 호텔 추천해줘')).expect(201);
+      expect(listCardOf(res.body)).toBeDefined();
+      expect(provider.calls).toHaveLength(before);
+    });
   });
 
-  it('오사카 → listCard 를 돌려준다', async () => {
-    const res = await post(kakaoPayload('오사카 호텔 추천해줘')).expect(201);
+  // -------------------------------------------------------------- 콜백
+  describe('콜백', () => {
+    it('콜백이 켜져 있으면 useCallback 으로 답하고 카드를 밀어준다', async () => {
+      const receiver = await callbackReceiver();
+      try {
+        const res = await post(
+          kakaoPayload('세부 호텔 추천해줘', 'test-user', {}, receiver.url),
+        ).expect(201);
 
-    expect(res.body.version).toBe('2.0');
-    expect(res.body.template.outputs).toHaveLength(1); // 캐러셀 없이 listCard 하나
+        // 즉시 응답은 예약 알림이다
+        expect(res.body.useCallback).toBe(true);
+        expect(res.body.version).toBe('2.0');
+        expect(res.body.data.text).toContain('세부');
 
-    const card = listCardOf(res.body);
-    expect(card.header.title).toContain('오사카');
-    expect(card.items).toHaveLength(5);
+        // 진짜 카드는 콜백으로 온다
+        const delivered = await receiver.received;
+        const card = listCardOf(delivered);
+        expect(card.header.title).toContain('세부');
+        expect(card.items).toHaveLength(5);
+        expect(card.items[0].link.web).toContain('/r/');
+      } finally {
+        await receiver.close();
+      }
+    });
 
-    const row = card.items[0];
-    expect(row.title).toBeTruthy();
-    expect(row.description).toMatch(/^1박 /);
-    expect(row.imageUrl).toMatch(/^https:\/\//);
-    // 줄 전체 링크가 애드픽이 아니라 우리 리다이렉트를 가리켜야 클릭 추적이 된다
-    expect(row.link.web).toContain('/r/');
+    it('검색이 실패해도 콜백으로 안내는 간다', async () => {
+      const receiver = await callbackReceiver();
+      provider.reply = () => {
+        throw new Error('openai 폭발');
+      };
+      try {
+        await post(kakaoPayload('리스본 호텔 추천해줘', 'test-user', {}, receiver.url)).expect(201);
+
+        const delivered = await receiver.received;
+        expect(delivered.template.outputs[0].simpleText.text).toContain('문제가 생겼어요');
+      } finally {
+        await receiver.close();
+      }
+    });
+
+    it('결과가 없으면 콜백으로 못 찾았다고 알린다', async () => {
+      const receiver = await callbackReceiver();
+      provider.reply = () => [];
+      try {
+        await post(kakaoPayload('없는도시 호텔 추천해줘', 'test-user', {}, receiver.url)).expect(
+          201,
+        );
+
+        const delivered = await receiver.received;
+        expect(delivered.template.outputs[0].simpleText.text).toContain('찾지 못했어요');
+      } finally {
+        await receiver.close();
+      }
+    });
   });
 
-  it('카카오 길이·개수 제한을 지킨다', async () => {
-    const res = await post(kakaoPayload('도쿄 호텔 추천해줘')).expect(201);
-    const card = listCardOf(res.body);
+  // ---------------------------------------------------------- 카드 조립
+  describe('카드', () => {
+    it('listCard 를 돌려준다', async () => {
+      const card = await recommendUntilCard(app, '오사카 호텔 추천해줘');
 
-    expect(card.header.title.length).toBeLessThanOrEqual(t.MAX_LIST_HEADER_TITLE);
-    expect(card.items.length).toBeGreaterThanOrEqual(1);
-    expect(card.items.length).toBeLessThanOrEqual(t.MAX_LIST_ITEMS);
-    expect((card.buttons ?? []).length).toBeLessThanOrEqual(t.MAX_LIST_BUTTONS);
+      expect(card.header.title).toContain('오사카');
+      expect(card.items).toHaveLength(5); // provider 는 6곳을 줬지만 5줄이 상한
 
-    for (const row of card.items) {
-      expect(row.title.length).toBeLessThanOrEqual(t.MAX_LIST_ITEM_TITLE);
-      expect(row.description.length).toBeLessThanOrEqual(t.MAX_LIST_ITEM_DESC);
-    }
-    for (const button of card.buttons ?? []) {
-      expect(button.label.length).toBeLessThanOrEqual(t.MAX_BUTTON_LABEL);
-    }
+      const row = card.items[0];
+      expect(row.title).toBeTruthy();
+      expect(row.description).toMatch(/^1박 /);
+      expect(row.imageUrl).toMatch(/^https:\/\//);
+      // 줄 전체 링크가 애드픽이 아니라 우리 리다이렉트를 가리켜야 클릭 추적이 된다
+      expect(row.link.web).toContain('/r/');
+    });
+
+    it('카카오 길이·개수 제한을 지킨다', async () => {
+      const card = await recommendUntilCard(app, '도쿄 호텔 추천해줘');
+
+      expect(card.header.title.length).toBeLessThanOrEqual(t.MAX_LIST_HEADER_TITLE);
+      expect(card.items.length).toBeGreaterThanOrEqual(1);
+      expect(card.items.length).toBeLessThanOrEqual(t.MAX_LIST_ITEMS);
+      expect((card.buttons ?? []).length).toBeLessThanOrEqual(t.MAX_LIST_BUTTONS);
+
+      for (const row of card.items) {
+        expect(row.title.length).toBeLessThanOrEqual(t.MAX_LIST_ITEM_TITLE);
+        expect(row.description.length).toBeLessThanOrEqual(t.MAX_LIST_ITEM_DESC);
+      }
+      for (const button of card.buttons ?? []) {
+        expect(button.label.length).toBeLessThanOrEqual(t.MAX_BUTTON_LABEL);
+      }
+    });
+
+    it('호텔마다 clickId 가 달라야 어떤 줄을 눌렀는지 구분된다', async () => {
+      const card = await recommendUntilCard(app, '오사카 호텔');
+      const ids = card.items.map((i: any) => i.link.web.split('/r/')[1]);
+      expect(new Set(ids).size).toBe(ids.length);
+    });
+
+    it('엔티티 파라미터가 발화보다 우선한다', async () => {
+      const card = await recommendUntilCard(app, '호텔 추천해줘', { city: '후쿠오카' });
+      expect(card.header.title).toContain('후쿠오카');
+    });
   });
 
-  it('호텔마다 clickId 가 달라야 어떤 줄을 눌렀는지 구분된다', async () => {
-    const res = await post(kakaoPayload('오사카 호텔')).expect(201);
-    const ids = listCardOf(res.body).items.map((i: any) => i.link.web.split('/r/')[1]);
-    expect(new Set(ids).size).toBe(ids.length);
-  });
-
-  it('엔티티 파라미터가 발화보다 우선한다', async () => {
-    const res = await post(kakaoPayload('호텔 추천해줘', 'u', { city: '후쿠오카' })).expect(201);
-    expect(listCardOf(res.body).header.title).toContain('후쿠오카');
-  });
-
+  // ---------------------------------------------------------- 되묻기
   it('도시가 없으면 되묻는다', async () => {
     const res = await post(kakaoPayload('호텔 추천해줘')).expect(201);
-    expect(res.body.template.outputs[0].simpleText.text).toContain('어느 도시');
+    expect(textOf(res.body)).toContain('어느 도시');
     expect(res.body.template.quickReplies).toHaveLength(3);
   });
 
-  it('모르는 도시는 되묻기로 폴백한다', async () => {
-    const res = await post(kakaoPayload('파리 호텔 추천해줘')).expect(201);
-    expect(res.body.template.outputs[0].simpleText.text).toContain('어느 도시');
+  it('모르는 도시도 그대로 검색한다 — 화이트리스트가 없다', async () => {
+    const card = await recommendUntilCard(app, '파리 호텔 추천해줘');
+    expect(card.header.title).toContain('파리');
+    expect(provider.calls.map((c) => c.cityName)).toContain('파리');
   });
 
   it('카드 버튼의 messageText 가 실제로 되묻기 응답을 만든다', async () => {
-    const first = await post(kakaoPayload('오사카 호텔')).expect(201);
-    const messageText = listCardOf(first.body).buttons[0].messageText;
+    const card = await recommendUntilCard(app, '오사카 호텔');
+    const messageText = card.buttons[0].messageText;
 
     const second = await post(kakaoPayload(messageText)).expect(201);
-    expect(second.body.template.outputs[0].simpleText.text).toContain('어느 도시');
+    expect(textOf(second.body)).toContain('어느 도시');
   });
 
+  // ---------------------------------------------------------- 리다이렉트
   it('클릭하면 302 로 제휴 주소에 보낸다', async () => {
-    const res = await post(kakaoPayload('오사카 호텔 추천해줘')).expect(201);
-    const clickId = listCardOf(res.body).items[0].link.web.split('/r/')[1];
+    const card = await recommendUntilCard(app, '오사카 호텔 추천해줘');
+    const clickId = card.items[0].link.web.split('/r/')[1];
 
     const redirected = await request(app.getHttpServer()).get(`/r/${clickId}`).expect(302);
     const location = redirected.headers.location;
@@ -117,8 +260,8 @@ describe('카카오 호텔 스킬', () => {
   });
 
   it('같은 줄을 여러 번 눌러도 행이 아니라 카운터만 올라간다', async () => {
-    const res = await post(kakaoPayload('오사카 호텔 추천해줘')).expect(201);
-    const clickId = listCardOf(res.body).items[0].link.web.split('/r/')[1];
+    const card = await recommendUntilCard(app, '오사카 호텔 추천해줘');
+    const clickId = card.items[0].link.web.split('/r/')[1];
 
     for (let i = 0; i < 3; i += 1) {
       await request(app.getHttpServer()).get(`/r/${clickId}`).expect(302);

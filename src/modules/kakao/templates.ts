@@ -63,6 +63,20 @@ export function simpleText(text: string, quickReplies?: Json[]): Json {
   return skillResponse([{ simpleText: { text } }], quickReplies);
 }
 
+/**
+ * 콜백 예약 응답.
+ *
+ * "지금은 이 문구만 보여주고, 진짜 답은 곧 callbackUrl 로 보내겠다"는 뜻이다.
+ * 카카오는 이걸 5초 안에 받아야 하고, 그 뒤 1분 안에 콜백이 와야 한다.
+ *
+ * ⚠️ 오픈빌더에서 해당 스킬 블록의 **콜백 사용**이 켜져 있어야 동작한다.
+ *    꺼져 있으면 이 응답은 무시되고 사용자는 아무것도 못 본다.
+ *    (그래서 payload 에 callbackUrl 이 있을 때만 쓴다 — 그게 켜졌다는 증거다)
+ */
+export function callbackAck(text: string): Json {
+  return { version: '2.0', useCallback: true, data: { text } };
+}
+
 // ------------------------------------------------------------------- listCard
 export interface ListItemInput {
   title: string;

@@ -41,6 +41,18 @@ export function blockNameOf(p: KakaoSkillPayload): string | null {
   return p.userRequest?.block?.name ?? null;
 }
 
+/**
+ * 콜백 주소.
+ *
+ * **오픈빌더에서 그 블록의 콜백을 켠 경우에만 실린다.** 즉 이 값의 존재 여부가
+ * "지금 콜백을 써도 되는가"의 유일한 판단 근거다. 꺼져 있는데 useCallback 을 보내면
+ * 사용자는 아무 말풍선도 받지 못한다.
+ */
+export function callbackUrlOf(p: KakaoSkillPayload): string | null {
+  const url = p.userRequest?.callbackUrl;
+  return typeof url === 'string' && url.startsWith('http') ? url : null;
+}
+
 export function actionParamsOf(p: KakaoSkillPayload): Record<string, unknown> {
   return p.action?.params ?? {};
 }
