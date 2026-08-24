@@ -1,4 +1,4 @@
-import { Logger, LogLevel } from '@nestjs/common';
+import { INestApplication, Logger, LogLevel } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
@@ -14,10 +14,11 @@ const LEVELS: Record<string, LogLevel[]> = {
 /**
  * Swagger.
  *
- * 운영에서는 기본으로 끈다 — 스킬 URL·토큰 헤더 이름이 그대로 노출되고,
- * 공개 IP 는 이미 스캐너가 훑고 있다. 필요하면 SWAGGER_ENABLED=true 로 켠다.
+ * 로컬이든 운영이든 항상 켠다. 끄고 켜는 스위치를 두지 않는다 —
+ * 운영 서버의 .env 는 저장소에 없어서, 환경변수로 잠가두면
+ * 배포만으로는 /docs 를 되살릴 방법이 없다.
  */
-function setupSwagger(app: Parameters<typeof SwaggerModule.createDocument>[0]): void {
+function setupSwagger(app: INestApplication): void {
   const config = new DocumentBuilder()
     .setTitle('travel-chatbot-app')
     .setDescription(
@@ -32,7 +33,7 @@ function setupSwagger(app: Parameters<typeof SwaggerModule.createDocument>[0]): 
     )
     .build();
 
-  SwaggerModule.setup('docs', app as never, SwaggerModule.createDocument(app, config), {
+  SwaggerModule.setup('docs', app, SwaggerModule.createDocument(app, config), {
     swaggerOptions: { persistAuthorization: true },
   });
 }
@@ -42,10 +43,7 @@ async function bootstrap(): Promise<void> {
     logger: LEVELS[(process.env.LOG_LEVEL ?? 'INFO').toUpperCase()] ?? LEVELS.INFO,
   });
 
-  const swaggerEnabled =
-    process.env.SWAGGER_ENABLED === 'true' ||
-    (process.env.SWAGGER_ENABLED !== 'false' && process.env.APP_ENV !== 'production');
-  if (swaggerEnabled) setupSwagger(app);
+  setupSwagger(app);
 
   // 컨테이너 밖에서 접근하려면 0.0.0.0 이어야 한다.
   const port = Number(process.env.PORT ?? 8000);
@@ -53,7 +51,7 @@ async function bootstrap(): Promise<void> {
 
   const logger = new Logger('bootstrap');
   logger.log(`listening on http://0.0.0.0:${port}`);
-  logger.log(swaggerEnabled ? `swagger  on http://0.0.0.0:${port}/docs` : 'swagger disabled');
+  logger.log(`swagger  on http://0.0.0.0:${port}/docs`);
 }
 
 void bootstrap();

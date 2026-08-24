@@ -20,8 +20,7 @@ npm run start:dev             # http://localhost:8000
 **API 문서(Swagger): http://localhost:8000/docs**
 
 예시 요청이 채워져 있어서 열자마자 *Try it out → Execute* 로 동작 확인이 된다.
-`APP_ENV=production` 이면 자동으로 꺼진다 — 스킬 URL 과 토큰 헤더 이름이 노출되고,
-공개 IP 는 이미 스캐너가 훑고 있기 때문. 운영에서 열려면 `SWAGGER_ENABLED=true`.
+운영에서도 항상 켜져 있다: https://bot.nolmoa.com/docs
 
 ```bash
 # 스킬 호출 테스트
