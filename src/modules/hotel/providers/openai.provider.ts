@@ -52,6 +52,63 @@ export function isAllowedSourceUrl(url: string): boolean {
   }
 }
 
+/**
+ * 예약 링크를 한국어 페이지로 돌린다.
+ *
+ * 모델은 검색 결과에 나온 주소를 그대로 주는데, 그게 영문 페이지인 경우가 많다.
+ * 프롬프트로도 시키지만 매번 지킨다는 보장이 없어서 여기서 한 번 더 고친다.
+ *
+ * ⚠️ **경로는 건드리지 않는 것을 원칙으로 한다.** 잘못 고치면 404 가 되는데,
+ *    그건 영어 페이지가 뜨는 것보다 나쁘다. 호스트/쿼리처럼 되돌리기 쉬운 것만 손댄다.
+ *
+ * 근거:
+ *   - trip.com    : kr.trip.com 200 확인. 로케일이 서브도메인이다
+ *   - hotels.com  : kr.hotels.com 존재 확인(429 는 봇 차단이지 없는 호스트가 아니다)
+ *   - klook.com   : /{locale}/ 경로 규약. 있으면 ko 로 바꾸고, 없으면 손대지 않는다
+ *   - myrealtrip  : 국내 서비스라 이미 한국어
+ */
+export function toKoreanUrl(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  const on = (domain: string) => host === domain || host.endsWith(`.${domain}`);
+
+  if (on('trip.com')) {
+    parsed.hostname = 'kr.trip.com';
+    parsed.searchParams.set('locale', 'ko-KR');
+    parsed.searchParams.set('curr', 'KRW');
+    return parsed.toString();
+  }
+
+  if (on('hotels.com')) {
+    parsed.hostname = 'kr.hotels.com';
+    return parsed.toString();
+  }
+
+  if (on('klook.com')) {
+    // /en-US/hotel/... → /ko/hotel/...  (경로 모양이 같으니 안전하다)
+    // 로케일 구간이 없으면 그냥 둔다 — 없는 걸 끼워 넣다가 404 를 만들지 않는다.
+    const segments = parsed.pathname.split('/');
+    if (segments.length > 1 && isLocaleSegment(segments[1])) {
+      segments[1] = 'ko';
+      parsed.pathname = segments.join('/');
+    }
+    return parsed.toString();
+  }
+
+  return url;
+}
+
+/** ko, en, en-US, zh-CN 같은 로케일 구간인지. 'hotel' 같은 일반 경로와 구분해야 한다. */
+function isLocaleSegment(segment: string): boolean {
+  return /^[a-z]{2}(-[a-zA-Z]{2,4})?$/.test(segment);
+}
+
 /** 2차 호출에 거는 구조화 출력 스키마. strict 라 모든 키가 required 여야 한다. */
 export const HOTEL_SCHEMA = {
   type: 'json_schema' as const,
@@ -83,7 +140,9 @@ export const HOTEL_SCHEMA = {
             name: { type: 'string', description: '한국어 호텔명. 없으면 영문 그대로' },
             source_url: {
               type: 'string',
-              description: `검색 결과에 실제로 나온 예약 페이지 URL. ${ALLOWED_SITES_TEXT} 중 하나여야 한다`,
+              description:
+                `검색 결과에 실제로 나온 예약 페이지 URL. ${ALLOWED_SITES_TEXT} 중 하나여야 한다. ` +
+                '한국어 페이지 주소를 쓴다',
             },
             merchant: {
               type: ['string', 'null'],
@@ -161,6 +220,10 @@ const SEARCH_INSTRUCTIONS = [
   '반드시 web_search 툴로 실제 웹을 검색해서 답한다. 기억에 의존하지 않는다.',
   `예약 링크는 반드시 다음 네 곳 중 하나여야 한다: ${ALLOWED_SITES_TEXT}.`,
   '이 네 곳이 아닌 사이트(아고다·부킹닷컴 등)의 링크는 쓸 수 없으니 적지 마라.',
+  // 사용자는 한국인이다. 영문 페이지가 뜨면 예약까지 못 간다.
+  '**반드시 한국어 페이지 주소를 골라라.** 같은 호텔이라도 영문 페이지가 아니라 '
+    + '한국어 페이지 URL 을 적는다 (예: www.trip.com 이 아니라 kr.trip.com, '
+    + 'klook 은 /ko/ 경로, hotels.com 은 kr.hotels.com).',
   '검색 결과에 나오지 않은 URL·가격·평점은 절대 지어내지 않는다. 모르면 null 로 둔다.',
   // ⚠️ 이 문단을 지우지 마라. 없으면 모델이 "검색을 진행해도 될까요?" 라고 되묻고 끝난다.
   //    상대는 사람이 아니라 프로그램이라 그 질문에 답해줄 사람이 없다.
@@ -194,7 +257,9 @@ export const CANDIDATE_SCHEMA = {
             name: { type: 'string', description: '호텔명 (한국어, 영문 병기)' },
             url: {
               type: 'string',
-              description: `검색 결과에 실제로 나온 예약 페이지 URL. ${ALLOWED_SITES_TEXT} 중 하나`,
+              description:
+                `검색 결과에 실제로 나온 예약 페이지 URL. ${ALLOWED_SITES_TEXT} 중 하나. ` +
+                '반드시 한국어 페이지 (kr.trip.com, kr.hotels.com, klook.com/ko/ 등)',
             },
             price_from: { type: ['integer', 'null'], description: '1박 최저가(원). 확인된 값만' },
             review_score: { type: ['number', 'null'], description: '10점 만점' },
@@ -211,6 +276,7 @@ const RANK_INSTRUCTIONS = [
   '너는 호텔 후보를 비교해 추천 목록을 만드는 어시스턴트다.',
   '주어진 후보 목록 안에서만 고른다. 목록에 없는 호텔을 새로 만들지 않는다.',
   '후보에 적히지 않은 URL·가격·평점은 null 로 둔다. 추측해서 채우지 않는다.',
+  '후보의 URL 을 그대로 옮긴다. 임의로 도메인이나 경로를 바꾸지 않는다.',
 ].join(' ');
 
 @Injectable()
@@ -379,7 +445,8 @@ export class OpenAiHotelProvider implements HotelProvider {
       hotels.push({
         name,
         citySlug: query.citySlug,
-        sourceUrl,
+        // 한국어 페이지로 돌린다. 프롬프트가 안 먹었을 때의 마지막 방어선.
+        sourceUrl: toKoreanUrl(sourceUrl),
         merchant: text(pick.merchant) ?? merchantOf(sourceUrl),
         source: 'ai',
         sourceRef: null,

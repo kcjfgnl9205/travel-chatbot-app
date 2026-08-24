@@ -3,6 +3,7 @@ import {
   ALLOWED_SITES_TEXT,
   isAllowedSourceUrl,
   merchantOf,
+  toKoreanUrl,
 } from '../src/modules/hotel/providers/openai.provider';
 import {
   outputTextOf,
@@ -154,5 +155,67 @@ describe('요청 헤더 — 어느 프로젝트로 붙는가', () => {
   it('빈 값은 헤더를 아예 안 만든다 — 빈 헤더는 거부당한다', () => {
     const h = requestHeaders(withKeys({ openaiProject: '', openaiOrganization: '' }));
     expect(Object.keys(h).sort()).toEqual(['authorization', 'content-type']);
+  });
+});
+
+describe('한국어 예약 페이지로 돌린다', () => {
+  it('trip.com 은 kr 서브도메인 + 한국 로케일/통화', () => {
+    const out = new URL(toKoreanUrl('https://www.trip.com/hotels/osaka-hotel-detail-123/'));
+    expect(out.hostname).toBe('kr.trip.com');
+    expect(out.searchParams.get('locale')).toBe('ko-KR');
+    expect(out.searchParams.get('curr')).toBe('KRW');
+    // 경로는 그대로 — 여기를 건드리면 404 가 된다
+    expect(out.pathname).toBe('/hotels/osaka-hotel-detail-123/');
+  });
+
+  it('hotels.com 은 kr 서브도메인', () => {
+    expect(new URL(toKoreanUrl('https://www.hotels.com/ho123456/')).hostname).toBe(
+      'kr.hotels.com',
+    );
+  });
+
+  it('klook 은 로케일 구간만 ko 로 바꾼다', () => {
+    expect(toKoreanUrl('https://www.klook.com/en-US/hotel/12345-abc/')).toBe(
+      'https://www.klook.com/ko/hotel/12345-abc/',
+    );
+    expect(toKoreanUrl('https://www.klook.com/ja/hotel/12345-abc/')).toBe(
+      'https://www.klook.com/ko/hotel/12345-abc/',
+    );
+  });
+
+  it('klook 에 로케일 구간이 없으면 손대지 않는다 — 없는 걸 끼우다 404 를 만들지 않는다', () => {
+    const url = 'https://www.klook.com/hotel/12345-abc/';
+    expect(toKoreanUrl(url)).toBe(url);
+  });
+
+  it('로케일처럼 생기지 않은 첫 구간은 로케일로 오해하지 않는다', () => {
+    const url = 'https://www.klook.com/hotels/osaka/';
+    expect(toKoreanUrl(url)).toBe(url); // 'hotels' 는 로케일이 아니다
+  });
+
+  it('마이리얼트립은 이미 한국어라 그대로 둔다', () => {
+    const url = 'https://www.myrealtrip.com/offers/98765';
+    expect(toKoreanUrl(url)).toBe(url);
+  });
+
+  it('이미 한국어면 바뀌는 게 없어야 한다 (멱등)', () => {
+    const once = toKoreanUrl('https://kr.trip.com/hotels/detail?id=1');
+    expect(toKoreanUrl(once)).toBe(once);
+  });
+
+  it('허용 목록 밖이거나 URL 이 아니면 그대로 돌려준다', () => {
+    expect(toKoreanUrl('https://example.com/x')).toBe('https://example.com/x');
+    expect(toKoreanUrl('정보 없음')).toBe('정보 없음');
+  });
+
+  it('바꾼 뒤에도 허용 호스트여야 한다 — 필터에 걸려 버려지면 안 된다', () => {
+    for (const url of [
+      'https://www.trip.com/hotels/x',
+      'https://www.hotels.com/ho1/',
+      'https://www.klook.com/en-US/hotel/1/',
+      'https://www.myrealtrip.com/offers/1',
+    ]) {
+      expect(isAllowedSourceUrl(toKoreanUrl(url))).toBe(true);
+    }
   });
 });
