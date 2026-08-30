@@ -20,8 +20,10 @@ import {
 
 import { AppConfig, CONFIG, openaiEnabled } from '../../config/app.config';
 import { AffiliateService, ResolvedLink } from '../affiliate/affiliate.service';
+import * as t from '../kakao/templates';
 import { hasCity } from '../nlu/nlu';
 import { NluService } from '../nlu/nlu.service';
+import { HotelService } from './hotel.service';
 import { HotelQuery, listDescription } from './hotel.types';
 import { OpenAiHotelProvider, SearchTrace } from './providers/openai.provider';
 
@@ -50,21 +52,32 @@ export class HotelDebugController {
     private readonly nlu: NluService,
     private readonly provider: OpenAiHotelProvider,
     private readonly affiliate: AffiliateService,
+    // 카드 조립은 스킬 경로와 **같은 코드**를 태운다. 진단용으로 따로 만들면
+    // 그건 실제 응답을 검증하는 게 아니라 비슷한 걸 하나 더 만드는 것이다.
+    private readonly hotels: HotelService,
   ) {}
 
   @Get('hotel-search')
   @ApiOperation({
-    summary: '호텔 추천 전체 파이프라인 (동기) — 실제 결과와 소요 시간',
+    summary: '호텔 추천 전체 파이프라인 (동기) — 사용자가 실제로 보는 말풍선 그대로',
     description:
-      '스킬 엔드포인트와 **똑같이 발화 하나만 받아** 파싱부터 검색까지 다 돌리되, ' +
-      '끝날 때까지 기다렸다가 결과를 돌려준다.\n\n' +
-      '```\n발화 → gpt-5-mini 파싱 → gpt-5-mini 웹 검색 → gpt-5-mini 선별 → (선택) 애드픽\n```\n\n' +
-      '`/api/v1/kakao/hotels/recommend` 는 5초 예산 때문에 검색을 백그라운드로 넘기므로 ' +
-      '성공·실패가 응답에 안 담긴다. 여기서는 담긴다.\n\n' +
+      '검색이 끝났을 때 **사용자에게 실제로 배달되는 말풍선 JSON** 을 그대로 돌려준다.\n\n' +
+      '⚠️ **스킬 엔드포인트의 즉시 응답과는 다르다.** 캐시 미스면 거기서는 `useCallback` 만 ' +
+      '나가고 이 카드는 잠시 뒤 **콜백으로** 배달된다 — 여기 나오는 건 그 콜백 본문이다. ' +
+      '(캐시 히트일 때만 스킬 응답 자체와 같다)\n\n' +
+      '```\n발화 → gpt-5-mini 파싱 → gpt-5-mini 웹 검색 → gpt-5-mini 선별 → 카드 조립\n```\n\n' +
+      '스킬 엔드포인트는 5초 예산 때문에 검색을 백그라운드로 던진다. 그래서 거기서는 늘 ' +
+      '"찾고 있어요" 만 나오고 **진짜 카드는 콜백을 받기 전에는 볼 수 없다.** ' +
+      '여기서는 검색이 끝날 때까지 기다렸다가 그 카드를 그대로 보여준다.\n\n' +
+      '조립은 `HotelService` 의 **같은 코드**를 태운다 — 제목 40자 잘림, 설명 문구, ' +
+      '줄 링크(`/r/{clickId}`), 버튼·퀵리플라이까지 운영과 동일하다. ' +
+      '도시를 못 알아들으면 되묻기가, 결과가 없으면 그 안내 문구가 온다.\n\n' +
+      '**진단 정보는 `trace=true` 를 붙여야 `debug` 키로 붙는다.** ' +
+      '단계별 소요 시간·후보 개수·OpenAI 설정·실패 원인이 거기 들어 있다.\n\n' +
       '- **캐시를 타지 않는다.** 발화 파싱도 호텔 검색도 매번 실제로 부른다 (그게 목적이다)\n' +
-      '- **DB·캐시에 아무것도 안 쓴다.** 운영 통계와 캐시가 오염되지 않는다\n' +
-      '- 실패하면 `ok: false` 와 에러 메시지가 그대로 나온다\n' +
-      '- `timings.parseMs` 가 카카오 5초 예산에서 실제로 깎이는 시간이다\n\n' +
+      '- **통계를 남기지 않는다.** 진단 호출로 `recommendations` 가 오염되지 않는다\n' +
+      '- 다만 `clickId` 는 인메모리에 남으므로 **줄 링크를 눌러 이동까지 확인할 수 있다**\n' +
+      '- 실패해도 200 이고, 카카오에 나갈 안내 문구가 그대로 온다 (원인은 `trace=true` 로)\n\n' +
       '⚠️ 호출 한 번이 OpenAI 요금이다. `DEBUG_TOKEN` 을 채워두면 헤더 검증을 한다.',
   })
   @ApiQuery({
@@ -75,73 +88,108 @@ export class HotelDebugController {
     example: '오사카 여행갈건데 4명기준으로 숙소 추천해줘',
   })
   @ApiQuery({
+    name: 'trace',
+    required: false,
+    description:
+      '단계별 소요 시간·개수·설정·실패 원인을 `debug` 키로 같이 준다 (기본 false). ' +
+      '끄면 카카오가 받는 것과 **완전히 같은 JSON** 만 나온다.',
+    example: false,
+  })
+  @ApiQuery({
     name: 'affiliate',
     required: false,
-    description: '애드픽 커미션 링크 변환까지 같이 재본다 (기본 false)',
-    example: false,
+    description:
+      '애드픽 커미션 링크 변환 (**기본 켜짐**). 끄려면 `affiliate=false`.\n\n' +
+      '**카드 JSON 은 켜든 끄든 같다** — 줄 링크는 `/r/{clickId}` 이고 애드픽 주소는 ' +
+      '그 302 목적지로만 쓰인다. 끄면 그 목적지가 원본 주소가 되므로, ' +
+      '"커미션 링크가 제대로 나가는가"를 보려면 켜둔 채로 확인해야 한다 ' +
+      '(`trace=true` 의 `counts.affiliateFallback` 이 0 이어야 정상).',
+    example: true,
   })
   @ApiQuery({
     name: 'candidates',
     required: false,
-    description: '1차 웹 검색 원문을 응답에 포함한다 (길다, 기본 false)',
+    description: '1차 웹 검색 원문을 `debug` 에 포함한다 (길다, `trace=true` 필요, 기본 false)',
     example: false,
   })
   @ApiResponse({
     status: 200,
-    description: '단계별 소요 시간 + 최종 호텔 목록',
+    description:
+      '스킬 응답 그대로. `trace=true` 면 `debug` 가 붙는다.',
     schema: {
       example: {
-        ok: true,
-        utterance: '오사카 여행갈건데 4명기준으로 숙소 추천해줘',
-        parsed: {
-          citySlug: 'osaka',
-          cityName: '오사카',
-          guests: 4,
-          nights: null,
+        version: '2.0',
+        template: {
+          outputs: [
+            {
+              listCard: {
+                header: { title: '오사카 호텔 추천 5곳' },
+                items: [
+                  {
+                    title: '호텔 그란비아 오사카',
+                    description: '1박 172,000원~ · 평점 9.1 · 우메다',
+                    link: { web: 'https://bot.nolmoa.com/r/Ab3xY9kQ2mZp' },
+                  },
+                ],
+                buttons: [
+                  { label: '다른 도시 보기', action: 'message', messageText: '호텔 추천해줘' },
+                ],
+              },
+            },
+          ],
+          quickReplies: [
+            { label: '도쿄 호텔', action: 'message', messageText: '도쿄 호텔 추천해줘' },
+          ],
         },
-        parse: {
-          source: 'model',
-          model: 'gpt-5-nano',
-          timeoutMs: 4000,
-          timedOut: false,
+        debug: {
+          ok: true,
+          utterance: '오사카 여행갈건데 4명기준으로 숙소 추천해줘',
+          parsed: { citySlug: 'osaka', cityName: '오사카', guests: 4, nights: null },
+          parse: {
+            source: 'model',
+            model: 'gpt-5-nano',
+            timeoutMs: 4000,
+            timedOut: false,
+            error: null,
+          },
+          query: { citySlug: 'osaka', cityName: '오사카', guests: 4, limit: 5 },
+          openai: { enabled: true, model: 'gpt-5-mini', parseModel: 'gpt-5-nano' },
+          timings: {
+            parseMs: 780,
+            searchMs: 11240,
+            rankMs: 3380,
+            thumbnailMs: 820,
+            affiliateMs: 0,
+            totalMs: 16230,
+          },
+          counts: {
+            searchCalls: 3,
+            candidateChars: 1832,
+            candidates: 12,
+            picks: 5,
+            droppedUntrusted: 1,
+            droppedThumbnails: 2,
+            thumbnails: 4,
+            thumbnailSources: { og: 3, photo: 1 },
+            hotels: 4,
+            affiliateConverted: 4,
+            affiliateFallback: 0,
+          },
+          hotels: [
+            {
+              name: '호텔 그란비아 오사카',
+              sourceUrl: 'https://kr.trip.com/hotels/osaka-granvia-12345/',
+              merchant: 'trip',
+              priceFrom: 172000,
+              reviewScore: 9.1,
+              thumbnailUrl: 'https://ak-d.tripcdn.com/images/220t18_R_960_660_R5_D.jpg',
+              cardDescription: '1박 172,000원~ · 평점 9.1 · 우메다',
+              affiliateUrl: 'https://link.adpick.co.kr/xxxxxxxx',
+              linkConverted: true,
+            },
+          ],
           error: null,
         },
-        query: { citySlug: 'osaka', cityName: '오사카', guests: 4, limit: 5 },
-        openai: {
-          enabled: true,
-          model: 'gpt-5-mini',
-          parseModel: 'gpt-5-nano',
-        },
-        timings: {
-          parseMs: 780,
-          searchMs: 11240,
-          rankMs: 3380,
-          thumbnailMs: 820,
-          affiliateMs: 0,
-          totalMs: 16230,
-        },
-        counts: {
-          searchCalls: 3,
-          candidateChars: 1832,
-          candidates: 12,
-          picks: 5,
-          droppedUntrusted: 1,
-          droppedThumbnails: 2,
-          hotels: 4,
-        },
-        hotels: [
-          {
-            name: '호텔 그란비아 오사카',
-            sourceUrl: 'https://kr.trip.com/hotels/osaka-granvia-12345/',
-            merchant: 'trip',
-            priceFrom: 172000,
-            reviewScore: 9.1,
-            thumbnailUrl: null,
-            cardDescription: '1박 172,000원~ · 평점 9.1 · 우메다',
-            affiliateUrl: null,
-          },
-        ],
-        error: null,
       },
     },
   })
@@ -150,11 +198,27 @@ export class HotelDebugController {
     @Query('utterance') utterance?: string,
     @Query('affiliate') affiliate?: string,
     @Query('candidates') candidates?: string,
+    @Query('trace') trace?: string,
   ): Promise<Record<string, unknown>> {
     this.assertAllowed(token);
 
     const said = (utterance ?? '').trim();
     if (!said) throw new NotFoundException('utterance 파라미터가 필요합니다');
+
+    const runStarted = Date.now();
+    const wantTrace = isTrue(trace);
+
+    /**
+     * 기본은 **스킬 응답 그 자체**다. 진단 정보는 trace=true 일 때만 얹는다.
+     *
+     * 카카오는 모르는 키를 무시하므로 debug 가 붙어도 렌더링에는 영향이 없다.
+     * 그래도 기본을 깨끗하게 두는 이유는, 이 응답을 그대로 복사해
+     * 오픈빌더 스킬 테스트에 넣어볼 수 있어야 하기 때문이다.
+     */
+    const answer = (
+      response: t.Json,
+      debug: Record<string, unknown>,
+    ): Record<string, unknown> => (wantTrace ? { ...response, debug } : response);
 
     const openai = {
       enabled: openaiEnabled(this.config),
@@ -195,7 +259,8 @@ export class HotelDebugController {
         this.logger.log(
           `debug search "${said}" → 도시 없음 (${parseMs}ms) reason=${outcome.error ?? '모델이 null 반환'}`,
         );
-        return {
+        // 스킬 경로가 이 상황에서 내보내는 되묻기 말풍선 그대로.
+        return answer(this.hotels.askCity(), {
           ok: false,
           utterance: said,
           parsed,
@@ -218,7 +283,7 @@ export class HotelDebugController {
             this.config.openaiParseTimeoutMs,
           ),
           error: outcome.error,
-        };
+        });
       }
 
       const query: HotelQuery = {
@@ -231,10 +296,14 @@ export class HotelDebugController {
       // ② 웹 검색 + 선별
       const result = await this.provider.searchTraced(query);
 
-      // 애드픽 변환은 선택. 여기서 실패해도 검색 자체는 성공이다.
+      // ③ 애드픽 변환.
+      //
+      // **기본으로 켠다.** 끄면 /r/{clickId} 의 목적지가 원본 주소가 되는데,
+      // 그러면 "커미션 링크가 나가고 있나"를 확인하려고 부른 진단이 거짓말을 한다.
+      // 요금이 아까우면 affiliate=false 로 끌 수 있다 (카드 JSON 은 그대로다).
       let affiliateMs = 0;
       let links = new Map<string, ResolvedLink>();
-      if (isTrue(affiliate) && result.hotels.length) {
+      if (isTrueByDefault(affiliate) && result.hotels.length) {
         const started = Date.now();
         links = await this.affiliate.resolve(
           result.hotels.map((h) => ({
@@ -245,12 +314,19 @@ export class HotelDebugController {
         affiliateMs = Date.now() - started;
       }
 
+      // ④ 카드 조립 — 스킬 경로와 같은 코드. 통계는 남기지 않는다.
+      //    변환은 위에서 이미 돌렸으므로 그 결과를 넘겨 두 번 부르지 않게 한다.
+      const response = await this.hotels.previewResponse(result.hotels, query, {
+        started: runStarted,
+        links,
+      });
+
       this.logger.log(
         `debug search "${said}" → ${query.citySlug} ok hotels=${result.hotels.length} ` +
           `parse=${parseMs}ms total=${parseMs + result.trace.totalMs + affiliateMs}ms`,
       );
 
-      return {
+      return answer(response, {
         // 키가 없거나 결과가 0이면 성공이 아니다 — 여기가 이 엔드포인트의 존재 이유다.
         ok: openai.enabled && result.hotels.length > 0,
         utterance: said,
@@ -273,7 +349,13 @@ export class HotelDebugController {
           picks: result.trace.picks,
           droppedUntrusted: result.trace.droppedUntrusted,
           droppedThumbnails: result.trace.droppedThumbnails,
+          // 이미지가 실제로 붙었는지, 어느 층에서 건졌는지 (og / ld / photo)
+          thumbnails: result.trace.thumbnails,
+          thumbnailSources: result.trace.thumbnailSources,
           hotels: result.trace.hotels,
+          // 커미션 링크로 바뀐 건수. fallback 이 0 이 아니면 그만큼 수익화가 안 된다.
+          affiliateConverted: countConverted(result.hotels, links),
+          affiliateFallback: result.hotels.length - countConverted(result.hotels, links),
         },
         hotels: result.hotels.map((h) => ({
           name: h.name,
@@ -288,43 +370,57 @@ export class HotelDebugController {
           cardDescription: listDescription(h),
           affiliateUrl: links.get(h.sourceUrl)?.affiliateUrl ?? null,
           affiliateStatus: links.get(h.sourceUrl)?.status ?? null,
+          // /r/{clickId} 가 실제로 보낼 곳. 원본과 같으면 커미션이 안 붙은 것이다.
+          linkConverted: isConverted(h.sourceUrl, links),
         })),
         candidates: isTrue(candidates) ? result.candidates : null,
-        hint: hintFor(openai.enabled, result.hotels.length, result.trace),
+        hint: hintFor(
+          openai.enabled,
+          result.hotels.length,
+          result.trace,
+          result.hotels.length - countConverted(result.hotels, links),
+        ),
         error: null,
-      };
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`debug search "${said}" failed err=${message}`);
       // 던지지 않는다. 실패 내용을 응답으로 봐야 하는 게 이 엔드포인트의 목적이다.
       // 파싱 결과는 살아 있다. 같이 버리면 "어디까지 갔다가 죽었는지"를 못 본다.
-      return {
-        ok: false,
-        utterance: said,
-        parsed,
-        parse,
-        query: hasCity(parsed)
-          ? {
-              citySlug: parsed.citySlug,
-              cityName: parsed.cityName,
-              guests: parsed.guests,
-              limit: this.config.hotelResultLimit,
-            }
-          : null,
-        openai,
-        timings: {
-          parseMs,
-          searchMs: 0,
-          rankMs: 0,
-          thumbnailMs: 0,
-          affiliateMs: 0,
-          totalMs: parseMs,
+      return answer(
+        // 스킬 컨트롤러가 예외를 삼키고 내보내는 것과 같은 말풍선.
+        t.simpleText(
+          '일시적인 오류가 발생했어요. 잠시 후 다시 시도해주세요 🙏',
+          this.hotels.cityQuickReplies(),
+        ),
+        {
+          ok: false,
+          utterance: said,
+          parsed,
+          parse,
+          query: hasCity(parsed)
+            ? {
+                citySlug: parsed.citySlug,
+                cityName: parsed.cityName,
+                guests: parsed.guests,
+                limit: this.config.hotelResultLimit,
+              }
+            : null,
+          openai,
+          timings: {
+            parseMs,
+            searchMs: 0,
+            rankMs: 0,
+            thumbnailMs: 0,
+            affiliateMs: 0,
+            totalMs: parseMs,
+          },
+          counts: null,
+          hotels: [],
+          hint: failureHint(message),
+          error: message,
         },
-        counts: null,
-        hotels: [],
-        hint: failureHint(message),
-        error: message,
-      };
+      );
     }
   }
 
@@ -348,6 +444,27 @@ export class HotelDebugController {
 
 const isTrue = (v?: string): boolean =>
   ['1', 'true', 'yes', 'on'].includes((v ?? '').toLowerCase());
+
+/** 값을 안 주면 켜진 것으로 본다. 끄려면 명시적으로 false 를 넣어야 한다. */
+const isTrueByDefault = (v?: string): boolean => (v === undefined ? true : isTrue(v));
+
+/**
+ * 목적지가 원본 주소와 다른가 = 커미션 링크로 바뀌었는가.
+ *
+ * `status` 로 판단하지 않는다. 애드픽 API 가 실패해도 템플릿 폴백이 status 를
+ * 채워주기 때문에, "정말 다른 주소로 나가는가"만이 믿을 수 있는 신호다.
+ */
+function isConverted(sourceUrl: string, links: Map<string, ResolvedLink>): boolean {
+  const url = links.get(sourceUrl)?.affiliateUrl;
+  return Boolean(url) && url !== sourceUrl;
+}
+
+function countConverted(
+  hotels: { sourceUrl: string }[],
+  links: Map<string, ResolvedLink>,
+): number {
+  return hotels.filter((h) => isConverted(h.sourceUrl, links)).length;
+}
 
 /**
  * 앱이 실제로 들고 있는 키의 지문.
@@ -429,10 +546,28 @@ function hintFor(
   enabled: boolean,
   hotels: number,
   trace: SearchTrace,
+  affiliateFallback = 0,
 ): string | null {
   if (!enabled)
     return 'OPENAI_API_KEY 가 비어 있습니다. 검색을 아예 시도하지 않았습니다.';
-  if (hotels > 0) return null;
+
+  // 결과가 나와도 조용히 망가져 있을 수 있는 두 가지를 먼저 알려준다.
+  if (hotels > 0) {
+    const notes: string[] = [];
+    if (affiliateFallback > 0) {
+      notes.push(
+        `${affiliateFallback}건이 애드픽 변환 없이 원본 주소로 나갑니다 — 그만큼 수익화가 안 됩니다. ` +
+          'ADPICK_API_KEY 와 호텔별 affiliateStatus 를 확인하세요.',
+      );
+    }
+    if (trace.thumbnails === 0) {
+      notes.push(
+        '이미지를 하나도 못 붙였습니다. 예약 페이지가 봇을 막았거나(403·429) ' +
+          'HOTEL_THUMBNAILS 가 꺼져 있습니다. 서버 로그의 thumbnail 줄을 보세요.',
+      );
+    }
+    return notes.length ? notes.join(' / ') : null;
+  }
 
   if (trace.candidates === 0) {
     return (

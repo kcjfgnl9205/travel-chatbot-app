@@ -43,6 +43,10 @@ export interface AppConfig {
   hotelProvider: string;
   hotelResultLimit: number;
   searchCacheTtlMinutes: number;
+
+  hotelThumbnails: boolean;
+  hotelThumbnailTimeoutMs: number;
+  hotelThumbnailMaxBytes: number;
 }
 
 function str(name: string, fallback = ''): string {
@@ -113,6 +117,13 @@ export function loadConfig(): AppConfig {
     openaiParseTimeoutMs: Math.round(num('OPENAI_PARSE_TIMEOUT_SECONDS', 4) * 1000),
     // 같은 문장을 두 번 파싱하지 않는다. 이게 없으면 매 메시지가 유료가 된다.
     nluAliasTtlMinutes: num('NLU_ALIAS_TTL_MINUTES', 1440),
+
+    // 예약 페이지에서 대표 이미지를 긁어온다. 모델은 이미지 주소를 모른다(웹 검색은
+    // 텍스트만 준다) — 그래서 시키면 지어낸다. 페이지에서 직접 읽는 게 유일한 정답이다.
+    hotelThumbnails: bool('HOTEL_THUMBNAILS', true),
+    hotelThumbnailTimeoutMs: Math.round(num('HOTEL_THUMBNAIL_TIMEOUT_SECONDS', 4) * 1000),
+    // 예약 페이지는 200~400KB 다. 이미지 주소는 앞쪽에 있으므로 다 읽을 이유가 없다.
+    hotelThumbnailMaxBytes: num('HOTEL_THUMBNAIL_MAX_KB', 512) * 1024,
 
     hotelProvider: str('HOTEL_PROVIDER', 'openai'),
     hotelResultLimit: num('HOTEL_RESULT_LIMIT', 5),

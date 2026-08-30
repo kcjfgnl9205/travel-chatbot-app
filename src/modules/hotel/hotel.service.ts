@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 
 import { applySubid } from '../adpick/adpick.service';
-import { AffiliateService } from '../affiliate/affiliate.service';
+import { AffiliateService, ResolvedLink } from '../affiliate/affiliate.service';
 import { AppConfig, CONFIG, redirectUrl } from '../../config/app.config';
 import { MemoryStoreService } from '../database/memory-store.service';
 import { MessagesRepository } from '../database/repositories/messages.repository';
@@ -285,6 +285,33 @@ export class HotelService {
     }
   }
 
+  /**
+   * 진단용 — 이미 찾아둔 호텔로 **스킬과 똑같은 응답**을 조립한다.
+   *
+   * `/api/v1/debug/hotel-search` 가 쓴다. 카카오 경로는 5초 예산 때문에 검색을
+   * 백그라운드로 던지므로, 진짜 카드가 어떻게 생겼는지는 콜백을 받아보기 전에는 알 수 없다.
+   * 여기를 거치면 **같은 조립 코드를 그대로 태워서** 미리 볼 수 있다 —
+   * 진단용으로 카드를 따로 만들면 그건 실제 응답을 검증하는 게 아니다.
+   *
+   * 통계는 남기지 않는다. 대신 clickId 는 인메모리에 남으므로 `/r/{clickId}` 는 동작한다.
+   */
+  async previewResponse(
+    hotels: Hotel[],
+    query: HotelQuery,
+    opts: { started: number; links: Map<string, ResolvedLink> },
+  ): Promise<t.Json> {
+    if (!hotels.length) return this.noResult(query.cityName);
+    return this.respondWithHotels(hotels, query, {
+      userId: null,
+      messageId: null,
+      guests: query.guests ?? null,
+      started: opts.started,
+      cacheHit: false,
+      persist: false,
+      links: opts.links,
+    });
+  }
+
   // ------------------------------------------------------- 응답 조립
   private async respondWithHotels(
     input: Hotel[],
@@ -295,6 +322,19 @@ export class HotelService {
       guests: number | null;
       started: number;
       cacheHit: boolean;
+      /**
+       * 통계(recommendations·recommendation_items)를 남길지. 기본 true.
+       * 진단 경로만 false 로 둔다 — 진단 호출이 섞이면 전환율 집계가 틀어진다.
+       */
+      persist?: boolean;
+      /**
+       * 미리 해석해둔 제휴 링크. 주면 애드픽을 다시 부르지 않는다.
+       * 빈 Map 은 "변환하지 않는다"는 뜻이고, 그때 목적지는 원본 주소가 된다.
+       *
+       * 어느 쪽이든 **카드 JSON 은 같다** — 줄 링크는 `/r/{clickId}` 이고
+       * 애드픽 주소는 그 302 목적지로만 쓰인다.
+       */
+      links?: Map<string, ResolvedLink>;
     },
   ): Promise<t.Json> {
     // 중복 제거 → 자르기 순서가 중요하다. 반대로 하면 중복이 5줄 자리를 먹는다.
@@ -304,27 +344,36 @@ export class HotelService {
 
     // 원본 주소 → 애드픽 커미션 링크. 캐시에 있으면 API 를 안 탄다.
     // affiliate_links 행이 곧 호텔의 신원이기도 하다 — 별도 호텔 마스터를 두지 않는다.
-    const links = await this.affiliate.resolve(
-      hotels
-        .filter((h) => h.sourceUrl)
-        .map((h) => ({ sourceUrl: h.sourceUrl, merchant: h.merchant })),
-    );
+    const links =
+      ctx.links ??
+      (await this.affiliate.resolve(
+        hotels
+          .filter((h) => h.sourceUrl)
+          .map((h) => ({ sourceUrl: h.sourceUrl, merchant: h.merchant })),
+      ));
 
-    const recommendation = await this.recommendations.create({
-      userId: ctx.userId,
-      messageId: ctx.messageId,
-      domain: DOMAIN,
-      citySlug: query.citySlug,
-      provider: this.provider.name,
-      itemCount: hotels.length,
-      guests: ctx.guests,
-      latencyMs: Date.now() - ctx.started,
-      cacheHit: ctx.cacheHit,
-    });
+    // persist:false 면 통계를 안 남긴다. recommendationId 가 null 이 되고,
+    // 아래 items.createMany 도 자연히 건너뛴다 (같은 조건을 이미 쓰고 있다).
+    const recommendation =
+      ctx.persist === false
+        ? null
+        : await this.recommendations.create({
+            userId: ctx.userId,
+            messageId: ctx.messageId,
+            domain: DOMAIN,
+            citySlug: query.citySlug,
+            provider: this.provider.name,
+            itemCount: hotels.length,
+            guests: ctx.guests,
+            latencyMs: Date.now() - ctx.started,
+            cacheHit: ctx.cacheHit,
+          });
     const recommendationId = (recommendation?.id as string) ?? null;
 
     const rows: Record<string, unknown>[] = [];
     const listItems: t.Json[] = [];
+    /** 애드픽 변환이 안 돼 원본 주소로 나가는 줄. 수익화가 안 되는 노출이다. */
+    const unconverted: string[] = [];
 
     hotels.forEach((hotel, position) => {
       const clickId = newClickId();
@@ -335,6 +384,9 @@ export class HotelService {
         this.logger.warn(`no destination for hotel=${hotel.name}, skipping row`);
         return;
       }
+      // 목적지가 원본과 같다 = 커미션 링크가 아니다.
+      // 여기서 세지 않으면 "링크는 잘 열리는데 수수료가 안 들어온다"를 영영 못 찾는다.
+      if (destination === hotel.sourceUrl) unconverted.push(hotel.name);
       const targetUrl = applySubid(destination, clickId, this.config);
 
       rows.push({
@@ -369,6 +421,14 @@ export class HotelService {
         }),
       );
     });
+
+    if (unconverted.length) {
+      // 경고로 남긴다. 배포를 막을 일은 아니지만 방치하면 그대로 매출이 샌다.
+      this.logger.warn(
+        `애드픽 변환 실패 ${unconverted.length}/${listItems.length}건 — 원본 주소로 나간다: ` +
+          unconverted.join(', '),
+      );
+    }
 
     if (!listItems.length) return this.noResult(query.cityName);
     if (recommendationId) await this.items.createMany(rows);
