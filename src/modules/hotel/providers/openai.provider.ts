@@ -3,6 +3,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { AppConfig, CONFIG } from '../../../config/app.config';
 import { OpenAiService, parseJsonLoose } from '../../openai/openai.service';
 import { Hotel, HotelProvider, HotelQuery } from '../hotel.types';
+import { ThumbnailSource, extractThumbnail } from '../thumbnail';
 
 /**
  * gpt-5-mini + 웹 검색으로 호텔을 찾는 provider.
@@ -109,6 +110,33 @@ function isLocaleSegment(segment: string): boolean {
   return /^[a-z]{2}(-[a-zA-Z]{2,4})?$/.test(segment);
 }
 
+/**
+ * 한국어로 바꾼 주소가 실제로 살아 있는지 보고, 죽었으면 원본으로 되돌린다.
+ *
+ * 사이트마다 로케일 URL 규칙이 다르고 문서화돼 있지도 않다. 규칙을 추측해서 박아두면
+ * 그 추측이 틀린 사이트에서 **전부 404** 가 된다 — 영어 페이지보다 나쁜 결과다.
+ * 그래서 추측하지 말고 확인한다.
+ *
+ * ⚠️ **404 로 확인된 경우에만 되돌린다.**
+ *    이 사이트들은 봇을 막아서 403·429 를 자주 준다. 그건 "주소가 틀렸다"는 증거가
+ *    아니라 "우리가 봇으로 보인다"는 뜻이다. 그걸 근거로 되돌리면 멀쩡한 한국어 링크를
+ *    전부 영어로 돌려놓게 된다.
+ */
+export function chooseUrl(
+  original: string,
+  localized: string,
+  localizedStatus: number | null,
+  originalStatus: number | null,
+): string {
+  if (localized === original) return original;
+
+  const dead = (s: number | null) => s === 404 || s === 410;
+
+  // 한국어 주소가 죽은 게 확인됐고, 원본은 죽지 않았을 때만 되돌린다.
+  if (dead(localizedStatus) && !dead(originalStatus)) return original;
+  return localized;
+}
+
 /** 2차 호출에 거는 구조화 출력 스키마. strict 라 모든 키가 required 여야 한다. */
 export const HOTEL_SCHEMA = {
   type: 'json_schema' as const,
@@ -191,7 +219,12 @@ export interface SearchTrace {
   /** 2차 호출이 고른 개수 (필터 전). */
   picks: number;
   droppedUntrusted: number;
+  /** 살아 있지 않아서 버린 이미지 주소 수. */
   droppedThumbnails: number;
+  /** 최종적으로 이미지가 붙은 호텔 수. */
+  thumbnails: number;
+  /** 어느 층에서 건졌는지 (og / ld / photo). 층별 성공률을 봐야 손볼 데가 보인다. */
+  thumbnailSources: Record<string, number>;
   hotels: number;
 }
 
@@ -307,6 +340,8 @@ export class OpenAiHotelProvider implements HotelProvider {
       picks: 0,
       droppedUntrusted: 0,
       droppedThumbnails: 0,
+      thumbnails: 0,
+      thumbnailSources: {},
       hotels: 0,
     };
     const done = (hotels: Hotel[], candidates: string | null): TracedSearch => {
@@ -329,7 +364,7 @@ export class OpenAiHotelProvider implements HotelProvider {
     const normalized = this.toHotels(picks, query, trace);
 
     const thumbStarted = Date.now();
-    const hotels = await this.withVerifiedThumbnails(normalized, trace);
+    const hotels = await this.withThumbnails(normalized, trace);
     trace.thumbnailMs = Date.now() - thumbStarted;
 
     return done(hotels, candidates);
@@ -467,25 +502,128 @@ export class OpenAiHotelProvider implements HotelProvider {
   }
 
   /**
-   * 썸네일이 실제로 살아 있는지 확인한다.
+   * 카드에 넣을 이미지를 확정한다.
    *
-   * 모델이 주는 이미지 주소는 상당수가 지어낸 것이다. 죽은 주소를 listCard 에 넣으면
-   * 줄에 깨진 자리만 남는다. 이미지가 아예 없는 편이 낫다.
-   * 콜백 경로에서만 도는 코드라 5초 예산과 무관하다.
+   * 모델이 준 주소가 있으면 살아 있는지 확인하고, 없거나 죽었으면
+   * **예약 페이지에서 직접 긁는다**([thumbnail.ts](../thumbnail.ts)).
+   *
+   * ⚠️ 모델은 이미지 주소를 사실상 못 준다 — 1차 후보 스키마에 이미지 필드가 없고,
+   *    `web_search` 도 텍스트만 주기 때문이다. 그래서 실질적인 경로는 페이지 긁기다.
+   *
+   * 콜백 경로에서만 도는 코드라 5초 예산과 무관하다. 결과는 검색 캐시에 같이
+   * 저장되므로, 같은 도시를 다시 물어도 페이지를 또 읽지 않는다.
    */
-  private async withVerifiedThumbnails(
-    hotels: Hotel[],
-    trace: SearchTrace,
-  ): Promise<Hotel[]> {
-    const checks = hotels.map(async (hotel) => {
-      if (!hotel.thumbnailUrl) return hotel;
-      const ok = await isLiveImage(hotel.thumbnailUrl);
-      if (ok) return hotel;
-      trace.droppedThumbnails += 1;
-      this.logger.log(`dropped dead thumbnail hotel=${hotel.name} url=${hotel.thumbnailUrl}`);
-      return { ...hotel, thumbnailUrl: null };
+  private async withThumbnails(hotels: Hotel[], trace: SearchTrace): Promise<Hotel[]> {
+    if (!this.config.hotelThumbnails) return hotels;
+
+    const resolved = hotels.map(async (hotel) => {
+      // ① 모델이 준 주소 (거의 없다)
+      if (hotel.thumbnailUrl) {
+        if (await isLiveImage(hotel.thumbnailUrl)) {
+          trace.thumbnails += 1;
+          count(trace.thumbnailSources, 'model');
+          return hotel;
+        }
+        trace.droppedThumbnails += 1;
+        this.logger.log(`dropped dead thumbnail hotel=${hotel.name} url=${hotel.thumbnailUrl}`);
+      }
+
+      // ② 예약 페이지에서 긁는다
+      const found = await this.thumbnailFromPage(hotel.sourceUrl);
+      if (!found) return { ...hotel, thumbnailUrl: null };
+
+      if (!(await isLiveImage(found.url))) {
+        trace.droppedThumbnails += 1;
+        this.logger.log(`page thumbnail not live hotel=${hotel.name} url=${found.url}`);
+        return { ...hotel, thumbnailUrl: null };
+      }
+
+      trace.thumbnails += 1;
+      count(trace.thumbnailSources, found.source);
+      this.logger.log(`thumbnail ${found.source} hotel=${hotel.name} url=${found.url}`);
+      return { ...hotel, thumbnailUrl: found.url };
     });
-    return Promise.all(checks);
+
+    return Promise.all(resolved);
+  }
+
+  /** 예약 페이지 HTML 을 (앞부분만) 읽어 대표 이미지를 뽑는다. 실패는 null. */
+  private async thumbnailFromPage(
+    pageUrl: string,
+  ): Promise<{ url: string; source: ThumbnailSource } | null> {
+    if (!pageUrl) return null;
+    const html = await fetchHtml(
+      pageUrl,
+      this.config.hotelThumbnailTimeoutMs,
+      this.config.hotelThumbnailMaxBytes,
+    );
+    if (!html) {
+      this.logger.log(`thumbnail page unreadable url=${pageUrl}`);
+      return null;
+    }
+    return extractThumbnail(html, pageUrl);
+  }
+}
+
+/** Record 카운터 증가. 층별 성공률을 보려고 쓴다. */
+function count(bucket: Record<string, number>, key: string): void {
+  bucket[key] = (bucket[key] ?? 0) + 1;
+}
+
+/**
+ * 예약 페이지를 브라우저인 척 읽는다.
+ *
+ * ⚠️ **UA 를 안 보내면 403·429 를 준다.** 실제로 hotels.com 이 그렇다.
+ *    우리가 이미 사용자에게 링크로 보내주는 공개 페이지이고, 읽는 것은 앞부분 몇백 KB 뿐이다.
+ *
+ * 본문 전체를 받지 않는 이유: 예약 페이지는 200~400KB 인데 이미지 주소는 앞쪽에 있다.
+ * 5곳을 동시에 읽으므로 다 받으면 메모리와 시간을 헛되이 쓴다.
+ */
+const BROWSER_UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
+  '(KHTML, like Gecko) Chrome/124.0 Safari/537.36';
+
+async function fetchHtml(
+  url: string,
+  timeoutMs: number,
+  maxBytes: number,
+): Promise<string | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      redirect: 'follow',
+      headers: {
+        'user-agent': BROWSER_UA,
+        accept: 'text/html,application/xhtml+xml',
+        'accept-language': 'ko-KR,ko;q=0.9',
+      },
+    });
+    if (!res.ok) return null;
+    if (!(res.headers.get('content-type') ?? '').includes('text/html')) return null;
+
+    const reader = res.body?.getReader();
+    if (!reader) return null;
+
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+      while (size < maxBytes) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        size += value.length;
+      }
+    } finally {
+      // 다 안 읽고 끊는다. 취소하지 않으면 연결이 남는다.
+      await reader.cancel().catch(() => undefined);
+    }
+    return Buffer.concat(chunks).toString('utf8');
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -520,16 +658,42 @@ export function merchantOf(url: string): string | null {
   }
 }
 
-/** HEAD 로 살아 있는 이미지인지만 본다. 2초 안에 답 없으면 버린다. */
+/**
+ * 주소가 실제로 살아 있는 이미지인지 본다. 2초 안에 답 없으면 버린다.
+ *
+ * CDN 마다 사정이 다르다. 실측하면서 걸린 것들:
+ *   - trip.com CDN 은 HEAD 에 **content-type 을 안 준다.** 없다고 버리면 다 놓친다.
+ *   - HEAD 자체를 막는 CDN 이 있다. 그때는 1KB 만 받아서 다시 본다.
+ */
 async function isLiveImage(url: string): Promise<boolean> {
+  const acceptable = (res: Response): boolean => {
+    if (!res.ok) return false;
+    const type = res.headers.get('content-type');
+    // 타입을 안 알려주면 200 을 믿는다. 어차피 죽은 주소면 200 이 안 온다.
+    return !type || type.startsWith('image/');
+  };
+
+  const head = await probe(url, 'HEAD');
+  if (head) return acceptable(head);
+
+  const ranged = await probe(url, 'GET', { range: 'bytes=0-1023' });
+  return ranged ? acceptable(ranged) : false;
+}
+
+async function probe(
+  url: string,
+  method: 'HEAD' | 'GET',
+  headers: Record<string, string> = {},
+): Promise<Response | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 2000);
   try {
-    const res = await fetch(url, { method: 'HEAD', signal: controller.signal });
-    if (!res.ok) return false;
-    return (res.headers.get('content-type') ?? '').startsWith('image/');
+    const res = await fetch(url, { method, headers, signal: controller.signal });
+    // 요청 자체는 성공했으므로 판정은 호출부에 맡긴다.
+    await res.body?.cancel().catch(() => undefined);
+    return res;
   } catch {
-    return false;
+    return null;
   } finally {
     clearTimeout(timer);
   }

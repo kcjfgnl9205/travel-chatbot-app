@@ -86,7 +86,9 @@ POST callbackUrl → listCard 도착 (합쳐서 7~30초)
 
 그래서 **같은 로직을 동기로 돌리는 진단 엔드포인트**를 따로 뒀다.
 
-스킬과 **똑같이 발화 하나만** 받아서 파싱부터 검색까지 다 돌린다.
+스킬과 **똑같이 발화 하나만** 받아서 파싱부터 검색까지 다 돌리고, **사용자에게 실제로 배달되는 말풍선 JSON 을 그대로** 돌려준다.
+
+> ⚠️ 스킬 엔드포인트의 **즉시 응답과는 다르다.** 캐시 미스면 거기서는 `useCallback` 만 나가고 이 카드는 잠시 뒤 **콜백으로** 배달된다 — 여기 나오는 건 그 콜백 본문이다. 캐시 히트일 때만 스킬 응답 자체와 같다.
 
 ```bash
 curl -sG https://bot.nolmoa.com/api/v1/debug/hotel-search \
@@ -96,14 +98,45 @@ curl -sG https://bot.nolmoa.com/api/v1/debug/hotel-search \
 
 ```json
 {
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "listCard": {
+          "header": { "title": "오사카 호텔 추천 5곳" },
+          "items": [
+            {
+              "title": "호텔 그란비아 오사카",
+              "description": "1박 172,000원~ · 평점 9.1 · 우메다",
+              "link": { "web": "https://bot.nolmoa.com/r/Ab3xY9kQ2mZp" }
+            }
+          ],
+          "buttons": [{ "label": "다른 도시 보기", "action": "message", "messageText": "호텔 추천해줘" }]
+        }
+      }
+    ],
+    "quickReplies": [{ "label": "도쿄 호텔", "action": "message", "messageText": "도쿄 호텔 추천해줘" }]
+  }
+}
+```
+
+**조립은 `HotelService` 의 같은 코드를 태운다.** 제목 40자 잘림, 설명 문구, 줄 링크, 버튼·퀵리플라이까지 운영과 동일하다 — 진단용으로 비슷한 걸 따로 만들면 검증이 되지 않는다. 도시를 못 알아들으면 되묻기가, 결과가 없으면 그 안내 문구가 나오는 것도 스킬과 같다.
+
+`clickId` 는 인메모리에 남으므로 **줄 링크를 그대로 눌러 애드픽 이동까지 확인**할 수 있다. 응답을 통째로 복사해 오픈빌더 스킬 테스트에 넣어봐도 된다.
+
+#### 진단 정보는 `trace=true`
+
+```bash
+curl -sG https://bot.nolmoa.com/api/v1/debug/hotel-search \
+  -H "x-debug-token: $DEBUG_TOKEN" \
+  --data-urlencode "utterance=오사카 호텔 추천해줘" -d trace=true | jq .debug
+```
+
+```json
+{
   "ok": true,
   "utterance": "오사카 여행갈건데 4명기준으로 숙소 추천해줘",
-  "parsed": {
-    "citySlug": "osaka",
-    "cityName": "오사카",
-    "guests": 4,
-    "nights": null
-  },
+  "parsed": { "citySlug": "osaka", "cityName": "오사카", "guests": 4, "nights": null },
   "timings": {
     "parseMs": 780,
     "searchMs": 11240,
@@ -124,7 +157,7 @@ curl -sG https://bot.nolmoa.com/api/v1/debug/hotel-search \
 }
 ```
 
-**여기서 진짜 걸리는 시간을 잰다.** 발화 파싱도 호텔 검색도 캐시를 타지 않고 매번 실제로 부르며, DB·캐시에는 아무것도 쓰지 않는다(진단 호출이 운영 캐시를 데워버리면 다음 측정이 거짓말이 된다). 실패하면 `ok: false` 와 에러 메시지가 그대로 담기고, 결과가 비면 `hint` 가 어디를 봐야 하는지 알려준다.
+**여기서 진짜 걸리는 시간을 잰다.** 발화 파싱도 호텔 검색도 캐시를 타지 않고 매번 실제로 부르며, 통계(`recommendations`)에는 아무것도 쓰지 않는다(진단 호출이 섞이면 전환율 집계가 틀어진다). 실패하면 `debug.ok: false` 와 에러 메시지가 그대로 담기고, 결과가 비면 `hint` 가 어디를 봐야 하는지 알려준다.
 
 `parsed` 로 **모델이 발화를 어떻게 알아들었는지** 확인할 수 있고, `timings.parseMs` 가 카카오 5초 예산에서 실제로 깎이는 시간이다.
 
@@ -137,14 +170,35 @@ curl -sG https://bot.nolmoa.com/api/v1/debug/hotel-search \
 
 파싱 모델(`OPENAI_PARSE_MODEL`)은 검색 모델과 분리돼 있다. 검색은 품질이 중요하고 콜백 예산(1분)을 쓰지만, **파싱은 5초 예산 안에서 도는 유일한 모델 호출이라 속도가 곧 품질이다.** 느리면 도시를 못 알아들은 것과 똑같이 보인다.
 
-| 옵션              | 용도                                                                     |
-| ----------------- | ------------------------------------------------------------------------ |
-| `affiliate=true`  | 애드픽 변환까지 같이 재본다 (`affiliateStatus` 로 제휴사 지원 여부 확인) |
-| `candidates=true` | 1차 웹 검색 원문을 그대로 본다 — 모델이 뭘 긁어왔는지                    |
+| 옵션              | 용도                                                                         |
+| ----------------- | ---------------------------------------------------------------------------- |
+| `trace=true`       | 소요 시간·개수·설정·실패 원인을 `debug` 키로 같이 받는다                    |
+| `affiliate=false`  | 애드픽 변환을 건너뛴다 (**기본은 켜짐**)                                     |
+| `candidates=true`  | 1차 웹 검색 원문을 그대로 본다 — 모델이 뭘 긁어왔는지 (`trace=true` 필요)   |
+
+> `affiliate` 를 켜든 끄든 **카드 JSON 은 같다.** 줄 링크는 어차피 `/r/{clickId}` 이고, 애드픽 주소는 그 302 목적지로만 쓰인다. 끄면 그 목적지가 원본 주소가 되므로, **커미션 링크가 제대로 나가는지 보려면 켜둔 채로 확인해야 한다** — `counts.affiliateFallback` 이 0 이어야 정상이다.
 
 > ⚠️ 호출 한 번이 곧 OpenAI 요금이다. `/docs` 가 공개돼 있으므로 **운영에서는 `DEBUG_TOKEN` 을 반드시 채운다.** 비워두면 `APP_ENV=production` 에서 404 로 닫힌다.
 >
 > 한글 도시명은 URL 인코딩이 필요하다 (`--data-urlencode`). 스웨거에서는 자동으로 된다.
+
+### 카드 이미지는 어디서 오나
+
+**모델은 이미지 주소를 모른다.** `web_search` 는 텍스트 스니펫을 주고 거기에 이미지 URL 은 없다. 시키면 그럴듯한 CDN 주소를 지어내고, 그건 카드에 깨진 자리만 남긴다.
+
+그래서 **예약 페이지를 직접 읽는다** ([thumbnail.ts](src/modules/hotel/thumbnail.ts)). 사이트마다 사정이 달라 3단으로 내려간다:
+
+| 층 | 무엇을 보나 | 실측 |
+| --- | --- | --- |
+| `og` | `og:image` / `twitter:image` | hotels.com ✅ |
+| `ld` | JSON-LD 의 `image` | 사이트마다 |
+| `photo` | 본문에서 **크기가 박힌** 사진 URL (`_R_960_660_`, `1200x800`) | trip.com ✅ (SPA 라 og 태그가 없다) |
+
+⚠️ **본문 이미지를 무작정 집으면 로고가 박힌다.** 그래서 photo 층은 URL 이 스스로 사진 크기를 밝히는 것만 받고, `og:image` 라도 경로에 `logo`·`default`·`placeholder` 가 있으면 건너뛴다 — 마이리얼트립이 상세 페이지에 사이트 로고를 og:image 로 박아둔다. 다섯 줄이 전부 같은 로고가 되느니 이미지가 없는 게 낫다.
+
+뽑은 주소는 살아 있는지 확인하고 넣는다. trip.com CDN 처럼 **HEAD 에 `content-type` 을 안 주는** 곳이 있어서, 200 이면 받고 HEAD 자체를 막으면 1KB 만 받아서 다시 본다.
+
+콜백 경로에서만 도는 코드라 카카오 5초 예산과 무관하고, 결과는 검색 캐시에 같이 저장되므로 같은 도시를 다시 물어도 페이지를 또 읽지 않는다. `trace=true` 의 `counts.thumbnails` / `thumbnailSources` 로 층별 성공률을 볼 수 있다.
 
 ### 비용과 안전장치
 
@@ -155,7 +209,7 @@ curl -sG https://bot.nolmoa.com/api/v1/debug/hotel-search \
 | 메모리 캐시 단         | DB 가 죽어도 캐시는 산다. 캐시가 죽으면 요청 하나가 곧 요금이다                 |
 | in-flight 병합         | 같은 도시 동시 요청을 검색 1회로 묶는다                                         |
 | 호스트 허용 목록       | 모델이 지어낸 예약 URL 을 버린다 — 트립닷컴·마이리얼트립·클룩·호텔스닷컴만 통과 |
-| 썸네일 검증            | HEAD 로 살아 있는 이미지만 카드에 넣는다                                        |
+| 썸네일 수집·검증       | 예약 페이지에서 대표 이미지를 긁고, 살아 있는 주소만 카드에 넣는다              |
 | 두 호출 다 구조화 출력 | 모델이 결과 대신 "진행할까요?" 라고 되묻을 자리를 없앤다                        |
 
 ---
@@ -169,7 +223,7 @@ curl -sG https://bot.nolmoa.com/api/v1/debug/hotel-search \
 | GET    | `/r/{clickId}`                   | **클릭 카운트 → 애드픽 302 리다이렉트** (DB 왕복 1회)               |
 | GET    | `/health`                        | 앱 생존 (DB 안 건드림)                                              |
 | GET    | `/health/db`                     | Supabase 실제 연결 진단                                             |
-| GET    | `/api/v1/debug/hotel-search`     | **진단용 동기 검색** — 실제 결과 + 단계별 소요 시간 (`DEBUG_TOKEN`) |
+| GET    | `/api/v1/debug/hotel-search`     | **진단용 동기 검색** — 사용자가 보는 말풍선 그대로 (`DEBUG_TOKEN`)  |
 | GET    | `/docs`                          | Swagger (운영에서도 켜져 있다)                                      |
 
 ### 링크는 이렇게 만들어진다
