@@ -5,27 +5,34 @@ import { createServer, Server } from 'node:http';
 import request from 'supertest';
 
 import { AppModule } from '../src/app.module';
+import { FLIGHT_PROVIDER } from '../src/modules/flight/flight.types';
 import { HOTEL_PROVIDER } from '../src/modules/hotel/hotel.types';
 import { OpenAiService } from '../src/modules/openai/openai.service';
+import { FakeFlightProvider } from './fake-flight-provider';
 import { FakeHotelProvider } from './fake-provider';
 import { FakeOpenAiService } from './fake-openai';
 
 export const RECOMMEND = '/api/v1/kakao/hotels/recommend';
+export const FLIGHTS = '/api/v1/kakao/flights/search';
 
 export interface TestApp {
   app: INestApplication;
   provider: FakeHotelProvider;
+  flightProvider: FakeFlightProvider;
   openai: FakeOpenAiService;
 }
 
 export async function createApp(): Promise<TestApp> {
   const provider = new FakeHotelProvider();
+  const flightProvider = new FakeFlightProvider();
   const openai = new FakeOpenAiService();
 
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
     // 실제 OpenAI 를 부르지 않는다 — 검색(provider)도, 발화 파싱(OpenAiService)도.
     .overrideProvider(HOTEL_PROVIDER)
     .useValue(provider)
+    .overrideProvider(FLIGHT_PROVIDER)
+    .useValue(flightProvider)
     .overrideProvider(OpenAiService)
     .useValue(openai)
     .compile();
@@ -34,7 +41,7 @@ export async function createApp(): Promise<TestApp> {
   // init() 이 아니라 listen() 인 이유: supertest 는 서버가 안 떠 있으면 요청마다
   // listen(0) 을 부른다. 동시 요청 테스트에서 그게 서로 경합해 ECONNRESET 이 난다.
   await app.listen(0);
-  return { app, provider, openai };
+  return { app, provider, flightProvider, openai };
 }
 
 export function kakaoPayload(
@@ -120,4 +127,36 @@ export async function callbackReceiver(): Promise<{
     received,
     close: () => new Promise<void>((r) => server.close(() => r())),
   };
+}
+
+// ------------------------------------------------------------------ 항공권
+export const carouselOf = (body: any) =>
+  body.template?.outputs?.find((o: any) => o.carousel)?.carousel;
+
+/** 캐러셀 안의 itemCard 목록. 없으면 undefined. */
+export const itemCardsOf = (body: any) => {
+  const carousel = carouselOf(body);
+  return carousel?.type === 'itemCard' ? carousel.items : undefined;
+};
+
+/**
+ * 카드가 나올 때까지 다시 물어본다 (항공권).
+ *
+ * 캐시 미스는 즉시 카드를 주지 않는다 — 백그라운드 검색이 끝나야 캐시에 들어간다.
+ * 콜백을 안 쓰는 경로에서 "잠시 후 다시 물어보면 나온다"가 실제로 되는지도 같이 검증된다.
+ */
+export async function searchUntilCards(
+  app: INestApplication,
+  utterance: string,
+  params: Record<string, unknown> = {},
+): Promise<any[]> {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const res = await request(app.getHttpServer())
+      .post(FLIGHTS)
+      .send(kakaoPayload(utterance, 'test-user', params));
+    const cards = itemCardsOf(res.body);
+    if (cards) return cards;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error(`itemCard 캐러셀이 나오지 않았다: ${utterance}`);
 }

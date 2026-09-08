@@ -119,3 +119,119 @@ export function listCard(input: ListCardInput): Json {
   }
   return skillResponse([{ listCard: card }], input.quickReplies);
 }
+
+// ------------------------------------------------------------------- itemCard
+/**
+ * itemCard 제한.
+ *
+ * 항공권은 listCard 로 담을 수 없다. 한 줄에 40자뿐인데 항공권 1건은
+ * "항공사 · 편명 · 출발/도착 시각 · 소요 · 경유 · 가격" 이 다 있어야 고를 수 있다.
+ * itemCard 는 key-value 줄을 5개까지 세로로 쌓을 수 있어서 그게 들어간다.
+ *
+ * ⚠️ 카카오는 제한을 넘기면 **말풍선을 통째로 렌더링하지 않는다.** 그래서
+ *    "잘려서 보기 나쁘다" 가 아니라 "아무것도 안 보인다" 가 된다. 여기서 잘라 넣는다.
+ *    itemList 의 title 6자는 특히 빡빡하다 ('항공사' 3자, '가는편' 3자).
+ */
+export const MAX_ITEM_CARD_HEAD = 30; // head.title 2줄
+export const MAX_ITEM_LIST_ROWS = 5;
+export const MAX_ITEM_LIST_TITLE = 6;
+export const MAX_ITEM_LIST_DESC = 20; // 1줄
+export const MAX_ITEM_CARD_TITLE = 30; // 2줄
+export const MAX_ITEM_CARD_DESC = 60; // 3줄
+export const MAX_ITEM_CARD_BUTTONS = 3;
+
+/** 캐러셀에 담을 수 있는 카드 수. */
+export const MAX_CAROUSEL_ITEMS = 10;
+
+export interface ItemRow {
+  title: string;
+  description: string;
+}
+
+export interface ItemCardInput {
+  /** 카드 맨 위 굵은 줄. 항공권은 여기에 노선과 날짜를 넣는다. */
+  headTitle?: string | null;
+  imageUrl?: string | null;
+  /** key-value 줄. 최대 5개, key 는 6자까지다. */
+  itemList: ItemRow[];
+  /** 값을 오른쪽으로 붙인다. 숫자·시각이 세로로 정렬돼 비교하기 쉬워진다. */
+  itemListAlignment?: 'left' | 'right';
+  /** 강조되는 마지막 줄. 가격을 여기 넣는다. */
+  summary?: ItemRow | null;
+  title?: string | null;
+  description?: string | null;
+  buttons?: Json[];
+  buttonLayout?: 'vertical' | 'horizontal';
+}
+
+/**
+ * 항목 나열형 카드.
+ *
+ * itemList 가 최소 1개는 있어야 한다 — 없으면 카카오가 렌더링을 거부한다.
+ * 그래서 빈 목록이면 이걸 부르지 말고 simpleText 로 떨어져야 한다.
+ */
+export function itemCard(input: ItemCardInput): Json {
+  const card: Json = {
+    itemList: input.itemList.slice(0, MAX_ITEM_LIST_ROWS).map((row) => ({
+      title: cut(row.title, MAX_ITEM_LIST_TITLE),
+      description: cut(row.description, MAX_ITEM_LIST_DESC),
+    })),
+  };
+
+  if (input.headTitle) card.head = { title: cut(input.headTitle, MAX_ITEM_CARD_HEAD) };
+  if (input.imageUrl) card.thumbnail = { imageUrl: input.imageUrl };
+  if (input.itemListAlignment) card.itemListAlignment = input.itemListAlignment;
+  if (input.summary) {
+    card.itemListSummary = {
+      title: cut(input.summary.title, MAX_ITEM_LIST_TITLE),
+      description: cut(input.summary.description, MAX_ITEM_LIST_DESC),
+    };
+  }
+  if (input.title) card.title = cut(input.title, MAX_ITEM_CARD_TITLE);
+  if (input.description) card.description = cut(input.description, MAX_ITEM_CARD_DESC);
+  if (input.buttons?.length) {
+    card.buttons = input.buttons.slice(0, MAX_ITEM_CARD_BUTTONS);
+    card.buttonLayout = input.buttonLayout ?? 'vertical';
+  }
+  return card;
+}
+
+// ------------------------------------------------------------------- carousel
+/**
+ * 같은 종류의 카드를 좌우로 넘기는 말풍선.
+ *
+ * ⚠️ **items 안에는 카드 본체만 들어간다.** `{ itemCard: {...} }` 로 감싼 걸 넣으면
+ *    렌더링되지 않는다 — 감싸는 건 카드가 단독으로 나갈 때뿐이다.
+ */
+export function carousel(
+  type: 'basicCard' | 'commerceCard' | 'listCard' | 'itemCard',
+  items: Json[],
+  quickReplies?: Json[],
+): Json {
+  return skillResponse(
+    [{ carousel: { type, items: items.slice(0, MAX_CAROUSEL_ITEMS) } }],
+    quickReplies,
+  );
+}
+
+/**
+ * 안내 문구 + 캐러셀.
+ *
+ * 캐러셀에는 listCard 의 header 같은 자리가 없다. 노선·인원·"가격은 검색 시점 기준"
+ * 같은 공통 맥락을 카드마다 반복해 넣을 수는 없으니 앞에 말풍선 하나로 세운다.
+ * (카카오는 outputs 를 3개까지 받는다)
+ */
+export function textThenCarousel(
+  text: string,
+  type: 'basicCard' | 'commerceCard' | 'listCard' | 'itemCard',
+  items: Json[],
+  quickReplies?: Json[],
+): Json {
+  return skillResponse(
+    [
+      { simpleText: { text } },
+      { carousel: { type, items: items.slice(0, MAX_CAROUSEL_ITEMS) } },
+    ],
+    quickReplies,
+  );
+}

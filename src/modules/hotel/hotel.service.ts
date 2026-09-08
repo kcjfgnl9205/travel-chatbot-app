@@ -24,7 +24,15 @@ import {
 import { CITIES, hasCity } from '../nlu/nlu';
 import { NluService } from '../nlu/nlu.service';
 import { SearchCacheService } from '../search-cache/search-cache.service';
-import { HOTEL_PROVIDER, Hotel, HotelProvider, HotelQuery, listDescription } from './hotel.types';
+import {
+  HOTEL_PROVIDER,
+  Hotel,
+  HotelProvider,
+  HotelQuery,
+  hotelCacheKey,
+  isHotel,
+  listDescription,
+} from './hotel.types';
 
 /**
  * 호텔 추천 유스케이스.
@@ -158,7 +166,12 @@ export class HotelService {
     const ctx: RequestContext = { userId, messageId, guests: parsed.guests, started };
 
     // 5초 예산 안에서 할 수 있는 건 캐시 조회까지다.
-    const cached = await this.searchCache.peek(DOMAIN, this.provider.name, query);
+    const cached = await this.searchCache.peek(
+      DOMAIN,
+      this.provider.name,
+      hotelCacheKey(query),
+      isHotel,
+    );
     if (cached.length) {
       return this.respondWithHotels(cached, query, { ...ctx, cacheHit: true });
     }
@@ -222,7 +235,7 @@ export class HotelService {
     const search = (async () => {
       const hotels = await this.provider.search(query);
       if (hotels.length) {
-        await this.searchCache.store(DOMAIN, this.provider.name, query, hotels);
+        await this.searchCache.store(DOMAIN, this.provider.name, hotelCacheKey(query), hotels);
       } else {
         this.rememberEmpty(key);
       }
@@ -405,7 +418,7 @@ export class HotelService {
       // DB가 없어도 리다이렉트가 동작하도록 인메모리에도 남긴다.
       this.memory.put(clickId, {
         recommendationId,
-        hotelName: hotel.name,
+        itemName: hotel.name,
         sourceUrl: hotel.sourceUrl,
         targetUrl,
         userId: ctx.userId,

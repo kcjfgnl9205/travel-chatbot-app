@@ -1,9 +1,9 @@
 # travel-chatbot-app
 
 카카오톡 여행 챗봇 스킬 서버. **NestJS + Supabase**.
-현재 범위: **호텔 추천 (gpt-5-mini + 웹 검색)**
+현재 범위: **호텔 추천 · 항공권 검색 (gpt-5-mini + 웹 검색)**
 
-운영: https://bot.nolmoa.com · 기획: [docs/PLAN.md](docs/PLAN.md) · DB: [docs/DB.md](docs/DB.md) · 배포: [docs/DEPLOY.md](docs/DEPLOY.md)
+운영: https://bot.nolmoa.com · 기획: [docs/PLAN.md](docs/PLAN.md) · DB: [docs/DB.md](docs/DB.md) · 항공권: [docs/FLIGHT.md](docs/FLIGHT.md) · 배포: [docs/DEPLOY.md](docs/DEPLOY.md)
 
 > FastAPI 로 먼저 만들었다가 NestJS 로 전환했다. 전환 기록과 주의점은 [docs/MIGRATION.md](docs/MIGRATION.md).
 
@@ -23,16 +23,21 @@ npm run start:dev             # http://localhost:8000
 운영에서도 항상 켜져 있다: https://bot.nolmoa.com/docs
 
 ```bash
-# 스킬 호출 테스트
+# 스킬 호출 테스트 (호텔)
 curl -s -X POST localhost:8000/api/v1/kakao/hotels/recommend \
   -H 'content-type: application/json' \
   -d '{"userRequest":{"utterance":"오사카 호텔 추천해줘","user":{"properties":{"botUserKey":"u1"}}}}' | jq
+
+# 스킬 호출 테스트 (항공권)
+curl -s -X POST localhost:8000/api/v1/kakao/flights/search \
+  -H 'content-type: application/json' \
+  -d '{"userRequest":{"utterance":"다음달 3일 오사카 왕복 항공권 2명","user":{"properties":{"botUserKey":"u1"}}}}' | jq
 ```
 
 `SUPABASE_*` 를 비워두면 **no-op 모드**로 동작한다. DB 적재만 건너뛰고 카카오 응답과 리다이렉트는 정상이라, 오픈빌더 연동을 먼저 확인할 때 쓴다.
 
 ```bash
-npm test           # 83개
+npm test           # 195개
 npx tsc --noEmit
 ```
 
@@ -218,12 +223,14 @@ curl -sG https://bot.nolmoa.com/api/v1/debug/hotel-search \
 
 | 메서드 | 경로                             | 용도                                                                |
 | ------ | -------------------------------- | ------------------------------------------------------------------- |
-| POST   | `/api/v1/kakao/hotels/recommend` | 오픈빌더 [호텔추천] 블록 스킬                                       |
-| POST   | `/api/v1/kakao/fallback`         | 폴백 블록                                                           |
+| POST   | `/api/v1/kakao/hotels/recommend` | 오픈빌더 [호텔추천] 블록 스킬 → `listCard`                          |
+| POST   | `/api/v1/kakao/flights/search`   | 오픈빌더 [항공권검색] 블록 스킬 → `itemCard` 캐러셀                 |
+| POST   | `/api/v1/kakao/fallback`         | 폴백 블록 (호텔·항공권 안내)                                        |
 | GET    | `/r/{clickId}`                   | **클릭 카운트 → 애드픽 302 리다이렉트** (DB 왕복 1회)               |
 | GET    | `/health`                        | 앱 생존 (DB 안 건드림)                                              |
 | GET    | `/health/db`                     | Supabase 실제 연결 진단                                             |
 | GET    | `/api/v1/debug/hotel-search`     | **진단용 동기 검색** — 사용자가 보는 말풍선 그대로 (`DEBUG_TOKEN`)  |
+| GET    | `/api/v1/debug/flight-search`    | 같은 것의 항공권판 (`DEBUG_TOKEN`)                                  |
 | GET    | `/docs`                          | Swagger (운영에서도 켜져 있다)                                      |
 
 ### 링크는 이렇게 만들어진다
@@ -282,6 +289,75 @@ AI 검색 → 원본 주소 (kr.trip.com/hotels/detail?id=12345)
 
 카카오 제약은 [`templates.ts`](src/modules/kakao/templates.ts) 에서 처리한다 — items **최대 5개**, 버튼 최대 2개, 라벨 14자. 그래서 서비스는 **애드픽 API 를 호출하기 전에** 호텔을 5개로 자른다.
 
+### 항공권은 `itemCard` 캐러셀
+
+> 전체 흐름·프롬프트·실패 진단은 **[docs/FLIGHT.md](docs/FLIGHT.md)** 에 따로 정리했다.
+
+항공권은 listCard 에 담을 수 없다. **한 줄이 40자**인데 항공권 1건을 고르려면 항공사·편명·출발/도착 시각·소요·경유·가격이 다 필요하다. 그래서 key-value 줄을 세로로 쌓을 수 있는 [itemCard](https://kakaobusiness.gitbook.io/main/tool/chatbot/skill_guide/answer_json_format) 를 캐러셀로 보낸다.
+
+캐러셀에는 listCard 의 `header` 같은 자리가 없다. 노선·조건·가격 주의 같은 **공통 맥락은 앞에 `simpleText` 하나를 세워** 전달한다 (카카오는 outputs 를 3개까지 받는다).
+
+```json
+{
+  "outputs": [
+    { "simpleText": { "text": "서울→오사카 왕복 항공권 5편이에요 ✈️\n…\n가격은 검색 시점 기준이라 실제 예약가와 다를 수 있어요." } },
+    {
+      "carousel": {
+        "type": "itemCard",
+        "items": [
+          {
+            "head": { "title": "서울 → 오사카 · 10/3(토)" },
+            "itemList": [
+              { "title": "항공사", "description": "대한항공 KE723" },
+              { "title": "가는편", "description": "10/3(토) 09:20→11:00" },
+              { "title": "오는편", "description": "10/6(화) 12:30→14:20" },
+              { "title": "소요", "description": "1시간 40분 · 직항" }
+            ],
+            "itemListAlignment": "right",
+            "itemListSummary": { "title": "예상가", "description": "1인 289,000원" },
+            "buttons": [
+              { "action": "webLink", "label": "예약 페이지 보기", "webLinkUrl": "https://…/r/Ab3xY9kQ2mZp" }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
+itemCard 제한이 listCard 보다 빡빡하다 — **itemList 5줄, key 6자, value 1줄(20자), 캐러셀 10장.** 넘기면 잘려서 보이는 게 아니라 **말풍선이 통째로 렌더링되지 않는다.** 그래서 `templates.ts` 가 잘라 넣고, 값이 빈 줄은 아예 만들지 않는다. 왕복이면 4줄이 차므로 새 줄을 넣기 전에 무엇을 뺄지 먼저 정해야 한다.
+
+`itemListAlignment: "right"` 는 취향이 아니다. 시각과 금액이 세로로 정렬돼야 카드를 넘기며 비교할 수 있다.
+
+**호텔과 다른 점 세 가지**
+
+| | 호텔 | 항공권 |
+| --- | --- | --- |
+| 카드 | `listCard` 한 장 (5줄) | `simpleText` + `itemCard` 캐러셀 |
+| 캐시 TTL | `SEARCH_CACHE_TTL_MINUTES` (60분) | `FLIGHT_CACHE_TTL_MINUTES` (30분) — 운임이 빨리 상한다 |
+| 항목의 신원 | `source_url` (호텔 1곳 = 주소 1개) | 편명 + 출발시각 — **여러 편이 같은 노선 검색 페이지를 공유한다** |
+
+마지막 줄이 중요하다. 호텔처럼 주소로 중복을 지우면 **카드가 한 장만 남는다.**
+
+### ⚠️ 항공권 가격은 확정 운임이 아니다
+
+실시간 운임 API 가 없다. 웹 검색으로 얻는 건 "그 노선이 대략 얼마인가"이지 지금 살 수 있는 가격이 아니다. 그래서
+
+- 카드 요약 줄은 `예상가` 로 적는다 (`최저가` 가 아니다)
+- 안내 말풍선에 "가격은 검색 시점 기준이라 실제 예약가와 다를 수 있어요" 가 **항상** 들어간다
+- 실제 금액은 예약 페이지에서 확정된다
+
+`/api/v1/debug/flight-search?trace=true` 의 `counts.searchCalls` 가 0 이면 모델이 웹 검색을 안 하고 기억으로 답한 것이라 그 가격은 더더욱 믿을 수 없다.
+
+GDS·항공사 API 가 붙으면 `FLIGHT_PROVIDER` 만 갈아끼우면 된다 — 서비스와 카드 조립 코드는 그대로다.
+
+### ⚠️ 출발지를 말하지 않으면 서울 출발로 본다
+
+"오사카 항공권" 처럼 출발지를 빼고 말하는 게 보통이다. 되묻는 대신 `FLIGHT_DEFAULT_ORIGIN_*`(기본 서울/ICN)에서 출발한다고 보고, **안내 말풍선에 "서울 출발 기준이에요" 를 적는다.** 부산에서 출발하려던 사람이 그 한 줄을 보고 고쳐 말할 수 있어야 한다 — 조용히 추측하면 잘못된 노선의 가격을 믿게 된다.
+
+`FlightNluService` 는 이 추측을 하지 않는다. 출발지가 없으면 `null` 을 주고, 채우는 건 `FlightService.queryOf()` 다 (`originAssumed` 플래그가 그 사실을 카드까지 들고 간다).
+
 ---
 
 ## 시크릿 관리
@@ -309,12 +385,12 @@ AI 검색 → 원본 주소 (kr.trip.com/hotels/detail?id=12345)
 ## Supabase 셋업
 
 1. 프로젝트 생성 — **리전 Seoul** 권장
-2. SQL Editor 에 [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql) 붙여넣고 실행 (파일 하나, 재실행 안전)
+2. SQL Editor 에 [`0001_init.sql`](supabase/migrations/0001_init.sql) → [`0002_flight.sql`](supabase/migrations/0002_flight.sql) 순서로 붙여넣고 실행 (재실행 안전)
 3. `.env` 에 `SUPABASE_URL` 과 `SUPABASE_SERVICE_ROLE_KEY` 입력 → [자세히](docs/DEPLOY.md)
 
-시드 스크립트는 없다. **호텔 데이터는 전부 provider 가 런타임에 만든다.**
+시드 스크립트는 없다. **호텔·항공권 데이터는 전부 provider 가 런타임에 만든다.**
 
-### 테이블 (6개)
+### 테이블 (6개 — 호텔·항공권 공용)
 
 | 그룹      | 테이블                                                            |
 | --------- | ----------------------------------------------------------------- |
@@ -327,20 +403,28 @@ AI 검색 → 원본 주소 (kr.trip.com/hotels/detail?id=12345)
 
 **호텔 마스터 테이블은 없다.** 매번 AI/크롤링으로 새로 받는 목록이라 이름으로는 같은 호텔을 못 묶는다. 호텔 신원은 `source_url` 이고 `affiliate_links` 가 그 역할을 한다. 집계는 **이름이 아니라 `source_url` 로** 한다.
 
+**항공권도 같은 테이블을 쓴다.** `domain` 컬럼(`hotel` | `flight`)이 둘을 가른다 — 도메인마다 테이블을 복제하면 "이번 주 클릭 수" 같은 질문이 전부 union 이 되고, 클릭 추적 경로(`/r/{clickId}`)가 어느 테이블을 볼지부터 알아내야 한다. 컬럼 이름이 호텔 시절 그대로인 것들(`recommendation_items.hotel_name` 등)의 의미는 [`0002_flight.sql`](supabase/migrations/0002_flight.sql) 의 주석에 정리돼 있다.
+
 ERD와 컬럼별 설명은 **[docs/DB.md](docs/DB.md)**.
 
 ---
 
 ## 카카오 오픈빌더 연결
 
-1. **스킬** 등록 → URL `https://bot.nolmoa.com/api/v1/kakao/hotels/recommend`
+1. **스킬** 2개 등록
+   - 호텔: `https://bot.nolmoa.com/api/v1/kakao/hotels/recommend`
+   - 항공권: `https://bot.nolmoa.com/api/v1/kakao/flights/search`
 2. **헤더** `X-Skill-Token` = `.env` 의 `KAKAO_SKILL_TOKEN` ← 빠뜨리면 401
-3. **블록** `호텔추천` 생성, 예시 발화: `오사카 호텔 추천해줘`, `도쿄 숙소 알려줘`
+3. **블록** 2개 생성
+   - `호텔추천` — 예시 발화: `오사카 호텔 추천해줘`, `도쿄 숙소 알려줘`
+   - `항공권검색` — 예시 발화: `오사카 항공권 찾아줘`, `다음달 3일 도쿄 왕복 2명`
 4. 폴백 블록 → `/api/v1/kakao/fallback`
-5. **`호텔추천` 블록의 [콜백 사용] 을 켠다** ← 안 켜면 첫 검색이 사용자에게 안 간다 ([왜](#-오픈빌더에서-콜백을-켜야-한다))
+5. **두 블록 모두 [콜백 사용] 을 켠다** ← 안 켜면 첫 검색이 사용자에게 안 간다 ([왜](#-오픈빌더에서-콜백을-켜야-한다))
 6. 배포 (HTTPS 필수, **응답 5초 제한**)
 
-엔티티(`city`)를 안 만들어도 된다. 서버가 gpt-5-mini 로 발화를 직접 파싱하므로 자연어·오타를 그대로 받는다. 엔티티가 오면 모델을 부르지 않고 그 값을 쓴다(더 빠르고 공짜).
+엔티티를 안 만들어도 된다. 서버가 gpt-5 계열로 발화를 직접 파싱하므로 자연어·오타를 그대로 받는다. 엔티티가 오면 모델을 부르지 않고 그 값을 쓴다(더 빠르고 공짜) — 호텔은 `city`/`sys_location`, 항공권은 `origin`/`destination`/`depart_date`/`return_date` 를 본다.
+
+⚠️ **항공권은 날짜 엔티티가 와도 모델을 부른다.** `sys_date` 가 "다음달 3일" 을 절대 날짜로 주지 않을 때가 있고, 그러면 검색이 통째로 틀어진다. `YYYY-MM-DD` 형식만 엔티티 값으로 받아들인다.
 
 ---
 
@@ -349,6 +433,7 @@ ERD와 컬럼별 설명은 **[docs/DB.md](docs/DB.md)**.
 ```
 src/
 ├── common/
+│   ├── booking-url.ts                 예약 링크 호스트 검증 / 한국어 페이지 변환 (호텔·항공권 공용)
 │   └── guards/skill-token.guard.ts    X-Skill-Token (비우면 검증 안 함)
 ├── config/
 │   ├── app.config.ts                  환경변수 → AppConfig
@@ -356,16 +441,22 @@ src/
 │   └── config.module.ts               전역 제공
 ├── modules/
 │   ├── kakao/                         스킬 엔드포인트
-│   │   ├── kakao.controller.ts        추천 / 폴백
-│   │   ├── templates.ts               listCard 빌더 (길이·개수 제한)
+│   │   ├── kakao.controller.ts        호텔 추천 / 항공권 검색 / 폴백
+│   │   ├── templates.ts               listCard·itemCard·캐러셀 빌더 (길이·개수 제한)
 │   │   └── dto/skill-payload.dto.ts   오픈빌더 요청 접근자
 │   ├── hotel/                         유스케이스 전체 흐름
 │   │   ├── hotel.service.ts           캐시 조회 / 콜백 / 백그라운드 검색
 │   │   ├── hotel.types.ts             Hotel, HOTEL_PROVIDER 토큰
 │   │   └── providers/openai.provider.ts   gpt-5-mini 2단 호출
+│   ├── flight/                        항공권. 호텔과 같은 흐름, 카드만 다르다
+│   │   ├── flight.service.ts          캐시 조회 / 콜백 / 백그라운드 검색
+│   │   ├── flight.types.ts            Flight, 카드 문구, FLIGHT_PROVIDER 토큰
+│   │   ├── flight-debug.controller.ts /api/v1/debug/flight-search
+│   │   └── providers/openai.provider.ts   gpt-5-mini 2단 호출
 │   ├── openai/openai.service.ts       Responses API 클라이언트
 │   ├── nlu/                           발화 파싱 (모델 호출 + 별칭 캐시)
 │   │   ├── nlu.service.ts             "오사카 4명" → { osaka, guests:4 }
+│   │   ├── flight-nlu.service.ts      "내일 오사카 왕복 2명" → { ICN→KIX, 날짜, 2명 }
 │   │   └── nlu.ts                     자료구조 + 퀵리플라이용 예시 도시
 │   ├── adpick/adpick.service.ts       커미션 링크 생성 (키 마스킹·동시성 제한)
 │   ├── affiliate/affiliate.service.ts 캐시 우선 링크 해석
@@ -405,4 +496,5 @@ src/
 - [ ] AI/크롤링 provider 구현 (결과 캐시는 이미 붙어 있음 — provider 만 교체하면 동작)
 - [ ] 호텔 썸네일 실제 이미지로 교체 (현재 placeholder)
 - [ ] 체크인/체크아웃 날짜 파싱 → [열린 이슈 4번](docs/PLAN.md)
-- [ ] 항공권 도메인 추가 (`recommendations.domain` 으로 이미 구분됨)
+- [x] 항공권 도메인 추가 (`recommendations.domain` 으로 구분)
+- [ ] 항공권 실시간 운임 API(GDS·항공사) 연동 — 지금은 웹 검색 기반 **예상가**다. `FLIGHT_PROVIDER` 만 갈아끼우면 된다

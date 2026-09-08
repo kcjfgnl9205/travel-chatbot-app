@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
+import { allowedHost, merchantFrom, toKoreanUrl } from '../../../common/booking-url';
 import { AppConfig, CONFIG } from '../../../config/app.config';
 import { OpenAiService, parseJsonLoose } from '../../openai/openai.service';
 import { Hotel, HotelProvider, HotelQuery } from '../hotel.types';
@@ -42,100 +43,16 @@ export const ALLOWED_HOSTS = [
 export const ALLOWED_SITES_TEXT =
   '트립닷컴(trip.com), 마이리얼트립(myrealtrip.com), 클룩(klook.com), 호텔스닷컴(hotels.com)';
 
+/** 호텔 예약 링크로 인정하는가. 호스트 규칙은 항공권과 공유한다. */
 export function isAllowedSourceUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== 'https:') return false;
-    const host = parsed.hostname.toLowerCase();
-    return ALLOWED_HOSTS.some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
-  } catch {
-    return false;
-  }
+  return allowedHost(url, ALLOWED_HOSTS);
 }
 
 /**
- * 예약 링크를 한국어 페이지로 돌린다.
- *
- * 모델은 검색 결과에 나온 주소를 그대로 주는데, 그게 영문 페이지인 경우가 많다.
- * 프롬프트로도 시키지만 매번 지킨다는 보장이 없어서 여기서 한 번 더 고친다.
- *
- * ⚠️ **경로는 건드리지 않는 것을 원칙으로 한다.** 잘못 고치면 404 가 되는데,
- *    그건 영어 페이지가 뜨는 것보다 나쁘다. 호스트/쿼리처럼 되돌리기 쉬운 것만 손댄다.
- *
- * 근거:
- *   - trip.com    : kr.trip.com 200 확인. 로케일이 서브도메인이다
- *   - hotels.com  : kr.hotels.com 존재 확인(429 는 봇 차단이지 없는 호스트가 아니다)
- *   - klook.com   : /{locale}/ 경로 규약. 있으면 ko 로 바꾸고, 없으면 손대지 않는다
- *   - myrealtrip  : 국내 서비스라 이미 한국어
+ * 예약 링크를 한국어 페이지로 돌린다 (호스트/쿼리만 손댄다).
+ * 규칙은 [booking-url.ts](../../../common/booking-url.ts) 에 있다 — 항공권도 같은 규칙을 쓴다.
  */
-export function toKoreanUrl(url: string): string {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return url;
-  }
-
-  const host = parsed.hostname.toLowerCase();
-  const on = (domain: string) => host === domain || host.endsWith(`.${domain}`);
-
-  if (on('trip.com')) {
-    parsed.hostname = 'kr.trip.com';
-    parsed.searchParams.set('locale', 'ko-KR');
-    parsed.searchParams.set('curr', 'KRW');
-    return parsed.toString();
-  }
-
-  if (on('hotels.com')) {
-    parsed.hostname = 'kr.hotels.com';
-    return parsed.toString();
-  }
-
-  if (on('klook.com')) {
-    // /en-US/hotel/... → /ko/hotel/...  (경로 모양이 같으니 안전하다)
-    // 로케일 구간이 없으면 그냥 둔다 — 없는 걸 끼워 넣다가 404 를 만들지 않는다.
-    const segments = parsed.pathname.split('/');
-    if (segments.length > 1 && isLocaleSegment(segments[1])) {
-      segments[1] = 'ko';
-      parsed.pathname = segments.join('/');
-    }
-    return parsed.toString();
-  }
-
-  return url;
-}
-
-/** ko, en, en-US, zh-CN 같은 로케일 구간인지. 'hotel' 같은 일반 경로와 구분해야 한다. */
-function isLocaleSegment(segment: string): boolean {
-  return /^[a-z]{2}(-[a-zA-Z]{2,4})?$/.test(segment);
-}
-
-/**
- * 한국어로 바꾼 주소가 실제로 살아 있는지 보고, 죽었으면 원본으로 되돌린다.
- *
- * 사이트마다 로케일 URL 규칙이 다르고 문서화돼 있지도 않다. 규칙을 추측해서 박아두면
- * 그 추측이 틀린 사이트에서 **전부 404** 가 된다 — 영어 페이지보다 나쁜 결과다.
- * 그래서 추측하지 말고 확인한다.
- *
- * ⚠️ **404 로 확인된 경우에만 되돌린다.**
- *    이 사이트들은 봇을 막아서 403·429 를 자주 준다. 그건 "주소가 틀렸다"는 증거가
- *    아니라 "우리가 봇으로 보인다"는 뜻이다. 그걸 근거로 되돌리면 멀쩡한 한국어 링크를
- *    전부 영어로 돌려놓게 된다.
- */
-export function chooseUrl(
-  original: string,
-  localized: string,
-  localizedStatus: number | null,
-  originalStatus: number | null,
-): string {
-  if (localized === original) return original;
-
-  const dead = (s: number | null) => s === 404 || s === 410;
-
-  // 한국어 주소가 죽은 게 확인됐고, 원본은 죽지 않았을 때만 되돌린다.
-  if (dead(localizedStatus) && !dead(originalStatus)) return original;
-  return localized;
-}
+export { chooseUrl, toKoreanUrl } from '../../../common/booking-url';
 
 /** 2차 호출에 거는 구조화 출력 스키마. strict 라 모든 키가 required 여야 한다. */
 export const HOTEL_SCHEMA = {
@@ -649,13 +566,7 @@ function positiveInt(value: unknown): number | null {
 }
 
 export function merchantOf(url: string): string | null {
-  try {
-    const host = new URL(url).hostname.toLowerCase();
-    const match = ALLOWED_HOSTS.find((allowed) => host === allowed || host.endsWith(`.${allowed}`));
-    return match ? match.split('.')[0] : null;
-  } catch {
-    return null;
-  }
+  return merchantFrom(url, ALLOWED_HOSTS);
 }
 
 /**

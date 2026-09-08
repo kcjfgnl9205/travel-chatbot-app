@@ -44,6 +44,12 @@ export interface AppConfig {
   hotelResultLimit: number;
   searchCacheTtlMinutes: number;
 
+  flightProvider: string;
+  flightResultLimit: number;
+  flightCacheTtlMinutes: number;
+  flightDefaultOriginName: string;
+  flightDefaultOriginCode: string;
+
   hotelThumbnails: boolean;
   hotelThumbnailTimeoutMs: number;
   hotelThumbnailMaxBytes: number;
@@ -128,6 +134,18 @@ export function loadConfig(): AppConfig {
     hotelProvider: str('HOTEL_PROVIDER', 'openai'),
     hotelResultLimit: num('HOTEL_RESULT_LIMIT', 5),
     searchCacheTtlMinutes: num('SEARCH_CACHE_TTL_MINUTES', 60),
+
+    flightProvider: str('FLIGHT_PROVIDER', 'openai'),
+    // 캐러셀은 10장까지 들어가지만, 5장을 넘기면 고르는 게 아니라 훑는 게 된다.
+    flightResultLimit: num('FLIGHT_RESULT_LIMIT', 5),
+    // 호텔보다 짧게 잡는다. 항공 운임은 하루에도 몇 번 바뀌므로 한 시간 묵은 값은
+    // 이미 틀렸을 가능성이 높다. 그래도 캐시를 아예 끄지는 않는다 —
+    // 그러면 같은 노선을 물을 때마다 웹 검색 요금이 그대로 나간다.
+    flightCacheTtlMinutes: num('FLIGHT_CACHE_TTL_MINUTES', 30),
+    // "오사카 항공권" 처럼 출발지를 안 말하는 게 보통이다. 되묻는 대신 여기서 출발한다고
+    // 보고, 카드에 '서울 출발' 을 적어 사용자가 틀렸음을 바로 알 수 있게 한다.
+    flightDefaultOriginName: str('FLIGHT_DEFAULT_ORIGIN_NAME', '서울'),
+    flightDefaultOriginCode: str('FLIGHT_DEFAULT_ORIGIN_CODE', 'ICN'),
   };
 }
 
