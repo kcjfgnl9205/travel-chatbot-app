@@ -1,8 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 
-import { applySubid } from '../adpick/adpick.service';
-import { AffiliateService, ResolvedLink } from '../affiliate/affiliate.service';
 import { AppConfig, CONFIG, redirectUrl } from '../../config/app.config';
 import { MemoryStoreService } from '../database/memory-store.service';
 import { MessagesRepository } from '../database/repositories/messages.repository';
@@ -25,43 +23,50 @@ import { CITIES, hasCity } from '../nlu/nlu';
 import { NluService } from '../nlu/nlu.service';
 import { SearchCacheService } from '../search-cache/search-cache.service';
 import {
-  HOTEL_PROVIDER,
-  Hotel,
-  HotelProvider,
-  HotelQuery,
-  hotelCacheKey,
-  isHotel,
+  ATTRACTION_PROVIDER,
+  Attraction,
+  AttractionProvider,
+  AttractionQuery,
+  attractionCacheKey,
+  attractionKey,
+  isAttraction,
   listDescription,
-} from './hotel.types';
+} from './attraction.types';
 
 /**
- * 호텔 추천 유스케이스.
+ * 관광지 추천 유스케이스.
  *
- * 컨트롤러는 얇게 두고 흐름은 전부 여기 모은다.
+ * 흐름은 호텔([hotel.service.ts](../hotel/hotel.service.ts))과 같다. 같은 제약
+ * (카카오 5초 예산 / 느린 AI 검색)을 받으므로 같은 모양이 되는 게 맞다.
  *
  *   발화 파싱 → 사용자/메시지 로깅
  *     → 캐시 조회 (히트면 여기서 바로 응답)
  *     → 미스면 콜백 예약 후 백그라운드로: provider 검색(gpt-5-mini + 웹 검색)
- *     → 원본 주소 → 애드픽 커미션 링크 변환 (캐시 우선)
  *     → 추천 저장 (+clickId 발급)
  *     → 카카오 listCard 조립 → callbackUrl 로 전송
  *
- * 사용자에게 노출되는 건 우리 리다이렉트(`/r/{clickId}`)뿐이고,
- * 그 302 목적지가 애드픽 커미션 링크다. 원본 주소는 DB에만 남는다.
+ * **호텔·항공권과 결정적으로 다른 점: 제휴 링크 단계가 통째로 없다.**
+ * 관광지는 우리가 파는 게 아니라 장소라서 애드픽에 변환할 주소가 없다. 그래서
+ * AffiliateService 를 주입하지 않고, 링크는 이름+도시로 만든 구글맵 주소다.
+ * 그 덕에 rate limit 도, 변환 실패 폴백도, 죽은 링크 걱정도 없다.
+ *
+ * 그럼에도 `/r/{clickId}` 는 그대로 거친다. 수수료는 없어도 **어떤 관광지를
+ * 눌렀는지**는 알아야 다음 추천이 나아진다 — 카카오 링크는 브라우저를 바로 열어서
+ * 한 홉을 끼우지 않으면 아무 신호도 오지 않는다. 호텔과 같은 이유다.
  *
  * ⚠️ **provider.search() 를 요청 경로에서 부르면 안 된다.**
  *    카카오는 5초 안에 응답을 받아야 하는데 AI 검색은 7~30초가 걸린다.
  *    캐시 미스는 전부 백그라운드로 빠진다.
  */
-const DOMAIN = 'hotel';
+const DOMAIN = 'attraction';
 
 /** 빈 결과를 기억해두는 시간. 연타만 막으면 되므로 짧게 둔다. */
 const EMPTY_RESULT_TTL_MS = 10 * 60_000;
 const EMPTY_RESULT_MAX_ENTRIES = 500;
 
 /** in-flight 병합·빈 결과 기억에 쓰는 키. 캐시 키와 같은 축을 쓴다. */
-function searchKeyOf(provider: string, query: HotelQuery): string {
-  return `${provider}:${query.citySlug}:${query.guests ?? ''}:${query.limit}`;
+function searchKeyOf(provider: string, query: AttractionQuery): string {
+  return [provider, ...attractionCacheKey(query).map((p) => p ?? '')].join(':');
 }
 
 function newClickId(): string {
@@ -70,23 +75,23 @@ function newClickId(): string {
 }
 
 /**
- * 같은 호텔이 리스트에 두 번 나가지 않게 한다.
+ * 같은 관광지가 리스트에 두 번 나가지 않게 한다.
  *
- * AI provider 는 같은 호텔을 이름만 다르게 여러 번 주기도 한다
- * ('호텔 그란비아 오사카' / 'Hotel Granvia Osaka').
- * 이름은 못 믿으므로 sourceUrl(호텔 신원)로 판정한다.
+ * 이름으로 판정하면 '오사카성' / '오사카 성' / 'Osaka Castle' 이 전부 다른 값이 된다.
+ * 지도 링크는 이름을 정규화해 만든 값이라 표기 흔들림을 어느 정도 흡수하고,
+ * 무엇보다 **사용자가 도착하는 곳**이 같으면 같은 관광지다.
  */
-export function dedupe(hotels: Hotel[], logger?: Logger): Hotel[] {
+export function dedupe(attractions: Attraction[], logger?: Logger): Attraction[] {
   const seen = new Set<string>();
-  const unique: Hotel[] = [];
-  for (const hotel of hotels) {
-    const key = hotel.sourceUrl || hotel.name;
+  const unique: Attraction[] = [];
+  for (const attraction of attractions) {
+    const key = attractionKey(attraction);
     if (seen.has(key)) {
-      logger?.log(`duplicate hotel dropped: ${hotel.name} (${key})`);
+      logger?.log(`duplicate attraction dropped: ${attraction.name}`);
       continue;
     }
     seen.add(key);
-    unique.push(hotel);
+    unique.push(attraction);
   }
   return unique;
 }
@@ -95,37 +100,34 @@ export function dedupe(hotels: Hotel[], logger?: Logger): Hotel[] {
 interface RequestContext {
   userId: string | null;
   messageId: string | null;
-  guests: number | null;
   started: number;
 }
 
 @Injectable()
-export class HotelService {
-  private readonly logger = new Logger(HotelService.name);
+export class AttractionService {
+  private readonly logger = new Logger(AttractionService.name);
 
   /**
    * 진행 중인 검색. 같은 도시를 동시에 물으면 OpenAI 호출이 사람 수만큼 나간다.
    * 키 하나당 검색 하나로 묶는다.
    */
-  private readonly inFlight = new Map<string, Promise<Hotel[]>>();
+  private readonly inFlight = new Map<string, Promise<Attraction[]>>();
 
   /**
    * 방금 빈손으로 돌아온 검색 (키 → 만료 시각).
    *
-   * 빈 결과는 캐시에 넣지 않는다 — 일시적 실패를 한 시간씩 굳히면 안 되니까.
-   * 그런데 그것만 두면 "asdf 호텔 추천해줘" 를 연타할 때마다 OpenAI 호출이 나간다.
-   * 검색 결과 캐시보다 훨씬 짧게, 연타만 막을 만큼만 기억한다.
+   * 빈 결과는 캐시에 넣지 않는다 — 일시적 실패를 하루씩 굳히면 안 되니까.
+   * 그런데 그것만 두면 "asdf 관광지" 를 연타할 때마다 OpenAI 호출이 나간다.
    */
   private readonly recentlyEmpty = new Map<string, number>();
 
   constructor(
     @Inject(CONFIG) private readonly config: AppConfig,
-    @Inject(HOTEL_PROVIDER) private readonly provider: HotelProvider,
+    @Inject(ATTRACTION_PROVIDER) private readonly provider: AttractionProvider,
     private readonly users: UsersRepository,
     private readonly messages: MessagesRepository,
     private readonly recommendations: RecommendationsRepository,
     private readonly items: RecommendationItemsRepository,
-    private readonly affiliate: AffiliateService,
     private readonly searchCache: SearchCacheService,
     private readonly nlu: NluService,
     private readonly memory: MemoryStoreService,
@@ -135,7 +137,9 @@ export class HotelService {
   async handle(payload: KakaoSkillPayload): Promise<t.Json> {
     const started = Date.now();
     const utterance = utteranceOf(payload);
-    // 모델 호출이 들어간다(캐시 미스일 때만). 5초 예산의 첫 지출이라 타임아웃이 짧다.
+    // 호텔과 **같은 파서**를 쓴다. 뽑을 게 도시 하나로 같기 때문이다.
+    // 별칭 캐시도 공유되므로 "오사카 호텔" 을 물어본 사람이 "오사카 관광지" 를
+    // 물으면 파싱이 공짜다. 항공권만 노선·날짜 때문에 파서가 따로 있다.
     const parsed = await this.nlu.resolve(
       utterance,
       paramOf(payload, 'city', 'location', 'sys_location'),
@@ -157,23 +161,22 @@ export class HotelService {
 
     if (!hasCity(parsed)) return this.askCity();
 
-    const query: HotelQuery = {
+    const query: AttractionQuery = {
       citySlug: parsed.citySlug ?? '',
       cityName: parsed.cityName ?? '',
-      guests: parsed.guests,
-      limit: this.config.hotelResultLimit,
+      limit: this.config.attractionResultLimit,
     };
-    const ctx: RequestContext = { userId, messageId, guests: parsed.guests, started };
+    const ctx: RequestContext = { userId, messageId, started };
 
     // 5초 예산 안에서 할 수 있는 건 캐시 조회까지다.
     const cached = await this.searchCache.peek(
       DOMAIN,
       this.provider.name,
-      hotelCacheKey(query),
-      isHotel,
+      attractionCacheKey(query),
+      isAttraction,
     );
     if (cached.length) {
-      return this.respondWithHotels(cached, query, { ...ctx, cacheHit: true });
+      return this.respondWithAttractions(cached, query, { ...ctx, cacheHit: true });
     }
 
     // 방금 찾아봤는데 없었던 도시라면 또 부르지 않는다. 오타 연타가 곧 요금이다.
@@ -187,7 +190,7 @@ export class HotelService {
     void this.searchInBackground(query, ctx, callbackUrl);
 
     return callbackUrl
-      ? t.callbackAck(`${query.cityName} 호텔을 찾고 있어요. 잠시만요 🔍`)
+      ? t.callbackAck(`${query.cityName} 관광지를 찾고 있어요. 잠시만요 🗺️`)
       : this.searchStarted(query.cityName);
   }
 
@@ -199,24 +202,24 @@ export class HotelService {
    * 전부 삼키고 로그로만 남긴다. 콜백이 있으면 실패도 사용자에게 알린다.
    */
   private async searchInBackground(
-    query: HotelQuery,
+    query: AttractionQuery,
     ctx: RequestContext,
     callbackUrl: string | null,
   ): Promise<void> {
     try {
-      const hotels = await this.searchOnce(query);
-      const response = hotels.length
-        ? await this.respondWithHotels(hotels, query, { ...ctx, cacheHit: false })
+      const attractions = await this.searchOnce(query);
+      const response = attractions.length
+        ? await this.respondWithAttractions(attractions, query, { ...ctx, cacheHit: false })
         : this.noResult(query.cityName);
 
       if (callbackUrl) await this.postCallback(callbackUrl, response);
     } catch (err) {
-      this.logger.error(`background hotel search failed city=${query.cityName} err=${err}`);
+      this.logger.error(`background attraction search failed city=${query.cityName} err=${err}`);
       if (!callbackUrl) return;
       await this.postCallback(
         callbackUrl,
         t.simpleText(
-          `${query.cityName} 호텔을 찾다가 문제가 생겼어요. 잠시 후 다시 시도해주세요 🙏`,
+          `${query.cityName} 관광지를 찾다가 문제가 생겼어요. 잠시 후 다시 시도해주세요 🙏`,
           this.cityQuickReplies(),
         ),
       );
@@ -224,29 +227,36 @@ export class HotelService {
   }
 
   /** 같은 캐시 키의 검색을 하나로 묶는다. 끝나면 캐시에 저장한다. */
-  private searchOnce(query: HotelQuery): Promise<Hotel[]> {
+  private searchOnce(query: AttractionQuery): Promise<Attraction[]> {
     const key = searchKeyOf(this.provider.name, query);
     const running = this.inFlight.get(key);
     if (running) {
-      this.logger.log(`search already in flight, joining key=${key}`);
+      this.logger.log(`attraction search already in flight, joining key=${key}`);
       return running;
     }
 
     const search = (async () => {
-      const hotels = await this.provider.search(query);
-      if (hotels.length) {
-        await this.searchCache.store(DOMAIN, this.provider.name, hotelCacheKey(query), hotels);
+      const attractions = await this.provider.search(query);
+      if (attractions.length) {
+        await this.searchCache.store(
+          DOMAIN,
+          this.provider.name,
+          attractionCacheKey(query),
+          attractions,
+          // 호텔·항공권보다 길다. 오사카의 볼거리는 어제와 오늘이 같다.
+          this.config.attractionCacheTtlMinutes,
+        );
       } else {
         this.rememberEmpty(key);
       }
-      return hotels;
+      return attractions;
     })().finally(() => this.inFlight.delete(key));
 
     this.inFlight.set(key, search);
     return search;
   }
 
-  private wasRecentlyEmpty(query: HotelQuery): boolean {
+  private wasRecentlyEmpty(query: AttractionQuery): boolean {
     const key = searchKeyOf(this.provider.name, query);
     const until = this.recentlyEmpty.get(key);
     if (until === undefined) return false;
@@ -299,40 +309,35 @@ export class HotelService {
   }
 
   /**
-   * 진단용 — 이미 찾아둔 호텔로 **스킬과 똑같은 응답**을 조립한다.
+   * 진단용 — 이미 찾아둔 관광지로 **스킬과 똑같은 응답**을 조립한다.
    *
-   * `/api/v1/debug/hotel-search` 가 쓴다. 카카오 경로는 5초 예산 때문에 검색을
+   * `/api/v1/debug/attraction-search` 가 쓴다. 카카오 경로는 5초 예산 때문에 검색을
    * 백그라운드로 던지므로, 진짜 카드가 어떻게 생겼는지는 콜백을 받아보기 전에는 알 수 없다.
-   * 여기를 거치면 **같은 조립 코드를 그대로 태워서** 미리 볼 수 있다 —
-   * 진단용으로 카드를 따로 만들면 그건 실제 응답을 검증하는 게 아니다.
    *
    * 통계는 남기지 않는다. 대신 clickId 는 인메모리에 남으므로 `/r/{clickId}` 는 동작한다.
    */
   async previewResponse(
-    hotels: Hotel[],
-    query: HotelQuery,
-    opts: { started: number; links: Map<string, ResolvedLink> },
+    attractions: Attraction[],
+    query: AttractionQuery,
+    opts: { started: number },
   ): Promise<t.Json> {
-    if (!hotels.length) return this.noResult(query.cityName);
-    return this.respondWithHotels(hotels, query, {
+    if (!attractions.length) return this.noResult(query.cityName);
+    return this.respondWithAttractions(attractions, query, {
       userId: null,
       messageId: null,
-      guests: query.guests ?? null,
       started: opts.started,
       cacheHit: false,
       persist: false,
-      links: opts.links,
     });
   }
 
   // ------------------------------------------------------- 응답 조립
-  private async respondWithHotels(
-    input: Hotel[],
-    query: HotelQuery,
+  private async respondWithAttractions(
+    input: Attraction[],
+    query: AttractionQuery,
     ctx: {
       userId: string | null;
       messageId: string | null;
-      guests: number | null;
       started: number;
       cacheHit: boolean;
       /**
@@ -340,33 +345,11 @@ export class HotelService {
        * 진단 경로만 false 로 둔다 — 진단 호출이 섞이면 전환율 집계가 틀어진다.
        */
       persist?: boolean;
-      /**
-       * 미리 해석해둔 제휴 링크. 주면 애드픽을 다시 부르지 않는다.
-       * 빈 Map 은 "변환하지 않는다"는 뜻이고, 그때 목적지는 원본 주소가 된다.
-       *
-       * 어느 쪽이든 **카드 JSON 은 같다** — 줄 링크는 `/r/{clickId}` 이고
-       * 애드픽 주소는 그 302 목적지로만 쓰인다.
-       */
-      links?: Map<string, ResolvedLink>;
     },
   ): Promise<t.Json> {
     // 중복 제거 → 자르기 순서가 중요하다. 반대로 하면 중복이 5줄 자리를 먹는다.
-    // listCard 는 최대 5줄이고, 자르기 전에 애드픽 변환을 돌리면
-    // 보여주지도 못할 호텔 때문에 rate limit 을 헛되이 쓴다.
-    const hotels = dedupe(input, this.logger).slice(0, t.MAX_LIST_ITEMS);
+    const attractions = dedupe(input, this.logger).slice(0, t.MAX_LIST_ITEMS);
 
-    // 원본 주소 → 애드픽 커미션 링크. 캐시에 있으면 API 를 안 탄다.
-    // affiliate_links 행이 곧 호텔의 신원이기도 하다 — 별도 호텔 마스터를 두지 않는다.
-    const links =
-      ctx.links ??
-      (await this.affiliate.resolve(
-        hotels
-          .filter((h) => h.sourceUrl)
-          .map((h) => ({ sourceUrl: h.sourceUrl, merchant: h.merchant })),
-      ));
-
-    // persist:false 면 통계를 안 남긴다. recommendationId 가 null 이 되고,
-    // 아래 items.createMany 도 자연히 건너뛴다 (같은 조건을 이미 쓰고 있다).
     const recommendation =
       ctx.persist === false
         ? null
@@ -376,8 +359,8 @@ export class HotelService {
             domain: DOMAIN,
             citySlug: query.citySlug,
             provider: this.provider.name,
-            itemCount: hotels.length,
-            guests: ctx.guests,
+            itemCount: attractions.length,
+            guests: null,
             latencyMs: Date.now() - ctx.started,
             cacheHit: ctx.cacheHit,
           });
@@ -385,71 +368,60 @@ export class HotelService {
 
     const rows: Record<string, unknown>[] = [];
     const listItems: t.Json[] = [];
-    /** 애드픽 변환이 안 돼 원본 주소로 나가는 줄. 수익화가 안 되는 노출이다. */
-    const unconverted: string[] = [];
 
-    hotels.forEach((hotel, position) => {
+    attractions.forEach((attraction, position) => {
       const clickId = newClickId();
-      const link = links.get(hotel.sourceUrl);
-      // 변환이 실패해도 원본 주소로 보낸다. 수익화는 못 해도 사용자는 호텔을 본다.
-      const destination = link?.affiliateUrl ?? hotel.sourceUrl;
-      if (!destination) {
-        this.logger.warn(`no destination for hotel=${hotel.name}, skipping row`);
-        return;
-      }
-      // 목적지가 원본과 같다 = 커미션 링크가 아니다.
-      // 여기서 세지 않으면 "링크는 잘 열리는데 수수료가 안 들어온다"를 영영 못 찾는다.
-      if (destination === hotel.sourceUrl) unconverted.push(hotel.name);
-      const targetUrl = applySubid(destination, clickId, this.config);
+      // 목적지가 곧 지도 링크다. 애드픽 변환이 없으므로 폴백도 실패도 없다.
+      const targetUrl = attraction.mapUrl;
 
       rows.push({
         recommendation_id: recommendationId,
-        affiliate_link_id: link?.affiliateLinkId ?? null,
+        // 제휴 링크가 없는 도메인이다. 이 컬럼이 null 인 게 정상이다.
+        affiliate_link_id: null,
         position,
         click_id: clickId,
-        hotel_name: hotel.name,
-        price_from: hotel.priceFrom ?? null,
-        merchant: hotel.merchant ?? null,
-        thumbnail_url: hotel.thumbnailUrl ?? null,
-        source_url: hotel.sourceUrl,
+        hotel_name: attraction.name,
+        // ⚠️ **입장료를 price_from 에 넣지 않는다.**
+        //
+        // 그 칸은 호텔 1박가·항공 운임이 들어가는 자리이고 단위가 **원**이다.
+        // 관광지 입장료는 현지 통화(엔·바트·동)라 같은 칸에 넣으면 비교 불가능한
+        // 숫자가 섞인다 — 통화 컬럼도 없으므로 나중에 누가 합계를 내면 조용히 틀린다.
+        // 입장료는 카드와 search_cache 에만 남기고, 집계 대상으로는 두지 않는다.
+        // (환율 API 를 붙여 원화로 확정할 수 있게 되면 그때 채우면 된다)
+        price_from: null,
+        merchant: null,
+        thumbnail_url: null,
+        source_url: attraction.mapUrl,
         target_url: targetUrl,
       });
 
       // DB가 없어도 리다이렉트가 동작하도록 인메모리에도 남긴다.
       this.memory.put(clickId, {
         recommendationId,
-        itemName: hotel.name,
-        sourceUrl: hotel.sourceUrl,
+        itemName: attraction.name,
+        sourceUrl: attraction.mapUrl,
         targetUrl,
         userId: ctx.userId,
       });
 
-      // 줄 전체가 링크가 된다. 링크는 애드픽이 아니라 우리 리다이렉트를 가리킨다.
+      // 줄 전체가 링크가 된다. 링크는 구글맵이 아니라 우리 리다이렉트를 가리킨다 —
+      // 그래야 어떤 관광지를 눌렀는지 남는다.
       listItems.push(
         t.listItem({
-          title: hotel.name,
-          description: listDescription(hotel),
-          imageUrl: hotel.thumbnailUrl,
+          title: attraction.name,
+          description: listDescription(attraction),
           linkUrl: redirectUrl(this.config, clickId),
         }),
       );
     });
 
-    if (unconverted.length) {
-      // 경고로 남긴다. 배포를 막을 일은 아니지만 방치하면 그대로 매출이 샌다.
-      this.logger.warn(
-        `애드픽 변환 실패 ${unconverted.length}/${listItems.length}건 — 원본 주소로 나간다: ` +
-          unconverted.join(', '),
-      );
-    }
-
     if (!listItems.length) return this.noResult(query.cityName);
     if (recommendationId) await this.items.createMany(rows);
 
     return t.listCard({
-      headerTitle: `${query.cityName} 호텔 추천 ${listItems.length}곳`,
+      headerTitle: `${query.cityName} 관광지 ${listItems.length}곳`,
       items: listItems,
-      buttons: [t.messageButton('다른 도시 보기', '호텔 추천해줘')],
+      buttons: [t.messageButton('다른 도시 보기', '관광지 추천해줘')],
       quickReplies: this.cityQuickReplies(query.citySlug),
     });
   }
@@ -457,14 +429,14 @@ export class HotelService {
   // ------------------------------------------------------- 예외 응답
   askCity(): t.Json {
     return t.simpleText(
-      '어느 도시 호텔을 찾으세요?\n예) 오사카 호텔 추천해줘',
+      '어느 도시 관광지를 찾으세요?\n예) 오사카 관광지 추천해줘',
       this.cityQuickReplies(),
     );
   }
 
   private noResult(cityName: string): t.Json {
     return t.simpleText(
-      `${cityName} 호텔을 찾지 못했어요. 도시 이름을 다시 확인해주세요!`,
+      `${cityName} 관광지를 찾지 못했어요. 도시 이름을 다시 확인해주세요!`,
       this.cityQuickReplies(),
     );
   }
@@ -477,14 +449,14 @@ export class HotelService {
    */
   private searchStarted(cityName: string): t.Json {
     return t.simpleText(
-      `${cityName} 호텔을 찾고 있어요 🔍\n30초쯤 뒤에 다시 물어봐 주세요!`,
+      `${cityName} 관광지를 찾고 있어요 🗺️\n30초쯤 뒤에 다시 물어봐 주세요!`,
       this.cityQuickReplies(),
     );
   }
 
   cityQuickReplies(exclude?: string | null): t.Json[] {
     return CITIES.filter((c) => c.slug !== exclude).map((c) =>
-      t.quickReply(`${c.nameKo} 호텔`, `${c.nameKo} 호텔 추천해줘`),
+      t.quickReply(`${c.nameKo} 관광지`, `${c.nameKo} 관광지 추천해줘`),
     );
   }
 }

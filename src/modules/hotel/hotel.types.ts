@@ -1,3 +1,5 @@
+import { CacheKeyPart } from '../search-cache/search-cache.service';
+
 /** provider 가 돌려주는 호텔 1건. 어떤 provider(AI/크롤링/고정)든 이 형태로 맞춘다. */
 export interface Hotel {
   name: string;
@@ -30,6 +32,29 @@ export interface HotelQuery {
   checkOut?: string | null;
   guests?: number | null;
   limit: number;
+}
+
+/**
+ * 캐시 키에 들어가는 조건들.
+ *
+ * ⚠️ **결과를 갈라야 하는 조건은 여기 다 있어야 한다.** 빠뜨리면 다른 조건으로 물은
+ *    사람에게 남의 검색 결과가 나간다.
+ */
+export function hotelCacheKey(query: HotelQuery): CacheKeyPart[] {
+  return [
+    query.citySlug,
+    query.guests,
+    query.checkIn,
+    query.checkOut,
+    query.limit,
+  ];
+}
+
+/** 캐시에서 살려낸 값이 호텔 모양인가. 배포로 필드가 바뀌면 미스로 떨어뜨린다. */
+export function isHotel(item: unknown): item is Hotel {
+  if (!item || typeof item !== 'object') return false;
+  const h = item as Hotel;
+  return typeof h.name === 'string' && typeof h.sourceUrl === 'string';
 }
 
 export function priceText(h: Hotel): string {

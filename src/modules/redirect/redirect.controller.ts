@@ -49,7 +49,7 @@ export class RedirectController {
     const fallback = row ? null : this.memory.registerClick(clickId);
 
     const targetUrl = (row?.target_url as string) ?? fallback?.targetUrl ?? null;
-    const hotelName = (row?.hotel_name as string) ?? fallback?.hotelName ?? null;
+    const itemName = (row?.hotel_name as string) ?? fallback?.itemName ?? null;
     const clickCount = (row?.click_count as number) ?? fallback?.clickCount ?? null;
 
     if (!targetUrl) {
@@ -58,7 +58,7 @@ export class RedirectController {
       return;
     }
 
-    this.logger.log(`click clickId=${clickId} hotel=${hotelName} count=${clickCount}`);
+    this.logger.log(`click clickId=${clickId} item=${itemName} count=${clickCount}`);
     res.redirect(302, targetUrl);
   }
 }

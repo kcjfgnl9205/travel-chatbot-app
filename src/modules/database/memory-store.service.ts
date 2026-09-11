@@ -8,7 +8,8 @@ import { Injectable } from '@nestjs/common';
  */
 export interface ClickEntry {
   recommendationId: string | null;
-  hotelName: string;
+  /** 노출 시점의 항목 이름 (호텔명·항공편). 로그에서 무엇을 눌렀는지 보려고 남긴다. */
+  itemName: string;
   sourceUrl: string;
   targetUrl: string;
   userId: string | null;
