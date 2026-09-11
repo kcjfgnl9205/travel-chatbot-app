@@ -255,3 +255,110 @@ export const FLIGHT_RESPONSE_EXAMPLE = {
     ],
   },
 };
+
+// ------------------------------------------------------------------ 관광지
+/** 오픈빌더 [관광지추천] 블록이 보내는 요청. */
+export const ATTRACTION_REQUEST_EXAMPLE = {
+  intent: { id: 'intent-3', name: '관광지추천' },
+  userRequest: {
+    timezone: 'Asia/Seoul',
+    params: {},
+    block: { id: 'block-3', name: '관광지추천' },
+    utterance: '오사카 관광지 추천해줘',
+    lang: 'kr',
+    user: {
+      id: 'swagger-test',
+      type: 'accountId',
+      properties: { botUserKey: 'swagger-test' },
+    },
+  },
+  bot: { id: 'bot-1', name: '여행봇' },
+  action: {
+    id: 'action-3',
+    name: '관광지추천액션',
+    params: {},
+    detailParams: {},
+    clientExtra: {},
+  },
+};
+
+export const ATTRACTION_REQUEST_WITH_CALLBACK_EXAMPLE = {
+  ...ATTRACTION_REQUEST_EXAMPLE,
+  userRequest: {
+    ...ATTRACTION_REQUEST_EXAMPLE.userRequest,
+    callbackUrl: 'https://bot-api.kakao.com/v1/bots/xxx/callback/yyy',
+  },
+};
+
+/** 캐시 미스 + 콜백 켜짐. **첫 요청의 기본 응답이다.** */
+export const ATTRACTION_CALLBACK_ACK_EXAMPLE = {
+  version: '2.0',
+  useCallback: true,
+  data: { text: '오사카 관광지를 찾고 있어요. 잠시만요 🗺️' },
+};
+
+/** 캐시 미스 + 콜백 꺼짐. 검색은 백그라운드로 돌고, 다시 물으면 카드가 나온다. */
+export const ATTRACTION_SEARCH_STARTED_EXAMPLE = {
+  version: '2.0',
+  template: {
+    outputs: [
+      { simpleText: { text: '오사카 관광지를 찾고 있어요 🗺️\n30초쯤 뒤에 다시 물어봐 주세요!' } },
+    ],
+    quickReplies: [
+      { label: '도쿄 관광지', action: 'message', messageText: '도쿄 관광지 추천해줘' },
+    ],
+  },
+};
+
+/** 도시를 못 알아들었을 때. */
+export const ASK_ATTRACTION_CITY_EXAMPLE = {
+  version: '2.0',
+  template: {
+    outputs: [
+      { simpleText: { text: '어느 도시 관광지를 찾으세요?\n예) 오사카 관광지 추천해줘' } },
+    ],
+    quickReplies: [
+      { label: '오사카 관광지', action: 'message', messageText: '오사카 관광지 추천해줘' },
+    ],
+  },
+};
+
+/**
+ * 캐시 히트일 때만 이게 바로 나온다. 미스면 콜백으로 온다.
+ *
+ * 호텔과 같은 listCard 지만 **줄 링크의 목적지가 다르다** — 호텔은 애드픽 커미션
+ * 링크로, 관광지는 구글맵으로 간다. 둘 다 `/r/{clickId}` 를 먼저 거치므로
+ * 카드 JSON 만 봐서는 구분되지 않는다 (그게 의도다 — 추적 경로가 하나뿐이다).
+ *
+ * 이미지가 없다. 관광지는 긁어올 예약 페이지가 없어서 썸네일 출처가 없다.
+ */
+export const ATTRACTION_RESPONSE_EXAMPLE = {
+  version: '2.0',
+  template: {
+    outputs: [
+      {
+        listCard: {
+          header: { title: '오사카 관광지 5곳' },
+          items: [
+            {
+              title: '오사카성',
+              description: '약 6,000원 · 2시간 · 주오구',
+              link: { web: 'https://bot.nolmoa.com/r/6kCgoISYegpS' },
+            },
+            {
+              title: '도톤보리',
+              description: '무료 · 2시간 · 난바',
+              link: { web: 'https://bot.nolmoa.com/r/Ab3xY9kQ2mZp' },
+            },
+          ],
+          buttons: [
+            { label: '다른 도시 보기', action: 'message', messageText: '관광지 추천해줘' },
+          ],
+        },
+      },
+    ],
+    quickReplies: [
+      { label: '도쿄 관광지', action: 'message', messageText: '도쿄 관광지 추천해줘' },
+    ],
+  },
+};

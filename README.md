@@ -1,9 +1,9 @@
 # travel-chatbot-app
 
 카카오톡 여행 챗봇 스킬 서버. **NestJS + Supabase**.
-현재 범위: **호텔 추천 · 항공권 검색 (gpt-5-mini + 웹 검색)**
+현재 범위: **호텔 추천 · 항공권 검색 · 관광지 추천 (gpt-5-mini + 웹 검색)**
 
-운영: https://bot.nolmoa.com · 기획: [docs/PLAN.md](docs/PLAN.md) · DB: [docs/DB.md](docs/DB.md) · 항공권: [docs/FLIGHT.md](docs/FLIGHT.md) · 배포: [docs/DEPLOY.md](docs/DEPLOY.md)
+운영: https://bot.nolmoa.com · 기획: [docs/PLAN.md](docs/PLAN.md) · DB: [docs/DB.md](docs/DB.md) · 항공권: [docs/FLIGHT.md](docs/FLIGHT.md) · 관광지: [docs/ATTRACTION.md](docs/ATTRACTION.md) · 배포: [docs/DEPLOY.md](docs/DEPLOY.md)
 
 > FastAPI 로 먼저 만들었다가 NestJS 로 전환했다. 전환 기록과 주의점은 [docs/MIGRATION.md](docs/MIGRATION.md).
 
@@ -32,12 +32,17 @@ curl -s -X POST localhost:8000/api/v1/kakao/hotels/recommend \
 curl -s -X POST localhost:8000/api/v1/kakao/flights/search \
   -H 'content-type: application/json' \
   -d '{"userRequest":{"utterance":"다음달 3일 오사카 왕복 항공권 2명","user":{"properties":{"botUserKey":"u1"}}}}' | jq
+
+# 스킬 호출 테스트 (관광지)
+curl -s -X POST localhost:8000/api/v1/kakao/attractions/recommend \
+  -H 'content-type: application/json' \
+  -d '{"userRequest":{"utterance":"오사카 관광지 추천해줘","user":{"properties":{"botUserKey":"u1"}}}}' | jq
 ```
 
 `SUPABASE_*` 를 비워두면 **no-op 모드**로 동작한다. DB 적재만 건너뛰고 카카오 응답과 리다이렉트는 정상이라, 오픈빌더 연동을 먼저 확인할 때 쓴다.
 
 ```bash
-npm test           # 195개
+npm test           # 249개
 npx tsc --noEmit
 ```
 
@@ -225,12 +230,14 @@ curl -sG https://bot.nolmoa.com/api/v1/debug/hotel-search \
 | ------ | -------------------------------- | ------------------------------------------------------------------- |
 | POST   | `/api/v1/kakao/hotels/recommend` | 오픈빌더 [호텔추천] 블록 스킬 → `listCard`                          |
 | POST   | `/api/v1/kakao/flights/search`   | 오픈빌더 [항공권검색] 블록 스킬 → `itemCard` 캐러셀                 |
-| POST   | `/api/v1/kakao/fallback`         | 폴백 블록 (호텔·항공권 안내)                                        |
+| POST   | `/api/v1/kakao/attractions/recommend` | 오픈빌더 [관광지추천] 블록 스킬 → `listCard` (구글맵 링크)     |
+| POST   | `/api/v1/kakao/fallback`         | 폴백 블록 (호텔·항공권·관광지 안내)                                 |
 | GET    | `/r/{clickId}`                   | **클릭 카운트 → 애드픽 302 리다이렉트** (DB 왕복 1회)               |
 | GET    | `/health`                        | 앱 생존 (DB 안 건드림)                                              |
 | GET    | `/health/db`                     | Supabase 실제 연결 진단                                             |
 | GET    | `/api/v1/debug/hotel-search`     | **진단용 동기 검색** — 사용자가 보는 말풍선 그대로 (`DEBUG_TOKEN`)  |
 | GET    | `/api/v1/debug/flight-search`    | 같은 것의 항공권판 (`DEBUG_TOKEN`)                                  |
+| GET    | `/api/v1/debug/attraction-search`| 같은 것의 관광지판 (`DEBUG_TOKEN`)                                  |
 | GET    | `/docs`                          | Swagger (운영에서도 켜져 있다)                                      |
 
 ### 링크는 이렇게 만들어진다
@@ -358,6 +365,48 @@ GDS·항공사 API 가 붙으면 `FLIGHT_PROVIDER` 만 갈아끼우면 된다 �
 
 `FlightNluService` 는 이 추측을 하지 않는다. 출발지가 없으면 `null` 을 주고, 채우는 건 `FlightService.queryOf()` 다 (`originAssumed` 플래그가 그 사실을 카드까지 들고 간다).
 
+
+### 관광지는 `listCard` + 구글맵
+
+> 전체 흐름·프롬프트·실패 진단은 **[docs/ATTRACTION.md](docs/ATTRACTION.md)**.
+
+관광지는 **예약이 없는 도메인**이다. 그래서 호텔·항공권에서 가장 복잡했던 부분(애드픽 변환, 허용 호스트, 죽은 링크 처리)이 통째로 빠진다.
+
+**링크를 모델에게 받지 않고 우리가 만든다.**
+
+```
+mapsUrl('오사카성', '오사카')
+→ https://www.google.com/maps/search/?api=1&query=오사카성%20오사카
+```
+
+구글이 공개한 URL 규약에 이름만 끼워 넣으므로 **모델이 주소를 지어낼 자리가 없다.** 검증할 것도, 404 도 없다. (⚠️ 좌표는 쓰지 않는다 — LLM 의 좌표는 그럴듯하고 자주 틀린다. 엉뚱한 곳에 핀이 꽂히는 건 이름으로 검색되는 것보다 나쁘다)
+
+수수료가 없는데도 `/r/{clickId}` 는 그대로 거친다. **어떤 관광지를 눌렀는지**는 알아야 하기 때문이다 — 호텔에서 리다이렉트를 끼운 것과 같은 이유다.
+
+```
+오사카 관광지 5곳
+  오사카성            | 1,200엔 · 2시간 · 난바
+  도톤보리            | 무료 · 1시간 30분 · 난바
+  우메다 스카이 빌딩     | 1,500엔 · 1시간 30분 · 우메다
+  [다른 도시 보기]
+```
+
+발화 파서는 **호텔과 공유한다** (뽑을 게 도시 하나로 같다). 별칭 캐시도 공유되므로 "오사카 호텔" 을 물어본 사람이 "오사카 관광지" 를 물으면 파싱이 공짜다.
+
+### ⚠️ 입장료를 원화로 환산시키지 않는다
+
+처음엔 "원화로 환산해서 적어라" 로 시켰다. 실측 결과가 이랬다:
+
+| 관광지 | 실제 | 모델이 준 값 |
+|---|---|---|
+| 오사카성 | 1,200엔 | **약 5,760원** |
+| 카이유칸 | 2,700엔 (≈27,000원) | **약 2,700원** ← 엔화 숫자를 원화 칸에 그대로 |
+
+**모델은 환율 계산을 못한다.** 검색 결과의 숫자를 옮기는 건 잘한다. 그래서 현지 통화 그대로 받아 `1,200엔`, `500바트` 로 적는다. 통화를 모르면 금액을 아예 버리고 `유료` 라고만 쓴다 — `1,200` 만 보여주면 한국인은 원으로 읽고, 엔이었다면 10배를 틀리게 읽는다.
+
+숫자 자체의 정확도는 여전히 보장되지 않는다(실측에서 오사카성이 600엔으로 나온 적도 있다). 예약이 아니라 방문 계획이라 오차의 대가는 작지만, 참고값으로 봐야 한다.
+
+
 ---
 
 ## 시크릿 관리
@@ -385,12 +434,12 @@ GDS·항공사 API 가 붙으면 `FLIGHT_PROVIDER` 만 갈아끼우면 된다 �
 ## Supabase 셋업
 
 1. 프로젝트 생성 — **리전 Seoul** 권장
-2. SQL Editor 에 [`0001_init.sql`](supabase/migrations/0001_init.sql) → [`0002_flight.sql`](supabase/migrations/0002_flight.sql) 순서로 붙여넣고 실행 (재실행 안전)
+2. SQL Editor 에 [`0001_init.sql`](supabase/migrations/0001_init.sql) → [`0002_flight.sql`](supabase/migrations/0002_flight.sql) → [`0003_attraction.sql`](supabase/migrations/0003_attraction.sql) 순서로 붙여넣고 실행 (재실행 안전)
 3. `.env` 에 `SUPABASE_URL` 과 `SUPABASE_SERVICE_ROLE_KEY` 입력 → [자세히](docs/DEPLOY.md)
 
-시드 스크립트는 없다. **호텔·항공권 데이터는 전부 provider 가 런타임에 만든다.**
+시드 스크립트는 없다. **호텔·항공권·관광지 데이터는 전부 provider 가 런타임에 만든다.**
 
-### 테이블 (6개 — 호텔·항공권 공용)
+### 테이블 (6개 — 세 도메인 공용)
 
 | 그룹      | 테이블                                                            |
 | --------- | ----------------------------------------------------------------- |
@@ -403,7 +452,7 @@ GDS·항공사 API 가 붙으면 `FLIGHT_PROVIDER` 만 갈아끼우면 된다 �
 
 **호텔 마스터 테이블은 없다.** 매번 AI/크롤링으로 새로 받는 목록이라 이름으로는 같은 호텔을 못 묶는다. 호텔 신원은 `source_url` 이고 `affiliate_links` 가 그 역할을 한다. 집계는 **이름이 아니라 `source_url` 로** 한다.
 
-**항공권도 같은 테이블을 쓴다.** `domain` 컬럼(`hotel` | `flight`)이 둘을 가른다 — 도메인마다 테이블을 복제하면 "이번 주 클릭 수" 같은 질문이 전부 union 이 되고, 클릭 추적 경로(`/r/{clickId}`)가 어느 테이블을 볼지부터 알아내야 한다. 컬럼 이름이 호텔 시절 그대로인 것들(`recommendation_items.hotel_name` 등)의 의미는 [`0002_flight.sql`](supabase/migrations/0002_flight.sql) 의 주석에 정리돼 있다.
+**항공권·관광지도 같은 테이블을 쓴다.** `domain` 컬럼(`hotel` | `flight` | `attraction`)이 셋을 가른다 — 도메인마다 테이블을 복제하면 "이번 주 클릭 수" 같은 질문이 전부 union 이 되고, 클릭 추적 경로(`/r/{clickId}`)가 어느 테이블을 볼지부터 알아내야 한다. 컬럼 이름이 호텔 시절 그대로인 것들(`recommendation_items.hotel_name` 등)의 의미는 [`0002_flight.sql`](supabase/migrations/0002_flight.sql) 의 주석에 정리돼 있다.
 
 ERD와 컬럼별 설명은 **[docs/DB.md](docs/DB.md)**.
 
@@ -411,15 +460,17 @@ ERD와 컬럼별 설명은 **[docs/DB.md](docs/DB.md)**.
 
 ## 카카오 오픈빌더 연결
 
-1. **스킬** 2개 등록
+1. **스킬** 3개 등록
    - 호텔: `https://bot.nolmoa.com/api/v1/kakao/hotels/recommend`
    - 항공권: `https://bot.nolmoa.com/api/v1/kakao/flights/search`
+   - 관광지: `https://bot.nolmoa.com/api/v1/kakao/attractions/recommend`
 2. **헤더** `X-Skill-Token` = `.env` 의 `KAKAO_SKILL_TOKEN` ← 빠뜨리면 401
-3. **블록** 2개 생성
+3. **블록** 3개 생성
    - `호텔추천` — 예시 발화: `오사카 호텔 추천해줘`, `도쿄 숙소 알려줘`
    - `항공권검색` — 예시 발화: `오사카 항공권 찾아줘`, `다음달 3일 도쿄 왕복 2명`
+   - `관광지추천` — 예시 발화: `오사카 관광지 추천해줘`, `도쿄 가볼만한 곳`
 4. 폴백 블록 → `/api/v1/kakao/fallback`
-5. **두 블록 모두 [콜백 사용] 을 켠다** ← 안 켜면 첫 검색이 사용자에게 안 간다 ([왜](#-오픈빌더에서-콜백을-켜야-한다))
+5. **세 블록 모두 [콜백 사용] 을 켠다** ← 안 켜면 첫 검색이 사용자에게 안 간다 ([왜](#-오픈빌더에서-콜백을-켜야-한다))
 6. 배포 (HTTPS 필수, **응답 5초 제한**)
 
 엔티티를 안 만들어도 된다. 서버가 gpt-5 계열로 발화를 직접 파싱하므로 자연어·오타를 그대로 받는다. 엔티티가 오면 모델을 부르지 않고 그 값을 쓴다(더 빠르고 공짜) — 호텔은 `city`/`sys_location`, 항공권은 `origin`/`destination`/`depart_date`/`return_date` 를 본다.
@@ -434,6 +485,7 @@ ERD와 컬럼별 설명은 **[docs/DB.md](docs/DB.md)**.
 src/
 ├── common/
 │   ├── booking-url.ts                 예약 링크 호스트 검증 / 한국어 페이지 변환 (호텔·항공권 공용)
+│   ├── maps-url.ts                    구글맵 링크 생성 (관광지)
 │   └── guards/skill-token.guard.ts    X-Skill-Token (비우면 검증 안 함)
 ├── config/
 │   ├── app.config.ts                  환경변수 → AppConfig
@@ -441,7 +493,7 @@ src/
 │   └── config.module.ts               전역 제공
 ├── modules/
 │   ├── kakao/                         스킬 엔드포인트
-│   │   ├── kakao.controller.ts        호텔 추천 / 항공권 검색 / 폴백
+│   │   ├── kakao.controller.ts        호텔 추천 / 항공권 검색 / 관광지 추천 / 폴백
 │   │   ├── templates.ts               listCard·itemCard·캐러셀 빌더 (길이·개수 제한)
 │   │   └── dto/skill-payload.dto.ts   오픈빌더 요청 접근자
 │   ├── hotel/                         유스케이스 전체 흐름
@@ -453,9 +505,14 @@ src/
 │   │   ├── flight.types.ts            Flight, 카드 문구, FLIGHT_PROVIDER 토큰
 │   │   ├── flight-debug.controller.ts /api/v1/debug/flight-search
 │   │   └── providers/openai.provider.ts   gpt-5-mini 2단 호출
+│   ├── attraction/                    관광지. 예약이 없어 애드픽 단계가 통째로 빠진다
+│   │   ├── attraction.service.ts      캐시 조회 / 콜백 / 백그라운드 검색
+│   │   ├── attraction.types.ts        Attraction, 카드 문구, ATTRACTION_PROVIDER 토큰
+│   │   ├── attraction-debug.controller.ts  /api/v1/debug/attraction-search
+│   │   └── providers/openai.provider.ts    gpt-5-mini 2단 호출
 │   ├── openai/openai.service.ts       Responses API 클라이언트
 │   ├── nlu/                           발화 파싱 (모델 호출 + 별칭 캐시)
-│   │   ├── nlu.service.ts             "오사카 4명" → { osaka, guests:4 }
+│   │   ├── nlu.service.ts             "오사카 4명" → { osaka, guests:4 } (호텔·관광지 공용)
 │   │   ├── flight-nlu.service.ts      "내일 오사카 왕복 2명" → { ICN→KIX, 날짜, 2명 }
 │   │   └── nlu.ts                     자료구조 + 퀵리플라이용 예시 도시
 │   ├── adpick/adpick.service.ts       커미션 링크 생성 (키 마스킹·동시성 제한)
@@ -498,3 +555,5 @@ src/
 - [ ] 체크인/체크아웃 날짜 파싱 → [열린 이슈 4번](docs/PLAN.md)
 - [x] 항공권 도메인 추가 (`recommendations.domain` 으로 구분)
 - [ ] 항공권 실시간 운임 API(GDS·항공사) 연동 — 지금은 웹 검색 기반 **예상가**다. `FLIGHT_PROVIDER` 만 갈아끼우면 된다
+- [x] 관광지 도메인 추가 (구글맵 링크, 제휴 없음)
+- [ ] 관광지 카드 이미지 — 위키백과 공개 이미지 API 가 현실적인 후보 ([ATTRACTION.md](docs/ATTRACTION.md#10-알려진-한계))

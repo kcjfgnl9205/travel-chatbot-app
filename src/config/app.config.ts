@@ -50,6 +50,10 @@ export interface AppConfig {
   flightDefaultOriginName: string;
   flightDefaultOriginCode: string;
 
+  attractionProvider: string;
+  attractionResultLimit: number;
+  attractionCacheTtlMinutes: number;
+
   hotelThumbnails: boolean;
   hotelThumbnailTimeoutMs: number;
   hotelThumbnailMaxBytes: number;
@@ -146,6 +150,14 @@ export function loadConfig(): AppConfig {
     // 보고, 카드에 '서울 출발' 을 적어 사용자가 틀렸음을 바로 알 수 있게 한다.
     flightDefaultOriginName: str('FLIGHT_DEFAULT_ORIGIN_NAME', '서울'),
     flightDefaultOriginCode: str('FLIGHT_DEFAULT_ORIGIN_CODE', 'ICN'),
+
+    attractionProvider: str('ATTRACTION_PROVIDER', 'openai'),
+    // listCard 는 5줄이 한계다. 그보다 크게 잡으면 검색만 비싸지고 잘려 나간다.
+    attractionResultLimit: num('ATTRACTION_RESULT_LIMIT', 5),
+    // 호텔(60분)·항공권(30분)보다 훨씬 길다. 호텔 요금과 항공 운임은 시시각각
+    // 바뀌지만 **오사카의 볼거리는 어제와 오늘이 같다.** 짧게 잡을수록 같은 답을
+    // 다시 사는 셈이다. 입장료·휴관 정보가 바뀌는 주기를 생각해 하루로 둔다.
+    attractionCacheTtlMinutes: num('ATTRACTION_CACHE_TTL_MINUTES', 1440),
   };
 }
 
