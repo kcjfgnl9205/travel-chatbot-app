@@ -7,7 +7,7 @@
 모든 발화가 폴백으로 떨어지고, 폴백 블록이 `POST /api/v1/kakao/router` 하나를 부른다.
 무엇을 묻는지는 URL 이 아니라 **발화**가 정한다 → **[docs/ROUTER.md](docs/ROUTER.md)**
 
-운영: https://bot.nolmoa.com · 라우터: [docs/ROUTER.md](docs/ROUTER.md) · DB: [docs/DB.md](docs/DB.md) · 항공권: [docs/FLIGHT.md](docs/FLIGHT.md) · 관광지: [docs/ATTRACTION.md](docs/ATTRACTION.md) · 배포: [docs/DEPLOY.md](docs/DEPLOY.md)
+운영: https://bot.nolmoa.com · 라우터: [docs/ROUTER.md](docs/ROUTER.md) · 오픈빌더 설정: [docs/KAKAO-SETUP.md](docs/KAKAO-SETUP.md) · 남은 문제: [docs/HANDOFF.md](docs/HANDOFF.md) · DB: [docs/DB.md](docs/DB.md) · 항공권: [docs/FLIGHT.md](docs/FLIGHT.md) · 관광지: [docs/ATTRACTION.md](docs/ATTRACTION.md) · 배포: [docs/DEPLOY.md](docs/DEPLOY.md)
 
 > FastAPI 로 먼저 만들었다가 NestJS 로 전환했다. 전환 기록과 주의점은 [docs/MIGRATION.md](docs/MIGRATION.md).
 

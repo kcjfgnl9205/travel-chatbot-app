@@ -1,7 +1,8 @@
 # 작업 지시서 — 라우터 배포 후 남은 문제
 
 > 2026-09-12 기준. **이 문서 하나만 읽고 이어서 작업할 수 있게** 쓴다.
-> 구조 설명은 [ROUTER.md](ROUTER.md), 이 문서는 **지금 무엇이 깨져 있고 무엇을 해야 하는가**다.
+> 구조 설명은 [ROUTER.md](ROUTER.md), 오픈빌더에서 손댈 것은 [KAKAO-SETUP.md](KAKAO-SETUP.md),
+> 이 문서는 **지금 무엇이 깨져 있고 무엇을 해야 하는가**다.
 
 ---
 
@@ -161,7 +162,7 @@ POST 하고 rejected 로그만 남는다.
 
 | # | 무엇 | 어디서 |
 |---|---|---|
-| B-1 | **폴백 블록 [콜백 사용] 켜기** | 오픈빌더 → 폴백 블록 |
+| B-1 | **폴백 블록 [콜백 사용] 켜기** + 배포 | 오픈빌더 → [KAKAO-SETUP.md](KAKAO-SETUP.md) 3장 |
 | B-2 | `fix/docker-build-env-example` PR 머지 | GitHub (안 하면 배포가 계속 실패) |
 | B-3 | 서버 `.env` 에 `RESULT_MAX_ITEMS` 등 확정값 반영 후 `docker compose up -d --force-recreate app` | 오라클 VM |
 | B-4 | 대화에 노출된 키 5개 재발급 | Supabase · OpenAI · 애드픽 · 카카오 |
