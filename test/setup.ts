@@ -9,4 +9,3 @@ process.env.ADPICK_API_KEY = '';
 process.env.ADPICK_LINK_TEMPLATE = 'https://adpick.test/click/AB12?url={source_url}';
 process.env.ADPICK_SUBID_PARAM = '';
 process.env.KAKAO_SKILL_TOKEN = '';
-process.env.SEARCH_CACHE_TTL_MINUTES = '60';

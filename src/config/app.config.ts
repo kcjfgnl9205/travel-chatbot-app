@@ -7,7 +7,14 @@
 
 export interface AppConfig {
   appEnv: string;
-  logLevel: string;
+  /**
+   * 리다이렉트 링크의 뿌리. 카드 줄 링크가 전부 이걸로 만들어진다
+   * (`redirectUrl`). 로컬 값을 운영에 넣으면 모든 링크가 죽는다.
+   *
+   * ⚠️ LOG_LEVEL 과 PORT 는 여기 없다 — 둘 다 Nest 앱을 만들기 **전에** 필요해서
+   *    main.ts 가 process.env 로 직접 읽는다. 설정에 중복으로 두면 둘 중 어느 쪽이
+   *    이기는지 헷갈린다.
+   */
   publicBaseUrl: string;
 
   supabaseUrl: string;
@@ -85,7 +92,6 @@ function bool(name: string, fallback: boolean): boolean {
 export function loadConfig(): AppConfig {
   return {
     appEnv: str('APP_ENV', 'local'),
-    logLevel: str('LOG_LEVEL', 'INFO'),
     publicBaseUrl: str('PUBLIC_BASE_URL', 'http://localhost:8000'),
 
     supabaseUrl: str('SUPABASE_URL'),
