@@ -11,9 +11,9 @@ import {
   FLIGHTS,
   callbackReceiver,
   createApp,
-  itemCardsOf,
+  flightRowsOf,
   kakaoPayload,
-  searchUntilCards,
+  searchUntilRows,
 } from './helpers';
 
 describe('카카오 항공권 스킬', () => {
@@ -50,12 +50,12 @@ describe('카카오 항공권 스킬', () => {
     it('콜백이 없으면 "찾고 있어요" 로 넘기고 백그라운드에서 검색한다', async () => {
       const res = await post(kakaoPayload('오사카 항공권 찾아줘')).expect(201);
 
-      expect(itemCardsOf(res.body)).toBeUndefined();
+      expect(flightRowsOf(res.body)).toBeUndefined();
       expect(textOf(res.body)).toContain('찾고 있어요');
 
       // 검색은 시작됐다 — 다시 물으면 캐시에서 카드가 나온다.
-      const cards = await searchUntilCards(app, '오사카 항공권 찾아줘');
-      expect(cards[0].head.title).toContain('오사카');
+      const rows = await searchUntilRows(app, '오사카 항공권 찾아줘');
+      expect(rows[0].title).toBeTruthy();
     });
 
     it('응답이 5초 예산 안에 떨어진다 — provider 가 아무리 느려도', async () => {
@@ -75,7 +75,7 @@ describe('카카오 항공권 스킬', () => {
       await Promise.all(
         Array.from({ length: 5 }, () => post(kakaoPayload('다낭 항공권 찾아줘'))),
       );
-      await searchUntilCards(app, '다낭 항공권 찾아줘');
+      await searchUntilRows(app, '다낭 항공권 찾아줘');
 
       expect(provider.calls.filter((c) => c.destSlug === 'danang')).toHaveLength(1);
     });
@@ -93,17 +93,17 @@ describe('카카오 항공권 스킬', () => {
     });
 
     it('캐시에 있으면 provider 를 아예 안 부른다', async () => {
-      await searchUntilCards(app, '오사카 항공권 찾아줘');
+      await searchUntilRows(app, '오사카 항공권 찾아줘');
       const before = provider.calls.length;
 
       const res = await post(kakaoPayload('오사카 항공권 찾아줘')).expect(201);
-      expect(itemCardsOf(res.body)).toBeDefined();
+      expect(flightRowsOf(res.body)).toBeDefined();
       expect(provider.calls).toHaveLength(before);
     });
 
     it('날짜가 다르면 다른 검색이다 — 캐시 키에 날짜가 들어간다', async () => {
-      await searchUntilCards(app, '2026-10-03 오사카 항공권');
-      await searchUntilCards(app, '2026-11-20 오사카 항공권');
+      await searchUntilRows(app, '2026-10-03 오사카 항공권');
+      await searchUntilRows(app, '2026-11-20 오사카 항공권');
 
       const departs = provider.calls.map((c) => c.departDate);
       expect(departs).toContain('2026-10-03');
@@ -113,7 +113,7 @@ describe('카카오 항공권 스킬', () => {
 
   // ------------------------------------------------------------ 콜백 경로
   describe('콜백이 켜져 있으면 카드를 밀어준다', () => {
-    it('useCallback 을 먼저 주고, 검색이 끝나면 캐러셀을 POST 한다', async () => {
+    it('useCallback 을 먼저 주고, 검색이 끝나면 카드를 POST 한다', async () => {
       const receiver = await callbackReceiver();
       try {
         const res = await post(
@@ -124,10 +124,12 @@ describe('카카오 항공권 스킬', () => {
         expect(res.body.data.text).toContain('찾고 있어요');
 
         const delivered = await receiver.received;
-        const cards = itemCardsOf(delivered);
-        // provider 가 주는 6편이 그대로 온다 (캐러셀 한계 10장 안이다).
-        expect(cards).toHaveLength(6);
-        expect(cards[0].itemList.some((r: any) => r.title === '오는편')).toBe(true);
+        const rows = flightRowsOf(delivered);
+        // ⚠️ listCard 는 5줄이 한계다. provider 가 6편을 줘도 5줄만 나간다
+        //    (캐러셀은 10장까지였다 — 이게 itemCard 를 포기하며 치른 값이다).
+        expect(rows).toHaveLength(5);
+        // 왕복이면 두 구간이 한 줄에 들어간다.
+        expect(rows[0].description).toContain('↔');
       } finally {
         await receiver.close();
       }
@@ -135,40 +137,36 @@ describe('카카오 항공권 스킬', () => {
   });
 
   // ------------------------------------------------------------ 카드 모양
-  describe('itemCard 캐러셀 — 카카오 제한을 넘기면 말풍선이 통째로 안 보인다', () => {
-    it('안내 말풍선 + 캐러셀 두 개를 보낸다', async () => {
-      const cards = await searchUntilCards(app, '오사카 왕복 항공권 2명');
+  describe('listCard — 그룹챗봇(팀톡방)이 그릴 수 있는 유일한 모양이다', () => {
+    it('안내 말풍선 + listCard 두 개를 보낸다', async () => {
+      const rows = await searchUntilRows(app, '오사카 왕복 항공권 2명');
       const res = await post(kakaoPayload('오사카 왕복 항공권 2명')).expect(201);
 
       expect(res.body.template.outputs).toHaveLength(2);
       expect(res.body.template.outputs[0].simpleText).toBeDefined();
-      expect(res.body.template.outputs[1].carousel.type).toBe('itemCard');
-      expect(cards.length).toBeGreaterThan(0);
+      // ⚠️ itemCard 면 팀톡방에서 말풍선이 통째로 사라진다. 호텔·관광지와 같은 모양이어야 한다.
+      expect(res.body.template.outputs[1].listCard).toBeDefined();
+      expect(res.body.template.outputs[1].carousel).toBeUndefined();
+      expect(rows.length).toBeGreaterThan(0);
     });
 
     it('모든 줄이 길이 제한 안에 있다', async () => {
-      const cards = await searchUntilCards(app, '오사카 왕복 항공권 2명');
+      const rows = await searchUntilRows(app, '오사카 왕복 항공권 2명');
+      const res = await post(kakaoPayload('오사카 왕복 항공권 2명')).expect(201);
+      const card = res.body.template.outputs[1].listCard;
 
-      for (const card of cards) {
-        expect(card.head.title.length).toBeLessThanOrEqual(t.MAX_ITEM_CARD_HEAD);
-        expect(card.itemList.length).toBeGreaterThan(0);
-        expect(card.itemList.length).toBeLessThanOrEqual(t.MAX_ITEM_LIST_ROWS);
-        expect(card.buttons.length).toBeLessThanOrEqual(t.MAX_ITEM_CARD_BUTTONS);
+      expect(card.header.title.length).toBeLessThanOrEqual(t.MAX_LIST_HEADER_TITLE);
+      expect(card.buttons.length).toBeLessThanOrEqual(t.MAX_LIST_BUTTONS);
 
-        for (const row of card.itemList) {
-          expect(row.title.length).toBeLessThanOrEqual(t.MAX_ITEM_LIST_TITLE);
-          expect(row.description.length).toBeLessThanOrEqual(t.MAX_ITEM_LIST_DESC);
-          // 빈 값이 있으면 카카오가 카드를 렌더링하지 않는다.
-          expect(row.description.length).toBeGreaterThan(0);
-        }
-        expect(card.itemListSummary.title.length).toBeLessThanOrEqual(t.MAX_ITEM_LIST_TITLE);
-        expect(card.itemListSummary.description.length).toBeLessThanOrEqual(
-          t.MAX_ITEM_LIST_DESC,
-        );
+      for (const row of rows) {
+        expect(row.title.length).toBeLessThanOrEqual(t.MAX_LIST_ITEM_TITLE);
+        expect(row.description.length).toBeLessThanOrEqual(t.MAX_LIST_ITEM_DESC);
+        // 빈 값이 있으면 카카오가 카드를 렌더링하지 않는다.
+        expect(row.description.length).toBeGreaterThan(0);
       }
     });
 
-    it('캐러셀 카드 수 제한을 넘기지 않는다', async () => {
+    it('⚠️ listCard 는 5줄이 한계다 — 캐러셀 10장에서 줄었다', async () => {
       provider.reply = (query) =>
         Array.from({ length: 20 }, (_, i) => ({
           airline: `항공사${i}`,
@@ -183,20 +181,48 @@ describe('카카오 항공권 스킬', () => {
           sourceUrl: `https://kr.trip.com/flights/x-${i}`,
         }));
 
-      const cards = await searchUntilCards(app, '오사카 항공권 찾아줘');
-      expect(cards).toHaveLength(t.MAX_CAROUSEL_ITEMS);
+      const rows = await searchUntilRows(app, '오사카 항공권 찾아줘');
+      expect(rows).toHaveLength(t.MAX_LIST_ITEMS);
     });
 
-    it('편도면 오는편 줄이 없다', async () => {
-      const cards = await searchUntilCards(app, '2026-10-03 오사카 편도 항공권');
-      for (const card of cards) {
-        expect(card.itemList.map((r: any) => r.title)).not.toContain('오는편');
-      }
+    it('가격을 제목에 둔다 — 편을 고르는 첫 번째 축이다', async () => {
+      const rows = await searchUntilRows(app, '오사카 항공권 찾아줘');
+      expect(rows[0].title).toMatch(/원$/);
+      expect(rows[0].title).toContain('대한항공');
+    });
+
+    it('편도는 도착 시각과 소요가 들어가고, 왕복은 두 구간이 들어간다', async () => {
+      const oneway = await searchUntilRows(app, '2026-10-03 오사카 편도 항공권');
+      expect(oneway[0].description).toContain('→');
+      expect(oneway[0].description).not.toContain('↔');
+
+      const round = await searchUntilRows(app, '오사카 왕복 항공권 2명');
+      expect(round[0].description).toContain('↔');
+    });
+
+    it('"더 보기" 를 누르면 다음 항공편이 나온다', async () => {
+      const first = await searchUntilRows(app, '오사카 항공권 찾아줘');
+      const res = await post(kakaoPayload('오사카 항공권 찾아줘')).expect(201);
+      const more = res.body.template.outputs[1].listCard.buttons.find(
+        (b: any) => b.label === '더 보기',
+      );
+      expect(more.extra).toEqual({ city: '오사카', offset: 5 });
+
+      const payload = kakaoPayload(more.messageText) as any;
+      payload.action.clientExtra = more.extra;
+      const second = await post(payload).expect(201);
+      const card = second.body.template.outputs[1].listCard;
+
+      expect(card.header.title).toContain('6~');
+      const firstTitles = first.map((r: any) => r.title);
+      for (const row of card.items) expect(firstTitles).not.toContain(row.title);
+      // 마지막 페이지라 "더 보기" 가 없어야 한다.
+      expect(card.buttons.map((b: any) => b.label)).not.toContain('더 보기');
     });
 
     it('같은 편이 두 번 오면 하나만 나간다 — 주소가 아니라 편명으로 판정한다', async () => {
       // 항공권은 여러 편이 같은 노선 검색 페이지를 가리킨다. 주소로 중복을 지우면
-      // 카드가 한 장만 남는다.
+      // 줄이 하나만 남는다.
       provider.reply = (query) =>
         [1, 1, 2].map((n) => ({
           airline: '대한항공',
@@ -211,21 +237,21 @@ describe('카카오 항공권 스킬', () => {
           sourceUrl: 'https://kr.trip.com/flights/osaka', // 세 편이 같은 주소
         }));
 
-      const cards = await searchUntilCards(app, '오사카 항공권 찾아줘');
-      expect(cards).toHaveLength(2);
+      const rows = await searchUntilRows(app, '오사카 항공권 찾아줘');
+      expect(rows).toHaveLength(2);
     });
   });
 
   // ------------------------------------------------------------ 안내 문구
   describe('안내 말풍선 — 사용자가 조건을 확인하고 고칠 수 있어야 한다', () => {
     it('가격이 확정 운임이 아니라는 걸 알린다', async () => {
-      await searchUntilCards(app, '오사카 항공권 찾아줘');
+      await searchUntilRows(app, '오사카 항공권 찾아줘');
       const res = await post(kakaoPayload('오사카 항공권 찾아줘')).expect(201);
       expect(textOf(res.body)).toContain('검색 시점 기준');
     });
 
     it('출발지를 안 말했으면 서울 출발이라고 알려준다', async () => {
-      await searchUntilCards(app, '오사카 항공권 찾아줘');
+      await searchUntilRows(app, '오사카 항공권 찾아줘');
       const res = await post(kakaoPayload('오사카 항공권 찾아줘')).expect(201);
 
       expect(textOf(res.body)).toContain('서울 출발 기준');
@@ -234,7 +260,7 @@ describe('카카오 항공권 스킬', () => {
     });
 
     it('출발지를 말했으면 추측했다고 하지 않는다', async () => {
-      await searchUntilCards(app, '부산에서 오사카 항공권');
+      await searchUntilRows(app, '부산에서 오사카 항공권');
       const res = await post(kakaoPayload('부산에서 오사카 항공권')).expect(201);
 
       expect(textOf(res.body)).not.toContain('출발 기준이에요');
@@ -261,9 +287,9 @@ describe('카카오 항공권 스킬', () => {
   });
 
   // ------------------------------------------------------------ 클릭 추적
-  it('카드 버튼은 /r/{clickId} 를 가리키고, 누르면 예약 페이지로 302 한다', async () => {
-    const cards = await searchUntilCards(app, '오사카 항공권 찾아줘');
-    const url = cards[0].buttons[0].webLinkUrl;
+  it('줄 링크는 /r/{clickId} 를 가리키고, 누르면 예약 페이지로 302 한다', async () => {
+    const rows = await searchUntilRows(app, '오사카 항공권 찾아줘');
+    const url = rows[0].link.web;
 
     expect(url).toMatch(/\/r\/[\w-]{12}$/);
     const clickId = url.split('/r/')[1];

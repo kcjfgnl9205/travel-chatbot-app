@@ -140,11 +140,19 @@ export async function callbackReceiver(): Promise<{
 export const carouselOf = (body: any) =>
   body.template?.outputs?.find((o: any) => o.carousel)?.carousel;
 
-/** 캐러셀 안의 itemCard 목록. 없으면 undefined. */
+/** 캐러셀 안의 itemCard 목록. 없으면 undefined. (FLIGHT_CARD_STYLE=carousel 일 때) */
 export const itemCardsOf = (body: any) => {
   const carousel = carouselOf(body);
   return carousel?.type === 'itemCard' ? carousel.items : undefined;
 };
+
+/**
+ * 항공권 listCard 의 줄 목록. 없으면 undefined.
+ *
+ * 항공권은 안내 말풍선 뒤에 카드가 오므로 outputs[0] 이 아니다 — 찾아서 꺼낸다.
+ */
+export const flightRowsOf = (body: any) =>
+  body.template?.outputs?.find((o: any) => o.listCard)?.listCard?.items;
 
 /**
  * 카드가 나올 때까지 다시 물어본다 (항공권).
@@ -157,15 +165,34 @@ export async function searchUntilCards(
   utterance: string,
   params: Record<string, unknown> = {},
 ): Promise<any[]> {
+  return searchUntil(app, utterance, params, itemCardsOf, 'itemCard 캐러셀');
+}
+
+/** 위와 같되 listCard 줄을 기다린다 (기본 카드 모양). */
+export async function searchUntilRows(
+  app: INestApplication,
+  utterance: string,
+  params: Record<string, unknown> = {},
+): Promise<any[]> {
+  return searchUntil(app, utterance, params, flightRowsOf, 'listCard');
+}
+
+async function searchUntil(
+  app: INestApplication,
+  utterance: string,
+  params: Record<string, unknown>,
+  pick: (body: any) => any[] | undefined,
+  what: string,
+): Promise<any[]> {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const res = await request(app.getHttpServer())
       .post(FLIGHTS)
       .send(kakaoPayload(utterance, 'test-user', params));
-    const cards = itemCardsOf(res.body);
-    if (cards) return cards;
+    const found = pick(res.body);
+    if (found) return found;
     await new Promise((r) => setTimeout(r, 25));
   }
-  throw new Error(`itemCard 캐러셀이 나오지 않았다: ${utterance}`);
+  throw new Error(`${what} 가 나오지 않았다: ${utterance}`);
 }
 
 // ------------------------------------------------------------------ 관광지

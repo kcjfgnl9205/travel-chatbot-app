@@ -11,6 +11,14 @@ import {
 import { UsersRepository } from '../database/repositories/users.repository';
 import * as t from '../kakao/templates';
 import {
+  PAGE_SIZE,
+  cityFromExtra,
+  hasNextPage,
+  moreButton,
+  offsetOf,
+  pageOf,
+} from '../kakao/paging';
+import {
   KakaoSkillPayload,
   actionParamsOf,
   blockNameOf,
@@ -101,6 +109,8 @@ interface RequestContext {
   userId: string | null;
   messageId: string | null;
   started: number;
+  /** 이번 카드가 보여줄 시작 위치. "더 보기" 로 들어오면 5, 첫 요청이면 0. */
+  offset?: number;
 }
 
 @Injectable()
@@ -142,9 +152,13 @@ export class AttractionService {
     // 물으면 파싱이 공짜다. 항공권만 노선·날짜 때문에 파서가 따로 있다.
     // cityOnly: 관광지는 인원·박수를 쓰지 않는다. 그걸 뽑자고 모델을 한 번 더
     // 부르면 5초 예산에서 아무 데도 안 쓰이는 값에 2.5초를 쓰는 셈이다.
-    const parsed = await this.nlu.resolve(utterance, paramOf(payload, ...CITY_PARAMS), {
-      cityOnly: true,
-    });
+    // "호텔 더 보기" 처럼 발화에 도시가 없는 경우가 있다. 그때는 버튼이 실어 보낸
+    // clientExtra.city 가 유일한 단서다 — 엔티티 파라미터와 같은 자격으로 본다.
+    const parsed = await this.nlu.resolve(
+      utterance,
+      paramOf(payload, ...CITY_PARAMS) ?? cityFromExtra(payload),
+      { cityOnly: true },
+    );
 
     const user = await this.users.getOrCreate(userKeyOf(payload));
     const userId = (user?.id as string) ?? null;
@@ -167,7 +181,7 @@ export class AttractionService {
       cityName: parsed.cityName ?? '',
       limit: this.config.attractionResultLimit,
     };
-    const ctx: RequestContext = { userId, messageId, started };
+    const ctx: RequestContext = { userId, messageId, started, offset: offsetOf(payload) };
 
     // 5초 예산 안에서 할 수 있는 건 캐시 조회까지다.
     const cached = await this.searchCache.peek(
@@ -188,6 +202,16 @@ export class AttractionService {
 
     // 미스 → 지금 응답할 수 없다. 검색은 백그라운드로 돌린다.
     const callbackUrl = callbackUrlOf(payload);
+    // ⚠️ **콜백 URL 은 오픈빌더에서 그 블록의 [콜백 사용] 을 켠 경우에만 실린다.**
+    //    꺼져 있으면 사용자는 "30초 뒤에 다시 물어봐 주세요" 를 받고 같은 질문을 두 번
+    //    해야 한다. 분기는 여기 있으므로 그건 서버가 아니라 설정 문제다 — 어느 쪽인지
+    //    로그로 남겨야 오픈빌더를 봐야 하는지 코드를 봐야 하는지 가릴 수 있다.
+    if (!callbackUrl) {
+      this.logger.warn(
+        `callbackUrl 없음 — 오픈빌더에서 이 블록의 [콜백 사용] 이 꺼져 있다. ` +
+          `block=${blockNameOf(payload) ?? '-'} domain=${DOMAIN}`,
+      );
+    }
     void this.searchInBackground(query, ctx, callbackUrl);
 
     return callbackUrl
@@ -341,6 +365,7 @@ export class AttractionService {
       messageId: string | null;
       started: number;
       cacheHit: boolean;
+      offset?: number;
       /**
        * 통계(recommendations·recommendation_items)를 남길지. 기본 true.
        * 진단 경로만 false 로 둔다 — 진단 호출이 섞이면 전환율 집계가 틀어진다.
@@ -348,8 +373,10 @@ export class AttractionService {
       persist?: boolean;
     },
   ): Promise<t.Json> {
-    // 중복 제거 → 자르기 순서가 중요하다. 반대로 하면 중복이 5줄 자리를 먹는다.
-    const attractions = dedupe(input, this.logger).slice(0, t.MAX_LIST_ITEMS);
+    // 중복 제거 → 페이지 자르기 순서가 중요하다. 반대로 하면 중복이 줄 자리를 먹고,
+    // 2페이지에서 1페이지에 이미 나온 곳이 다시 보인다.
+    const all = dedupe(input, this.logger);
+    const { page: attractions, start } = pageOf(all, ctx.offset ?? 0);
 
     const recommendation =
       ctx.persist === false
@@ -391,7 +418,8 @@ export class AttractionService {
         // (환율 API 를 붙여 원화로 확정할 수 있게 되면 그때 채우면 된다)
         price_from: null,
         merchant: null,
-        thumbnail_url: null,
+        // 위키백과에서 찾은 사진. 못 구한 관광지는 null 이다 (실측 87% 가 채워진다).
+        thumbnail_url: attraction.imageUrl ?? null,
         source_url: attraction.mapUrl,
         target_url: targetUrl,
       });
@@ -411,6 +439,9 @@ export class AttractionService {
         t.listItem({
           title: attraction.name,
           description: listDescription(attraction),
+          // 없으면 listItem 이 알아서 뺀다 — 그 줄만 사진 없이 나간다.
+          // 호텔도 썸네일을 못 구하면 같은 모양이라 새로운 상태는 아니다.
+          imageUrl: attraction.imageUrl,
           linkUrl: redirectUrl(this.config, clickId),
         }),
       );
@@ -420,9 +451,12 @@ export class AttractionService {
     if (recommendationId) await this.items.createMany(rows);
 
     return t.listCard({
-      headerTitle: `${query.cityName} 관광지 ${listItems.length}곳`,
+      // 2페이지부터는 몇 번째인지 알려준다. 안 그러면 같은 카드가 또 온 것처럼 보인다.
+      headerTitle: start
+        ? `${query.cityName} 관광지 ${start + 1}~${start + listItems.length}번째`
+        : `${query.cityName} 관광지 ${listItems.length}곳`,
       items: listItems,
-      buttons: [t.messageButton('다른 도시 보기', '관광지 추천해줘')],
+      buttons: this.buttonsFor(attractions, query, all.length, start),
       quickReplies: this.cityQuickReplies(query.citySlug),
     });
   }
@@ -460,4 +494,47 @@ export class AttractionService {
       t.quickReply(`${c.nameKo} 관광지`, `${c.nameKo} 관광지 추천해줘`),
     );
   }
+
+  /**
+   * 카드 하단 버튼. **listCard 는 2개가 한계라 우선순위를 정해야 한다.**
+   *
+   *   ① 더 보기      — 다음 5곳. 남아 있을 때만 단다
+   *   ② 사진 출처    — 사진이 한 장이라도 실렸을 때만
+   *   ③ 다른 도시 보기
+   *
+   * ③ 을 맨 뒤에 둔 이유: 도시 바로가기는 이미 quickReplies 가 하고 있어서
+   * 버튼 자리를 쓸 이유가 가장 적다.
+   *
+   * ⚠️ 사진 출처는 **엄밀한 CC BY-SA 표시가 아니다.** 저작자와 라이선스를 사진마다
+   *    밝히는 게 원칙인데, listCard 한 줄에는 링크가 하나뿐이고 그 자리는 지도가
+   *    써야 한다(클릭 추적). 카드 밖에서 쓰게 되면 제대로 된 표시가 필요하다.
+   */
+  private buttonsFor(
+    attractions: Attraction[],
+    query: AttractionQuery,
+    total: number,
+    start: number,
+  ): t.Json[] {
+    const buttons: t.Json[] = [];
+
+    if (hasNextPage(total, start)) {
+      buttons.push(
+        moreButton({
+          style: this.config.moreButtonStyle,
+          blockId: this.config.attractionBlockId,
+          messageText: `${query.cityName} 관광지 더 보기`,
+          cityName: query.cityName,
+          nextOffset: start + PAGE_SIZE,
+        }),
+      );
+    }
+    if (attractions.some((a) => a.imageUrl)) {
+      buttons.push(t.webLinkButton('사진 출처: 위키미디어', PHOTO_CREDIT_URL));
+    }
+    buttons.push(t.messageButton('다른 도시 보기', '관광지 추천해줘'));
+    return buttons.slice(0, t.MAX_LIST_BUTTONS);
+  }
 }
+
+/** 위키미디어 공용의 라이선스 안내. 출처 버튼이 여기로 간다. */
+const PHOTO_CREDIT_URL = 'https://commons.wikimedia.org/wiki/Commons:Licensing';

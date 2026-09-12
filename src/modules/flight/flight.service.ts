@@ -13,6 +13,14 @@ import {
 import { UsersRepository } from '../database/repositories/users.repository';
 import * as t from '../kakao/templates';
 import {
+  PAGE_SIZE,
+  cityFromExtra,
+  hasNextPage,
+  moreButton,
+  offsetOf,
+  pageOf,
+} from '../kakao/paging';
+import {
   KakaoSkillPayload,
   actionParamsOf,
   blockNameOf,
@@ -39,6 +47,8 @@ import {
   FlightQuery,
   cabinText,
   cardRows,
+  listRowDescription,
+  listRowTitle,
   dateLabel,
   flightCacheKey,
   flightKey,
@@ -114,6 +124,8 @@ interface RequestContext {
   userId: string | null;
   messageId: string | null;
   started: number;
+  /** 이번 카드가 보여줄 시작 위치. "더 보기" 로 들어오면 5, 첫 요청이면 0. */
+  offset?: number;
 }
 
 @Injectable()
@@ -154,7 +166,9 @@ export class FlightService {
     // 모델 호출이 들어간다(캐시 미스일 때만). 5초 예산의 첫 지출이라 타임아웃이 짧다.
     const parsed = await this.nlu.resolve(utterance, {
       origin: paramOf(payload, ...ORIGIN_PARAMS),
-      destination: paramOf(payload, ...DEST_PARAMS),
+      // "항공권 더 보기" 처럼 발화에 도시가 없을 수 있다. 그때는 버튼이 실어 보낸
+      // clientExtra.city 가 유일한 단서다.
+      destination: paramOf(payload, ...DEST_PARAMS) ?? cityFromExtra(payload),
       departDate: paramOf(payload, ...DEPART_PARAMS),
       returnDate: paramOf(payload, ...RETURN_PARAMS),
     });
@@ -178,7 +192,7 @@ export class FlightService {
     if (!hasRoute(parsed)) return this.askRoute();
 
     const query = this.queryOf(parsed);
-    const ctx: RequestContext = { userId, messageId, started };
+    const ctx: RequestContext = { userId, messageId, started, offset: offsetOf(payload) };
 
     // 5초 예산 안에서 할 수 있는 건 캐시 조회까지다.
     const cached = await this.searchCache.peek(
@@ -199,6 +213,16 @@ export class FlightService {
 
     // 미스 → 지금 응답할 수 없다. 검색은 백그라운드로 돌린다.
     const callbackUrl = callbackUrlOf(payload);
+    // ⚠️ **콜백 URL 은 오픈빌더에서 그 블록의 [콜백 사용] 을 켠 경우에만 실린다.**
+    //    꺼져 있으면 사용자는 "30초 뒤에 다시 물어봐 주세요" 를 받고 같은 질문을 두 번
+    //    해야 한다. 분기는 여기 있으므로 그건 서버가 아니라 설정 문제다 — 어느 쪽인지
+    //    로그로 남겨야 오픈빌더를 봐야 하는지 코드를 봐야 하는지 가릴 수 있다.
+    if (!callbackUrl) {
+      this.logger.warn(
+        `callbackUrl 없음 — 오픈빌더에서 이 블록의 [콜백 사용] 이 꺼져 있다. ` +
+          `block=${blockNameOf(payload) ?? '-'} domain=${DOMAIN}`,
+      );
+    }
     void this.searchInBackground(query, ctx, callbackUrl);
 
     return callbackUrl
@@ -374,6 +398,7 @@ export class FlightService {
       messageId: string | null;
       started: number;
       cacheHit: boolean;
+      offset?: number;
       /**
        * 통계(recommendations·recommendation_items)를 남길지. 기본 true.
        * 진단 경로만 false 로 둔다 — 진단 호출이 섞이면 전환율 집계가 틀어진다.
@@ -384,7 +409,15 @@ export class FlightService {
     },
   ): Promise<t.Json> {
     // 중복 제거 → 자르기 순서가 중요하다. 반대로 하면 중복이 카드 자리를 먹는다.
-    const flights = dedupe(input, this.logger).slice(0, t.MAX_CAROUSEL_ITEMS);
+    // 중복 제거를 **먼저** 한다. 잘라내고 지우면 중복이 자리를 먹은 만큼 카드가 준다.
+    const all = dedupe(input, this.logger);
+
+    // ⚠️ **페이지 크기가 카드 모양에 따라 다르다.** listCard 는 5줄, 캐러셀은 10장이다.
+    //    캐러셀은 한 번에 10편이 나가므로 페이지를 나눌 이유가 없다.
+    const { page: flights, start } =
+      this.config.flightCardStyle === 'carousel'
+        ? { page: all.slice(0, t.MAX_CAROUSEL_ITEMS), start: 0 }
+        : pageOf(all, ctx.offset ?? 0);
 
     // 원본 주소 → 애드픽 커미션 링크. 캐시에 있으면 API 를 안 탄다.
     // 항공권은 여러 편이 같은 주소를 공유하므로 변환 호출 수가 카드 수보다 적다.
@@ -417,6 +450,8 @@ export class FlightService {
 
     const rows: Record<string, unknown>[] = [];
     const cards: t.Json[] = [];
+    // 두 모양을 같은 순회에서 만든다. clickId·애드픽 변환은 한 번만 돌아야 한다.
+    const listItems: t.Json[] = [];
     /** 애드픽 변환이 안 돼 원본 주소로 나가는 카드. 수익화가 안 되는 노출이다. */
     const unconverted: string[] = [];
 
@@ -458,6 +493,7 @@ export class FlightService {
         userId: ctx.userId,
       });
 
+      const link_ = redirectUrl(this.config, clickId);
       cards.push(
         t.itemCard({
           headTitle: cardHead(flight, query),
@@ -465,7 +501,14 @@ export class FlightService {
           // 시각과 금액이 세로로 정렬돼야 카드끼리 비교가 된다.
           itemListAlignment: 'right',
           summary: { title: '예상가', description: priceSummary(flight, query) },
-          buttons: [t.webLinkButton('예약 페이지 보기', redirectUrl(this.config, clickId))],
+          buttons: [t.webLinkButton('예약 페이지 보기', link_)],
+        }),
+      );
+      listItems.push(
+        t.listItem({
+          title: listRowTitle(flight),
+          description: listRowDescription(flight),
+          linkUrl: link_,
         }),
       );
     });
@@ -481,10 +524,29 @@ export class FlightService {
     if (!cards.length) return this.noResult(query);
     if (recommendationId) await this.items.createMany(rows);
 
-    return t.textThenCarousel(
-      introText(query, cards.length),
-      'itemCard',
-      cards,
+    // ⚠️ **그룹챗봇(팀톡방)은 itemCard 를 못 그린다 — 말풍선이 통째로 사라진다.**
+    //    호텔·관광지가 같은 방에서 멀쩡한 건 listCard 라서고, 그래서 기본이 list 다.
+    //    앞 말풍선은 두 모양 모두에 붙인다 — 출발지를 추측했다는 사실과 가격이 확정
+    //    운임이 아니라는 말이 거기 실려 있고, 둘 다 header 40자에는 안 들어간다.
+    if (this.config.flightCardStyle === 'carousel') {
+      return t.textThenCarousel(
+        introText(query, cards.length),
+        'itemCard',
+        cards,
+        this.routeQuickReplies(query.destSlug),
+      );
+    }
+
+    return t.textThenListCard(
+      introText(query, listItems.length),
+      {
+        // 2페이지부터는 몇 번째인지 알려준다. 안 그러면 같은 카드가 또 온 것처럼 보인다.
+        headerTitle: start
+          ? `${query.originName}→${query.destName} ${start + 1}~${start + listItems.length}번째`
+          : `${query.originName}→${query.destName} 항공권 ${listItems.length}편`,
+        items: listItems,
+        buttons: this.buttonsFor(query, all.length, start),
+      },
       this.routeQuickReplies(query.destSlug),
     );
   }
@@ -517,6 +579,28 @@ export class FlightService {
         '30초쯤 뒤에 다시 물어봐 주세요!',
       this.routeQuickReplies(query.destSlug),
     );
+  }
+
+  /**
+   * 카드 하단 버튼. listCard 는 2개가 한계다.
+   * "더 보기" 는 **다음 페이지가 남아 있을 때만** 단다 — 없는데 달면 눌러도 같은
+   * 5편이 다시 나오고, 사용자는 그걸 고장으로 읽는다.
+   */
+  private buttonsFor(query: FlightQuery, total: number, start: number): t.Json[] {
+    const buttons: t.Json[] = [];
+    if (this.config.flightCardStyle !== 'carousel' && hasNextPage(total, start)) {
+      buttons.push(
+        moreButton({
+          style: this.config.moreButtonStyle,
+          blockId: this.config.flightBlockId,
+          messageText: `${query.destName} 항공권 더 보기`,
+          cityName: query.destName,
+          nextOffset: start + PAGE_SIZE,
+        }),
+      );
+    }
+    buttons.push(t.messageButton('다른 도시 보기', '항공권 추천해줘'));
+    return buttons.slice(0, t.MAX_LIST_BUTTONS);
   }
 
   routeQuickReplies(exclude?: string | null): t.Json[] {

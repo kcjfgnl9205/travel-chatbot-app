@@ -6,7 +6,7 @@ import { MemoryStoreService } from '../src/modules/database/memory-store.service
 import { NluService } from '../src/modules/nlu/nlu.service';
 import { SearchCacheService } from '../src/modules/search-cache/search-cache.service';
 import * as t from '../src/modules/kakao/templates';
-import { FakeAttractionProvider } from './fake-attraction-provider';
+import { FakeAttractionProvider, defaultAttractions } from './fake-attraction-provider';
 import {
   ATTRACTIONS,
   attractionsUntilCard,
@@ -143,9 +143,64 @@ describe('카카오 관광지 스킬', () => {
       expect(descriptions.every((d: string) => !d.includes('원'))).toBe(true);
     });
 
-    it('이미지가 없다 — 관광지는 긁어올 예약 페이지가 없다', async () => {
+    it('사진이 있는 줄에는 사진이 실린다', async () => {
       const card = await attractionsUntilCard(app, '오사카 관광지 추천해줘');
-      for (const row of card.items) expect(row.imageUrl).toBeUndefined();
+      const withImage = card.items.filter((row: any) => row.imageUrl);
+      expect(withImage.length).toBeGreaterThan(0);
+      for (const row of withImage) expect(row.imageUrl).toMatch(/^https:\/\//);
+    });
+
+    it('⚠️ 사진이 없는 줄이 섞여도 카드가 나간다', async () => {
+      // 위키백과에 문서가 없는 관광지가 있다(실측 87%). 사진을 못 구했다고
+      // 그 관광지를 빼면 추천 자체가 사라진다 — 사진 한 장 없는 것보다 나쁘다.
+      const card = await attractionsUntilCard(app, '오사카 관광지 추천해줘');
+      expect(card.items).toHaveLength(5);
+      expect(card.items.some((row: any) => !row.imageUrl)).toBe(true);
+      // 사진이 없어도 제목·설명·링크는 그대로여야 한다.
+      for (const row of card.items) {
+        expect(row.title).toBeTruthy();
+        expect(row.link.web).toContain('/r/');
+      }
+    });
+
+    it('사진이 실리면 출처 버튼이 붙는다 — 위키미디어는 CC 라이선스다', async () => {
+      const card = await attractionsUntilCard(app, '오사카 관광지 추천해줘');
+      const labels = card.buttons.map((b: any) => b.label);
+      expect(labels).toContain('사진 출처: 위키미디어');
+    });
+
+    it('⚠️ 버튼은 2개가 한계다 — 더 보기 > 사진 출처 > 다른 도시 보기 순으로 남는다', async () => {
+      // 도시 바로가기는 quickReplies 가 이미 하고 있어서 버튼 자리를 쓸 이유가 가장 적다.
+      const card = await attractionsUntilCard(app, '오사카 관광지 추천해줘');
+      const labels = card.buttons.map((b: any) => b.label);
+
+      expect(labels).toHaveLength(2);
+      expect(labels[0]).toBe('더 보기');
+      expect(labels[1]).toBe('사진 출처: 위키미디어');
+    });
+
+    it('"더 보기" 를 누르면 다음 관광지가 나온다', async () => {
+      const first = await attractionsUntilCard(app, '오사카 관광지 추천해줘');
+      const more = first.buttons.find((b: any) => b.label === '더 보기');
+      expect(more.extra).toEqual({ city: '오사카', offset: 5 });
+
+      const payload = kakaoPayload(more.messageText) as any;
+      payload.action.clientExtra = more.extra;
+      const res = await post(payload).expect(201);
+      const card = listCardOf(res.body);
+
+      expect(card.header.title).toContain('6~');
+      const firstNames = first.items.map((i: any) => i.title);
+      for (const row of card.items) expect(firstNames).not.toContain(row.title);
+    });
+
+    it('사진이 하나도 없으면 출처 버튼도 없다 — 쓰지 않은 것의 출처를 밝힐 이유가 없다', async () => {
+      provider.reply = (query) =>
+        defaultAttractions(query).map((a) => ({ ...a, imageUrl: null }));
+      const card = await attractionsUntilCard(app, '삿포로 관광지 추천해줘');
+      const labels = card.buttons.map((b: any) => b.label);
+      expect(labels).not.toContain('사진 출처: 위키미디어');
+      expect(labels).toContain('다른 도시 보기');
     });
 
     it('같은 곳이 두 번 오면 하나만 나간다', async () => {

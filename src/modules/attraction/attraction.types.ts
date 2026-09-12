@@ -9,6 +9,14 @@ import { CacheKeyPart } from '../search-cache/search-cache.service';
  */
 export interface Attraction {
   name: string; // 오사카성
+  /**
+   * 영문·현지 공식명 (Osaka Castle). 카드에는 안 쓴다.
+   *
+   * **위키백과 영어판을 검색하려고 받는다.** 한국어 문서가 없는 관광지가 동남아에
+   * 특히 많은데(세부는 실측 0/5), 영문명이 있으면 영어판에서 사진을 찾을 수 있다.
+   * 이 필드 하나로 사진 커버리지가 62% → 87% 가 됐다.
+   */
+  nameEn?: string | null;
   citySlug: string;
   /** 역사/문화 · 자연 · 테마파크 · 거리/쇼핑 · 전망 · 미술관/박물관 · 음식 */
   category?: string | null;
@@ -43,6 +51,15 @@ export interface Attraction {
    * 이름+도시로 결정되는 값이라 같은 관광지는 항상 같은 URL 이 된다.
    */
   mapUrl: string;
+
+  /**
+   * 카드 썸네일. 위키백과에서 찾는다([attraction-image.ts](./attraction-image.ts)).
+   *
+   * ⚠️ **없을 수 있다.** 사진이 있는 관광지가 열에 아홉은 아니다(실측 87%).
+   *    없으면 그 줄만 사진 없이 나간다 — 호텔도 썸네일을 못 구하면 같은 모양이다.
+   *    사진을 못 구했다고 관광지를 목록에서 빼지는 않는다.
+   */
+  imageUrl?: string | null;
 
   source?: string; // ai | crawler | manual
   tags?: string[];

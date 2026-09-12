@@ -49,10 +49,18 @@ export interface AppConfig {
   flightCacheTtlMinutes: number;
   flightDefaultOriginName: string;
   flightDefaultOriginCode: string;
+  flightCardStyle: 'list' | 'carousel';
 
   attractionProvider: string;
   attractionResultLimit: number;
   attractionCacheTtlMinutes: number;
+  attractionImages: boolean;
+  attractionImageTimeoutMs: number;
+
+  moreButtonStyle: 'block' | 'message';
+  hotelBlockId: string;
+  flightBlockId: string;
+  attractionBlockId: string;
 
   hotelThumbnails: boolean;
   hotelThumbnailTimeoutMs: number;
@@ -136,12 +144,12 @@ export function loadConfig(): AppConfig {
     hotelThumbnailMaxBytes: num('HOTEL_THUMBNAIL_MAX_KB', 512) * 1024,
 
     hotelProvider: str('HOTEL_PROVIDER', 'openai'),
-    hotelResultLimit: num('HOTEL_RESULT_LIMIT', 5),
+    hotelResultLimit: num('HOTEL_RESULT_LIMIT', 10),
     searchCacheTtlMinutes: num('SEARCH_CACHE_TTL_MINUTES', 60),
 
     flightProvider: str('FLIGHT_PROVIDER', 'openai'),
     // 캐러셀은 10장까지 들어가지만, 5장을 넘기면 고르는 게 아니라 훑는 게 된다.
-    flightResultLimit: num('FLIGHT_RESULT_LIMIT', 5),
+    flightResultLimit: num('FLIGHT_RESULT_LIMIT', 10),
     // 호텔보다 짧게 잡는다. 항공 운임은 하루에도 몇 번 바뀌므로 한 시간 묵은 값은
     // 이미 틀렸을 가능성이 높다. 그래도 캐시를 아예 끄지는 않는다 —
     // 그러면 같은 노선을 물을 때마다 웹 검색 요금이 그대로 나간다.
@@ -150,14 +158,36 @@ export function loadConfig(): AppConfig {
     // 보고, 카드에 '서울 출발' 을 적어 사용자가 틀렸음을 바로 알 수 있게 한다.
     flightDefaultOriginName: str('FLIGHT_DEFAULT_ORIGIN_NAME', '서울'),
     flightDefaultOriginCode: str('FLIGHT_DEFAULT_ORIGIN_CODE', 'ICN'),
+    // ⚠️ **그룹챗봇(팀톡방)은 itemCard 를 못 그린다 — 말풍선이 통째로 사라진다.**
+    //    호텔·관광지가 같은 방에서 멀쩡한 건 listCard 라서다. 그래서 기본값이 list 다.
+    //    itemCard 는 정보 밀도가 훨씬 높으므로(항공사·가는편·오는편·소요·좌석 5줄),
+    //    일반 채널 챗봇을 따로 운영하게 되면 거기서는 carousel 로 되돌릴 수 있다.
+    flightCardStyle:
+      str('FLIGHT_CARD_STYLE', 'list') === 'carousel' ? 'carousel' : 'list',
 
     attractionProvider: str('ATTRACTION_PROVIDER', 'openai'),
     // listCard 는 5줄이 한계다. 그보다 크게 잡으면 검색만 비싸지고 잘려 나간다.
-    attractionResultLimit: num('ATTRACTION_RESULT_LIMIT', 5),
+    attractionResultLimit: num('ATTRACTION_RESULT_LIMIT', 10),
     // 호텔(60분)·항공권(30분)보다 훨씬 길다. 호텔 요금과 항공 운임은 시시각각
     // 바뀌지만 **오사카의 볼거리는 어제와 오늘이 같다.** 짧게 잡을수록 같은 답을
     // 다시 사는 셈이다. 입장료·휴관 정보가 바뀌는 주기를 생각해 하루로 둔다.
     attractionCacheTtlMinutes: num('ATTRACTION_CACHE_TTL_MINUTES', 1440),
+    // 카드 썸네일을 위키백과에서 찾을지. 끄면 사진 없는 예전 카드로 돌아간다.
+    attractionImages: bool('ATTRACTION_IMAGES', true),
+    // 콜백 경로에서만 도는 호출이라 5초 예산과 무관하다. 그래도 짧게 끊는 이유는
+    // 5곳을 동시에 찾기 때문이다 — 하나가 늘어지면 카드 전체가 그만큼 늦는다.
+    attractionImageTimeoutMs: Math.round(num('ATTRACTION_IMAGE_TIMEOUT_SECONDS', 3) * 1000),
+
+    // "더 보기" 버튼 방식. block 이면 extra 로 offset 을 실어 보낼 수 있어 N 페이지가
+    // 되고 서버가 상태를 안 들어도 된다.
+    // ⚠️ 그룹챗방에서 action:'block' 이 되는지 확인되지 않았다. itemCard 처럼 안 되면
+    //    message 로 내리면 된다 — 그 경우 다음 한 페이지까지만 간다.
+    moreButtonStyle: str('MORE_BUTTON_STYLE', 'block') === 'message' ? 'message' : 'block',
+    // 오픈빌더 블록 ID. block 버튼이 어느 블록을 부를지 가리킨다.
+    // 블록을 새로 만들면 ID 가 바뀐다 — 그때는 .env 를 고쳐야 버튼이 산다.
+    hotelBlockId: str('KAKAO_BLOCK_ID_HOTEL', '6a9398f895f722d77da02d42'),
+    flightBlockId: str('KAKAO_BLOCK_ID_FLIGHT', '6a957136fd013545b6516a99'),
+    attractionBlockId: str('KAKAO_BLOCK_ID_ATTRACTION', '6aa4162f8918b2f42808222f'),
   };
 }
 

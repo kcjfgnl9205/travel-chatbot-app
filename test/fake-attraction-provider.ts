@@ -61,10 +61,19 @@ const SPOTS: [string, string, string, boolean, number | null, number][] = [
   ['테스트 시장', '음식/시장', '난바', true, null, 60],
 ];
 
+/**
+ * 사진이 **일부만** 채워진다 (6곳 중 4곳).
+ *
+ * 진짜 provider 도 그렇다 — 위키백과에 문서가 없는 관광지가 있어서 실측 87%다.
+ * 전부 채워 두면 "사진 없는 줄이 섞여도 카드가 나간다" 를 테스트가 못 잡는다.
+ */
+const NO_IMAGE = new Set(['테스트 공원', '테스트 시장']);
+
 /** 5줄 제한을 넘겨서 자르기까지 검증되도록 6곳을 준다. */
 export function defaultAttractions(query: AttractionQuery): Attraction[] {
   return SPOTS.map(([name, category, area, free, fee, minutes]) => ({
     name: `${query.cityName} ${name}`,
+    nameEn: `${query.citySlug} ${name}`,
     citySlug: query.citySlug,
     category,
     area,
@@ -75,6 +84,9 @@ export function defaultAttractions(query: AttractionQuery): Attraction[] {
     durationMinutes: minutes,
     // provider 가 직접 만든다 — 실제 provider 와 같은 방식이라야 링크 검증이 의미 있다.
     mapUrl: mapsUrl(`${query.cityName} ${name}`, query.cityName),
+    imageUrl: NO_IMAGE.has(name)
+      ? null
+      : `https://upload.wikimedia.org/wikipedia/commons/a/a1/${encodeURIComponent(name)}.jpg`,
     source: 'ai',
     tags: ['테스트'],
   }));
