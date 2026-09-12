@@ -6,7 +6,7 @@ import { HotelService } from '../src/modules/hotel/hotel.service';
 import { NluService } from '../src/modules/nlu/nlu.service';
 import { SearchCacheService } from '../src/modules/search-cache/search-cache.service';
 import * as t from '../src/modules/kakao/templates';
-import { FakeHotelProvider } from './fake-provider';
+import { FakeHotelProvider, defaultHotels } from './fake-provider';
 import {
   RECOMMEND,
   callbackReceiver,
@@ -92,26 +92,45 @@ describe('카카오 호텔 스킬', () => {
       expect(hanoi).toHaveLength(1);
     });
 
-    it('빈손으로 끝난 도시를 연타해도 검색은 한 번만 나간다', async () => {
+    it('빈손으로 끝난 도시를 연타해도 검색은 두 번에서 멈춘다', async () => {
       // 빈 결과는 캐시에 안 남는다. 그것만 두면 오타 연타가 그대로 OpenAI 요금이 된다.
+      // ⚠️ 두 번인 이유: 한 번으로 굳히면 **모델이 한 번 헛돈 게 10분짜리 장애**가 된다.
+      //    실제로 "도쿄 호텔" 이 그래서 10분 동안 "찾지 못했어요" 만 나왔다.
       provider.reply = () => [];
 
-      for (let i = 0; i < 4; i += 1) {
+      for (let i = 0; i < 5; i += 1) {
         const res = await post(kakaoPayload('asdf 호텔 추천해줘')).expect(201);
         expect(textOf(res.body)).toBeTruthy();
         await new Promise((r) => setTimeout(r, 20));
       }
 
-      expect(provider.calls.filter((c) => c.cityName === 'asdf')).toHaveLength(1);
+      expect(provider.calls.filter((c) => c.cityName === 'asdf')).toHaveLength(2);
     });
 
-    it('연타 2회째부터는 못 찾았다고 바로 답한다', async () => {
-      provider.reply = () => [];
+    it('한 번 비었다고 바로 굳히지 않는다 — 두 번째는 다시 찾아본다', async () => {
+      // 첫 번째만 비고 두 번째에 결과가 나오는 상황(모델 변동성)을 흉내 낸다.
+      let attempt = 0;
+      provider.reply = (query) => (attempt++ === 0 ? [] : defaultHotels(query));
+
       await post(kakaoPayload('zxcv 호텔 추천해줘')).expect(201);
       await new Promise((r) => setTimeout(r, 50));
 
+      // 굳었다면 여기서 검색조차 안 하고 "찾지 못했어요" 가 나온다.
+      const card = await recommendUntilCard(app, 'zxcv 호텔 추천해줘');
+      expect(card.items.length).toBeGreaterThan(0);
+    });
+
+    it('두 번 다 비면 그때는 굳는다 — 진짜 없는 도시다', async () => {
+      provider.reply = () => [];
+      for (let i = 0; i < 2; i += 1) {
+        await post(kakaoPayload('zxcv 호텔 추천해줘')).expect(201);
+        await new Promise((r) => setTimeout(r, 50));
+      }
+
+      const before = provider.calls.length;
       const res = await post(kakaoPayload('zxcv 호텔 추천해줘')).expect(201);
       expect(textOf(res.body)).toContain('찾지 못했어요');
+      expect(provider.calls).toHaveLength(before); // 검색을 안 했다
     });
 
     it('캐시에 있으면 provider 를 아예 안 부른다', async () => {

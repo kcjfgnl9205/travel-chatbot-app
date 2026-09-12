@@ -127,6 +127,8 @@ export class HotelService {
    * 검색 결과 캐시보다 훨씬 짧게, 연타만 막을 만큼만 기억한다.
    */
   private readonly recentlyEmpty = new Map<string, number>();
+  /** 빈 결과를 한 번 받은 키. 두 번째에 recentlyEmpty 로 승격된다. */
+  private readonly emptyOnce = new Map<string, number>();
 
   constructor(
     @Inject(CONFIG) private readonly config: AppConfig,
@@ -265,7 +267,7 @@ export class HotelService {
       if (hotels.length) {
         await this.searchCache.store(DOMAIN, this.provider.name, hotelCacheKey(query), hotels);
       } else {
-        this.rememberEmpty(key);
+        this.noteEmpty(key);
       }
       return hotels;
     })().finally(() => this.inFlight.delete(key));
@@ -283,6 +285,26 @@ export class HotelService {
     return false;
   }
 
+  /**
+   * 빈 결과를 **두 번 연속** 받았을 때만 굳힌다.
+   *
+   * ⚠️ 한 번으로 굳히면 **모델이 한 번 헛돈 것이 10분짜리 장애가 된다.**
+   *    실제로 "도쿄 호텔 추천해줘" 가 그랬다 — 진단으로 같은 검색을 돌리면 결과가
+   *    나오는데(캐시·메모를 안 타므로), 스킬 경로는 10분 내내 "찾지 못했어요" 였다.
+   *    도쿄에 호텔이 없을 리 없으니 그건 도시 문제가 아니라 모델 변동성이다.
+   *
+   * 이 메모가 있는 이유는 **오타 연타가 곧 요금**이기 때문이다. 진짜 없는 도시는
+   * 두 번 물어도 두 번 다 비므로 그때 굳으면 충분하다. 대가는 검색 한 번 더다.
+   */
+  private noteEmpty(key: string): void {
+    if (this.emptyOnce.delete(key)) {
+      this.rememberEmpty(key);
+      return;
+    }
+    this.emptyOnce.set(key, Date.now() + EMPTY_RESULT_TTL_MS);
+    this.logger.log(`empty once (아직 안 굳힌다) key=${key}`);
+  }
+
   private rememberEmpty(key: string): void {
     // 가장 오래된 항목부터 버린다 (Map 은 삽입 순서를 지킨다).
     if (this.recentlyEmpty.size >= EMPTY_RESULT_MAX_ENTRIES) {
@@ -295,6 +317,7 @@ export class HotelService {
   /** 테스트·운영 점검용. 빈 결과 기억을 지운다. */
   forgetEmpty(): void {
     this.recentlyEmpty.clear();
+    this.emptyOnce.clear();
   }
 
   /**

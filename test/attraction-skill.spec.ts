@@ -78,15 +78,16 @@ describe('카카오 관광지 스킬', () => {
       expect(provider.calls.filter((c) => c.citySlug === 'danang')).toHaveLength(1);
     });
 
-    it('빈손으로 끝난 도시를 연타해도 검색은 한 번만 나간다', async () => {
+    it('빈손으로 끝난 도시를 연타해도 검색은 두 번에서 멈춘다', async () => {
       provider.reply = () => [];
 
-      for (let i = 0; i < 4; i += 1) {
+      // ⚠️ 두 번인 이유: 한 번으로 굳히면 모델이 한 번 헛돈 게 10분짜리 장애가 된다.
+      for (let i = 0; i < 5; i += 1) {
         await post(kakaoPayload('asdf 관광지 추천해줘')).expect(201);
         await new Promise((r) => setTimeout(r, 20));
       }
 
-      expect(provider.calls.filter((c) => c.citySlug === 'asdf')).toHaveLength(1);
+      expect(provider.calls.filter((c) => c.citySlug === 'asdf')).toHaveLength(2);
     });
 
     it('캐시에 있으면 provider 를 아예 안 부른다', async () => {

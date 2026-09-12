@@ -84,12 +84,13 @@ describe('카카오 항공권 스킬', () => {
       // 빈 결과는 캐시에 안 남는다. 그것만 두면 오타 연타가 그대로 OpenAI 요금이 된다.
       provider.reply = () => [];
 
-      for (let i = 0; i < 4; i += 1) {
+      // ⚠️ 두 번인 이유: 한 번으로 굳히면 모델이 한 번 헛돈 게 10분짜리 장애가 된다.
+      for (let i = 0; i < 5; i += 1) {
         await post(kakaoPayload('asdf 항공권 찾아줘')).expect(201);
         await new Promise((r) => setTimeout(r, 20));
       }
 
-      expect(provider.calls.filter((c) => c.destSlug === 'asdf')).toHaveLength(1);
+      expect(provider.calls.filter((c) => c.destSlug === 'asdf')).toHaveLength(2);
     });
 
     it('캐시에 있으면 provider 를 아예 안 부른다', async () => {
