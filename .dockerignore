@@ -1,0 +1,24 @@
+# 빌드 컨텍스트에서 뺄 것.
+#
+# Dockerfile 이 경로를 하나씩 COPY 하므로 지금도 이미지에 시크릿이 들어가지는 않는다.
+# 그래도 이 파일을 두는 이유는 **나중에 누가 `COPY . .` 로 바꿨을 때**다 — 그 한 줄이면
+# .env 가 이미지 레이어에 박히고, 이미지를 가진 사람은 누구나 읽는다.
+
+.git
+.github
+node_modules
+dist
+coverage
+*.log
+
+# 시크릿. .env.example 만 예외 — 테스트가 읽는다 (env-example.spec.ts).
+.env
+.env.*
+!.env.example
+
+# 이미지에 필요 없는 것들. 빌드 컨텍스트만 커진다.
+deploy
+docs
+supabase
+README.md
+travelmate-spec.md
