@@ -38,7 +38,6 @@ export interface AppConfig {
   openaiParseModel: string;
   openaiParseEffort: string;
   openaiParseTimeoutMs: number;
-  nluAliasTtlMinutes: number;
 
   intentCacheTtlMinutes: number;
 
@@ -135,8 +134,10 @@ export function loadConfig(): AppConfig {
     // 2.5초는 너무 빡빡했다 — 실제 gpt-5 계열은 이 정도로는 못 끝낸다.
     // 넘기면 되묻기로 떨어지므로, 5초 예산이 허락하는 만큼은 기다려준다.
     openaiParseTimeoutMs: Math.round(num('OPENAI_PARSE_TIMEOUT_SECONDS', 4) * 1000),
-    // 같은 문장을 두 번 파싱하지 않는다. 이게 없으면 매 메시지가 유료가 된다.
-    nluAliasTtlMinutes: num('NLU_ALIAS_TTL_MINUTES', 1440),
+    // ⚠️ NLU_ALIAS_TTL_MINUTES 는 없앴다. 지역 별칭("동경"→도쿄)은 시간이 지나도
+    //    변하지 않는 사실이라 만료시킬 이유가 없고(PlacesService 참고), 문장 해석
+    //    캐시는 INTENT_CACHE_TTL_MINUTES 가 맡는다. 읽지 않는 knob 을 남겨두면
+    //    사람이 그걸 돌려보며 원인을 찾는다.
     // 단톡방은 같은 문장이 반복된다. 일주일이면 유행하는 질문 하나를 한 번만 산다.
     intentCacheTtlMinutes: num('INTENT_CACHE_TTL_MINUTES', 10080),
 
