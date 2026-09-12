@@ -391,7 +391,8 @@ export class AttractionService {
         // (환율 API 를 붙여 원화로 확정할 수 있게 되면 그때 채우면 된다)
         price_from: null,
         merchant: null,
-        thumbnail_url: null,
+        // 위키백과에서 찾은 사진. 못 구한 관광지는 null 이다 (실측 87% 가 채워진다).
+        thumbnail_url: attraction.imageUrl ?? null,
         source_url: attraction.mapUrl,
         target_url: targetUrl,
       });
@@ -411,6 +412,9 @@ export class AttractionService {
         t.listItem({
           title: attraction.name,
           description: listDescription(attraction),
+          // 없으면 listItem 이 알아서 뺀다 — 그 줄만 사진 없이 나간다.
+          // 호텔도 썸네일을 못 구하면 같은 모양이라 새로운 상태는 아니다.
+          imageUrl: attraction.imageUrl,
           linkUrl: redirectUrl(this.config, clickId),
         }),
       );
@@ -422,7 +426,7 @@ export class AttractionService {
     return t.listCard({
       headerTitle: `${query.cityName} 관광지 ${listItems.length}곳`,
       items: listItems,
-      buttons: [t.messageButton('다른 도시 보기', '관광지 추천해줘')],
+      buttons: buttonsFor(attractions),
       quickReplies: this.cityQuickReplies(query.citySlug),
     });
   }
@@ -460,4 +464,27 @@ export class AttractionService {
       t.quickReply(`${c.nameKo} 관광지`, `${c.nameKo} 관광지 추천해줘`),
     );
   }
+}
+
+/** 위키미디어 공용의 라이선스 안내. 출처 버튼이 여기로 간다. */
+const PHOTO_CREDIT_URL = 'https://commons.wikimedia.org/wiki/Commons:Licensing';
+
+/**
+ * 카드 하단 버튼. listCard 는 2개가 한계다.
+ *
+ * 사진이 한 장이라도 실렸을 때만 출처 버튼을 단다. 위키미디어 사진은 대부분
+ * CC BY-SA 라 저작자 표시가 필요한데, listCard 한 줄에는 링크가 하나뿐이고
+ * 그 자리는 지도가 써야 한다(클릭 추적). 줄마다 출처를 달 자리가 없어서
+ * 카드 단위로 밝힌다.
+ *
+ * ⚠️ **엄밀한 의미의 CC BY-SA 표시는 아니다.** 저작자와 라이선스를 사진마다
+ *    밝히는 게 원칙이고, 이건 출처가 어디인지만 알린다. 사진을 카드 밖(웹·앱)에서
+ *    쓰게 되면 그때는 제대로 된 표시가 필요하다.
+ */
+export function buttonsFor(attractions: Attraction[]): t.Json[] {
+  const buttons = [t.messageButton('다른 도시 보기', '관광지 추천해줘')];
+  if (attractions.some((a) => a.imageUrl)) {
+    buttons.push(t.webLinkButton('사진 출처: 위키미디어', PHOTO_CREDIT_URL));
+  }
+  return buttons;
 }

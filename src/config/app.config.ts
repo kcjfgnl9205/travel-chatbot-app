@@ -53,6 +53,8 @@ export interface AppConfig {
   attractionProvider: string;
   attractionResultLimit: number;
   attractionCacheTtlMinutes: number;
+  attractionImages: boolean;
+  attractionImageTimeoutMs: number;
 
   hotelThumbnails: boolean;
   hotelThumbnailTimeoutMs: number;
@@ -158,6 +160,11 @@ export function loadConfig(): AppConfig {
     // 바뀌지만 **오사카의 볼거리는 어제와 오늘이 같다.** 짧게 잡을수록 같은 답을
     // 다시 사는 셈이다. 입장료·휴관 정보가 바뀌는 주기를 생각해 하루로 둔다.
     attractionCacheTtlMinutes: num('ATTRACTION_CACHE_TTL_MINUTES', 1440),
+    // 카드 썸네일을 위키백과에서 찾을지. 끄면 사진 없는 예전 카드로 돌아간다.
+    attractionImages: bool('ATTRACTION_IMAGES', true),
+    // 콜백 경로에서만 도는 호출이라 5초 예산과 무관하다. 그래도 짧게 끊는 이유는
+    // 5곳을 동시에 찾기 때문이다 — 하나가 늘어지면 카드 전체가 그만큼 늦는다.
+    attractionImageTimeoutMs: Math.round(num('ATTRACTION_IMAGE_TIMEOUT_SECONDS', 3) * 1000),
   };
 }
 

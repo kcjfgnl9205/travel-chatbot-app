@@ -181,6 +181,9 @@ export class AttractionDebugController {
           parseMs,
           searchMs: result.trace.searchMs,
           rankMs: result.trace.rankMs,
+          // 위키백과 5곳을 동시에 찾은 시간. 전체에서 차지하는 몫이 크면
+          // ATTRACTION_IMAGE_TIMEOUT_SECONDS 를 줄이거나 사진을 끌 근거가 된다.
+          imageMs: result.trace.imageMs,
           totalMs: parseMs + result.trace.totalMs,
         },
         counts: {
@@ -190,6 +193,10 @@ export class AttractionDebugController {
           picks: result.trace.picks,
           droppedInvalid: result.trace.droppedInvalid,
           attractions: result.trace.attractions,
+          // 사진을 찾은 수와 언어판별 내역. ko 만 나오고 en 이 0 이면 모델이
+          // 영문명을 안 채우고 있다는 뜻이다 (동남아 커버리지가 거기서 갈린다).
+          images: result.trace.images,
+          imageLangs: result.trace.imageLangs,
           // 카테고리가 쏠렸는지. 전부 같으면 선별 프롬프트가 안 먹은 것이다.
           categories: countBy(result.attractions.map((a) => a.category ?? '미분류')),
           free: result.attractions.filter((a) => a.free).length,
@@ -207,11 +214,20 @@ export class AttractionDebugController {
           tags: a.tags,
           // 실제로 열릴 지도 링크. 붙여 넣어 엉뚱한 곳이 아닌지 확인할 수 있다.
           mapUrl: a.mapUrl,
+          // 사진 검색에 쓴 영문명과 그 결과. imageUrl 을 붙여 넣어 **그 장소가 맞는지**
+          // 눈으로 봐야 한다 — 엉뚱한 사진은 사진이 없는 것보다 나쁘다.
+          nameEn: a.nameEn,
+          imageUrl: a.imageUrl ?? null,
           // 카카오 카드에 실제로 찍힐 문구. 40자 제한에 걸리는지 눈으로 확인.
           cardDescription: listDescription(a),
         })),
         candidates: isTrue(candidates) ? result.candidates : null,
-        hint: hintFor(openai.enabled, result.attractions.length, result.trace.searchCalls),
+        hint: hintFor(
+          openai.enabled,
+          result.attractions.length,
+          result.trace.searchCalls,
+          result.trace.images,
+        ),
         error: null,
       });
     } catch (err) {
@@ -278,6 +294,7 @@ export function hintFor(
   enabled: boolean,
   attractions: number,
   searchCalls: number,
+  images = -1,
 ): string | null {
   if (!enabled) return 'OPENAI_API_KEY 가 없습니다. 검색이 아예 시도되지 않습니다.';
   if (!attractions) {
@@ -292,6 +309,15 @@ export function hintFor(
       '모델이 web_search 를 한 번도 안 돌리고 기억으로 답했습니다. 관광지는 URL 을 ' +
       '모델에게 받지 않아 링크가 깨질 위험은 없지만, **입장료와 폐관 여부가 낡을 수 있습니다** — ' +
       'OPENAI_SEARCH_EFFORT 를 올리거나 프롬프트의 검색 지시를 확인하세요.'
+    );
+  }
+  // 사진은 원래 다 채워지지 않는다(실측 87%). 하지만 **한 장도 없으면** 개별
+  // 관광지 문제가 아니라 경로 전체가 막힌 것이다 — 네트워크·UA 차단·설정 OFF.
+  if (images === 0) {
+    return (
+      '사진을 한 장도 못 찾았습니다. 관광지마다 없을 수는 있어도 전부 없는 건 ' +
+      '경로가 막힌 것입니다 — ATTRACTION_IMAGES 설정, 서버의 ko.wikipedia.org ' +
+      '아웃바운드, counts.imageLangs 를 확인하세요.'
     );
   }
   return null;

@@ -3,6 +3,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { mapsUrl } from '../../../common/maps-url';
 import { AppConfig, CONFIG } from '../../../config/app.config';
 import { OpenAiService, parseJsonLoose } from '../../openai/openai.service';
+import { FoundImage, findAttractionImage } from '../attraction-image';
 import { Attraction, AttractionProvider, AttractionQuery } from '../attraction.types';
 
 /**
@@ -40,6 +41,10 @@ const SEARCH_INSTRUCTIONS = [
   '영문명을 쓰지 마라. 한국인이 부르는 이름이 있으면 그것을 쓴다 (Osaka Castle → 오사카성).',
   '이름에 설명·영문 병기·슬래시·부연을 붙이지 마라. 지도에서 검색되는 이름 그대로여야 한다.',
   '이름이 20자를 넘지 않게 한다. 길면 카드에서 잘린다.',
+  // 카드에는 안 쓰이는 값이다. 위키백과 영어판에서 사진을 찾는 데만 쓴다 —
+  // 한국어 문서가 없는 관광지(동남아에 특히 많다)는 영문명이 유일한 단서다.
+  '영문명(name_en)은 **영어 위키백과에 실릴 만한 공식 표기**로 따로 적는다 (Magellan\'s Cross).',
+  '영문명을 모르면 지어내지 말고 null 로 둔다.',
   // ⚠️ 환산을 시켰더니 1,200엔 오사카성이 '5,760원', 2,700엔 카이유칸이 '2,700원'
   //    으로 나왔다. 모델은 환율 계산을 못한다. 적힌 숫자를 옮기는 것만 시킨다.
   '입장료는 성인 1인 기준을 **현지 통화 그대로** 적고 통화 코드(JPY, THB …)를 함께 낸다.',
@@ -102,6 +107,7 @@ export const ATTRACTION_CANDIDATE_SCHEMA = {
           additionalProperties: false,
           required: [
             'name',
+            'name_en',
             'category',
             'area',
             'free',
@@ -112,6 +118,13 @@ export const ATTRACTION_CANDIDATE_SCHEMA = {
           ],
           properties: {
             name: { type: 'string', description: '관광지명 (한국어 표기, 장소 이름만)' },
+            // ⚠️ **1차에 이 필드가 없으면 2차는 절대 못 채운다.** 2차는 "후보에 없는
+            //    건 null" 규칙을 지키기 때문이다. duration_minutes 와 호텔 썸네일이
+            //    정확히 이 이유로 항상 null 이었다. 새 필드는 두 스키마를 같이 본다.
+            name_en: {
+              type: ['string', 'null'],
+              description: '영어 위키백과에 실릴 만한 공식 영문명. 모르면 null',
+            },
             category: { type: ['string', 'null'], enum: [...CATEGORIES, null] },
             area: {
               type: ['string', 'null'],
@@ -157,6 +170,7 @@ export const ATTRACTION_SCHEMA = {
           additionalProperties: false,
           required: [
             'name',
+            'name_en',
             'category',
             'area',
             'description',
@@ -172,6 +186,12 @@ export const ATTRACTION_SCHEMA = {
               description:
                 '관광지명. **한국어 표기**로 장소 이름만 (20자 이내). 영문명·설명·괄호 금지. ' +
                 '이 값이 그대로 카드 제목이자 구글맵 검색어가 된다',
+            },
+            name_en: {
+              type: ['string', 'null'],
+              description:
+                '공식 영문명 (Osaka Castle, Magellan\'s Cross). 카드에는 안 쓰고 ' +
+                '사진 검색에만 쓴다. 후보에 있으면 그 값을, 없으면 아는 대로 채운다. 모르면 null',
             },
             category: { type: ['string', 'null'], enum: [...CATEGORIES, null] },
             area: {
@@ -217,6 +237,7 @@ const RANK_INSTRUCTIONS = [
   // duration 만 예외인 이유: "보통 얼마나 걸리나" 는 사실 확인 대상이 아니라 상식이다.
   // 이 예외를 안 적으면 "후보에 없으면 null" 규칙에 걸려 소요 시간이 전부 비어 나간다.
   '소요 시간은 예외다 — 후보에 없어도 일반적인 관람 시간을 추정해서 채운다.',
+  '영문명(name_en)도 예외다 — 후보에 없어도 아는 공식 영문명이 있으면 채운다.',
   // 이걸 안 시키면 신사 다섯 곳, 전망대 다섯 곳이 나온다.
   '**카테고리를 반드시 섞어라.** 같은 성격의 장소를 연달아 고르지 않는다.',
   '처음 가는 사람 기준으로, 그 도시에 갔으면 봐야 할 곳을 앞에 둔다.',
@@ -240,6 +261,11 @@ export interface AttractionSearchTrace {
   /** 이름이 없어서 버린 수. 관광지는 URL 검증이 없으므로 이게 유일한 탈락 사유다. */
   droppedInvalid: number;
   attractions: number;
+  /** 위키백과에서 사진을 찾은 수. 전부 채워지지 않는 게 정상이다(실측 87%). */
+  images: number;
+  /** 언어판별 성공 수 (ko / en). 영문명을 받는 게 값을 하는지 여기서 보인다. */
+  imageLangs: Record<string, number>;
+  imageMs: number;
 }
 
 export interface TracedAttractionSearch {
@@ -252,6 +278,7 @@ export interface TracedAttractionSearch {
 interface RawPick {
   name?: unknown;
   category?: unknown;
+  name_en?: unknown;
   area?: unknown;
   description?: unknown;
   free?: unknown;
@@ -288,6 +315,9 @@ export class OpenAiAttractionProvider implements AttractionProvider {
       picks: 0,
       droppedInvalid: 0,
       attractions: 0,
+      images: 0,
+      imageLangs: {},
+      imageMs: 0,
     };
     const done = (
       attractions: Attraction[],
@@ -309,7 +339,60 @@ export class OpenAiAttractionProvider implements AttractionProvider {
     const picks = await this.rank(query, candidates, trace);
     trace.picks = picks.length;
 
-    return done(this.toAttractions(picks, query, trace), candidates);
+    const attractions = this.toAttractions(picks, query, trace);
+    return done(await this.withImages(attractions, query, trace), candidates);
+  }
+
+  // ------------------------------------------------------ 3차: 대표 이미지
+  /**
+   * 카드에 넣을 사진을 위키백과에서 찾는다.
+   *
+   * 모델에게 이미지 주소를 묻지 않는다 — 호텔에서 확인했듯 그럴듯한 CDN 주소를
+   * 지어내고, 그건 카드에 깨진 자리만 남긴다. 구조화된 API 에서 받아오면
+   * 지어낼 자리가 없다(지도 링크를 우리가 만드는 것과 같은 이유다).
+   *
+   * 콜백 경로에서만 도는 코드라 5초 예산과 무관하다. 5곳을 **동시에** 찾고,
+   * 결과는 검색 캐시에 같이 저장되므로 같은 도시를 다시 물어도 API 를 또 치지 않는다.
+   *
+   * ⚠️ 실패는 조용히 넘긴다. 사진은 있으면 좋은 것이지 없으면 안 되는 것이 아니다 —
+   *    위키백과가 느리다고 관광지 추천이 통째로 실패하면 안 된다.
+   */
+  private async withImages(
+    attractions: Attraction[],
+    query: AttractionQuery,
+    trace: AttractionSearchTrace,
+  ): Promise<Attraction[]> {
+    if (!this.config.attractionImages || !attractions.length) return attractions;
+
+    const started = Date.now();
+    // 영어판 검색어에 쓸 도시명. 슬러그가 이미 영문이다 (ho-chi-minh → ho chi minh).
+    const cityNameEn = query.citySlug.replace(/-/g, ' ');
+
+    const resolved = await Promise.all(
+      attractions.map(async (attraction) => {
+        const found: FoundImage | null = await findAttractionImage(
+          attraction.name,
+          attraction.nameEn,
+          query.cityName,
+          cityNameEn,
+          this.config.attractionImageTimeoutMs,
+        );
+        if (!found) {
+          this.logger.log(`no image attraction=${attraction.name}`);
+          return attraction;
+        }
+
+        trace.images += 1;
+        trace.imageLangs[found.lang] = (trace.imageLangs[found.lang] ?? 0) + 1;
+        this.logger.log(
+          `image ${found.lang} attraction=${attraction.name} doc=${found.title}`,
+        );
+        return { ...attraction, imageUrl: found.url };
+      }),
+    );
+
+    trace.imageMs = Date.now() - started;
+    return resolved;
   }
 
   // -------------------------------------------------- 1차: 웹 검색으로 후보 수집
@@ -423,6 +506,8 @@ export class OpenAiAttractionProvider implements AttractionProvider {
 
       attractions.push({
         name,
+        // 카드에는 안 쓴다. 위키백과 영어판 검색어로만 쓰인다.
+        nameEn: text(pick.name_en),
         citySlug: query.citySlug,
         category: category(pick.category),
         area: area(pick.area, query.cityName),
