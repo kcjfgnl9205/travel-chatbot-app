@@ -49,15 +49,12 @@ export interface AppConfig {
   /** pending 을 꽂아둔 채 죽은 검색을 다른 요청이 되찾아가기까지의 시간. */
   pendingTimeoutSeconds: number;
 
-  hotelProvider: string;
   hotelCacheTtlMinutes: number;
 
-  flightProvider: string;
   flightCacheTtlMinutes: number;
   flightDefaultOriginName: string;
   flightDefaultOriginCode: string;
 
-  attractionProvider: string;
   attractionCacheTtlMinutes: number;
   attractionImages: boolean;
   attractionImageTimeoutMs: number;
@@ -159,11 +156,13 @@ export function loadConfig(): AppConfig {
     // 예약 페이지는 200~400KB 다. 이미지 주소는 앞쪽에 있으므로 다 읽을 이유가 없다.
     hotelThumbnailMaxBytes: num('HOTEL_THUMBNAIL_MAX_KB', 512) * 1024,
 
-    hotelProvider: str('HOTEL_PROVIDER', 'openai'),
+    // ⚠️ HOTEL_PROVIDER / FLIGHT_PROVIDER / ATTRACTION_PROVIDER 는 없앴다.
+    //    provider 는 모듈이 DI 로 꽂는다(지금은 openai 하나뿐). 설정으로 읽는 척만
+    //    하고 있어서 .env 에 static 이라고 적어두면 OpenAI 를 부르면서 static 이라고
+    //    보고했다. 소스를 바꾸려면 모듈을 고쳐야 하고, 실제 값은 /health 가 찍는다.
     // 호텔 요금은 하루 사이에도 바뀐다. 하루가 그 변동과 AI 호출 비용의 타협점이다.
     hotelCacheTtlMinutes: num('HOTEL_CACHE_TTL_MINUTES', 1440),
 
-    flightProvider: str('FLIGHT_PROVIDER', 'openai'),
     // 운임은 하루에도 몇 번 바뀐다. 그래도 캐시를 끄지는 않는다 —
     // 그러면 같은 노선을 물을 때마다 웹 검색 요금이 그대로 나간다.
     flightCacheTtlMinutes: num('FLIGHT_CACHE_TTL_MINUTES', 360),
@@ -172,7 +171,6 @@ export function loadConfig(): AppConfig {
     flightDefaultOriginName: str('FLIGHT_DEFAULT_ORIGIN_NAME', '서울'),
     flightDefaultOriginCode: str('FLIGHT_DEFAULT_ORIGIN_CODE', 'ICN'),
 
-    attractionProvider: str('ATTRACTION_PROVIDER', 'openai'),
     // 호텔 요금·항공 운임과 달리 **오사카의 볼거리는 어제와 오늘이 같다.**
     // 짧게 잡을수록 같은 답을 다시 사는 셈이라 30일로 둔다.
     attractionCacheTtlMinutes: num('ATTRACTION_CACHE_TTL_MINUTES', 43200),

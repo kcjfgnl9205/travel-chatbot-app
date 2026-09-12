@@ -84,6 +84,11 @@ export class FlightService implements SearchDomain<Flight> {
     private readonly memory: MemoryStoreService,
   ) {}
 
+  /** 실제로 붙어 있는 데이터 소스. 설정값이 아니라 주입된 구현이 답이다 (/health). */
+  get providerName(): string {
+    return this.provider.name;
+  }
+
   /** ⚠️ 느리다(7~30초). 백그라운드에서만 부른다. */
   async search(ctx: SearchContext): Promise<Flight[]> {
     const flights = await this.provider.search(this.queryOf(ctx));
