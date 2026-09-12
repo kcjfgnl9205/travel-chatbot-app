@@ -139,7 +139,6 @@ export class HotelDebugController {
                     messageText: '오사카 호텔 더 보기',
                     extra: { city: '오사카', offset: 5 },
                   },
-                  { label: '다른 도시 보기', action: 'message', messageText: '호텔 추천해줘' },
                 ],
               },
             },

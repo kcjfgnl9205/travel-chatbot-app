@@ -169,14 +169,14 @@ describe('카카오 관광지 스킬', () => {
       expect(labels).toContain('사진 출처: 위키미디어');
     });
 
-    it('⚠️ 버튼은 2개가 한계다 — 더 보기 > 사진 출처 > 다른 도시 보기 순으로 남는다', async () => {
-      // 도시 바로가기는 quickReplies 가 이미 하고 있어서 버튼 자리를 쓸 이유가 가장 적다.
+    it('버튼은 더 보기 · 사진 출처 둘뿐이다', async () => {
+      // 예전 '다른 도시 보기' 는 도시 없는 문장을 보내 되묻기만 나왔다.
+      // 도시 전환은 quickReplies 가 이미 한다.
       const card = await attractionsUntilCard(app, '오사카 관광지 추천해줘');
-      const labels = card.buttons.map((b: any) => b.label);
-
-      expect(labels).toHaveLength(2);
-      expect(labels[0]).toBe('더 보기');
-      expect(labels[1]).toBe('사진 출처: 위키미디어');
+      expect(card.buttons.map((b: any) => b.label)).toEqual([
+        '더 보기',
+        '사진 출처: 위키미디어',
+      ]);
     });
 
     it('"더 보기" 를 누르면 다음 관광지가 나온다', async () => {
@@ -200,7 +200,7 @@ describe('카카오 관광지 스킬', () => {
       const card = await attractionsUntilCard(app, '삿포로 관광지 추천해줘');
       const labels = card.buttons.map((b: any) => b.label);
       expect(labels).not.toContain('사진 출처: 위키미디어');
-      expect(labels).toContain('다른 도시 보기');
+      expect(labels).toEqual(['더 보기']);
     });
 
     it('같은 곳이 두 번 오면 하나만 나간다', async () => {

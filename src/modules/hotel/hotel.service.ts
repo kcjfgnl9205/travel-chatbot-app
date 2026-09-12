@@ -517,25 +517,26 @@ export class HotelService {
   }
 
   /**
-   * 카드 하단 버튼. listCard 는 2개가 한계다.
-   * "더 보기" 는 **다음 페이지가 남아 있을 때만** 단다 — 없는데 달면 눌러도 같은
-   * 5곳이 다시 나오고, 사용자는 그걸 고장으로 읽는다.
+   * 카드 하단 버튼. **"더 보기" 하나뿐이고, 다음 페이지가 있을 때만 단다.**
+   *
+   * 예전 '다른 도시 보기' 는 뺐다. 누르면 도시 없는 문장("호텔 추천해줘")이 가서
+   * 되묻기만 나왔다 — **호텔이 안 나오는 버튼**이었다. 도시 전환은 quickReplies 가
+   * 이미 하고 있으므로(도쿄 호텔 · 오사카 호텔 …) 두 칸뿐인 버튼 자리를 쓸 이유가 없다.
+   *
+   * 남은 게 없으면 버튼이 아예 없다. 그게 맞다 — 눌러도 같은 5곳이 다시 나오면
+   * 사용자는 그걸 고장으로 읽는다.
    */
   private buttonsFor(query: HotelQuery, total: number, start: number): t.Json[] {
-    const buttons: t.Json[] = [];
-    if (hasNextPage(total, start)) {
-      buttons.push(
-        moreButton({
-          style: this.config.moreButtonStyle,
-          blockId: this.config.hotelBlockId,
-          messageText: `${query.cityName} 호텔 더 보기`,
-          cityName: query.cityName,
-          nextOffset: start + PAGE_SIZE,
-        }),
-      );
-    }
-    buttons.push(t.messageButton('다른 도시 보기', '호텔 추천해줘'));
-    return buttons.slice(0, t.MAX_LIST_BUTTONS);
+    if (!hasNextPage(total, start)) return [];
+    return [
+      moreButton({
+        style: this.config.moreButtonStyle,
+        blockId: this.config.hotelBlockId,
+        messageText: `${query.cityName} 호텔 더 보기`,
+        cityName: query.cityName,
+        nextOffset: start + PAGE_SIZE,
+      }),
+    ];
   }
 
   cityQuickReplies(exclude?: string | null): t.Json[] {

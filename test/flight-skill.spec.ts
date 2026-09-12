@@ -216,8 +216,8 @@ describe('카카오 항공권 스킬', () => {
       expect(card.header.title).toContain('6~');
       const firstTitles = first.map((r: any) => r.title);
       for (const row of card.items) expect(firstTitles).not.toContain(row.title);
-      // 마지막 페이지라 "더 보기" 가 없어야 한다.
-      expect(card.buttons.map((b: any) => b.label)).not.toContain('더 보기');
+      // 마지막 페이지라 버튼이 아예 없어야 한다 — 달 게 '더 보기' 뿐이었다.
+      expect(card.buttons).toBeUndefined();
     });
 
     it('같은 편이 두 번 오면 하나만 나간다 — 주소가 아니라 편명으로 판정한다', async () => {

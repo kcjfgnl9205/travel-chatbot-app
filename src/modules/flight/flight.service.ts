@@ -582,25 +582,24 @@ export class FlightService {
   }
 
   /**
-   * 카드 하단 버튼. listCard 는 2개가 한계다.
-   * "더 보기" 는 **다음 페이지가 남아 있을 때만** 단다 — 없는데 달면 눌러도 같은
-   * 5편이 다시 나오고, 사용자는 그걸 고장으로 읽는다.
+   * 카드 하단 버튼. **"더 보기" 하나뿐이고, 다음 페이지가 있을 때만 단다.**
+   *
+   * 예전 '다른 도시 보기' 는 뺐다 — 도시 없는 문장이 가서 되묻기만 나왔고,
+   * 도시 전환은 quickReplies 가 이미 한다. (호텔·관광지와 같은 이유다)
    */
   private buttonsFor(query: FlightQuery, total: number, start: number): t.Json[] {
-    const buttons: t.Json[] = [];
-    if (this.config.flightCardStyle !== 'carousel' && hasNextPage(total, start)) {
-      buttons.push(
-        moreButton({
-          style: this.config.moreButtonStyle,
-          blockId: this.config.flightBlockId,
-          messageText: `${query.destName} 항공권 더 보기`,
-          cityName: query.destName,
-          nextOffset: start + PAGE_SIZE,
-        }),
-      );
-    }
-    buttons.push(t.messageButton('다른 도시 보기', '항공권 추천해줘'));
-    return buttons.slice(0, t.MAX_LIST_BUTTONS);
+    // 캐러셀은 한 번에 10편이 나가므로 넘길 페이지가 없다.
+    if (this.config.flightCardStyle === 'carousel') return [];
+    if (!hasNextPage(total, start)) return [];
+    return [
+      moreButton({
+        style: this.config.moreButtonStyle,
+        blockId: this.config.flightBlockId,
+        messageText: `${query.destName} 항공권 더 보기`,
+        cityName: query.destName,
+        nextOffset: start + PAGE_SIZE,
+      }),
+    ];
   }
 
   routeQuickReplies(exclude?: string | null): t.Json[] {

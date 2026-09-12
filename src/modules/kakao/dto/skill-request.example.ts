@@ -99,7 +99,8 @@ export const SKILL_RESPONSE_EXAMPLE = {
               link: { web: 'https://bot.nolmoa.com/r/6kCgoISYegpS' },
             },
           ],
-          // 찾아둔 게 5곳을 넘으면 '더 보기' 가 먼저 온다. 남은 게 없으면 안 달린다.
+          // ⚠️ 버튼은 '더 보기' 하나뿐이고, **다음 페이지가 있을 때만** 달린다.
+          //    남은 게 없으면 buttons 키가 아예 없다.
           buttons: [
             {
               label: '더 보기',
@@ -108,7 +109,6 @@ export const SKILL_RESPONSE_EXAMPLE = {
               messageText: '오사카 호텔 더 보기',
               extra: { city: '오사카', offset: 5 },
             },
-            { label: '다른 도시 보기', action: 'message', messageText: '호텔 추천해줘' },
           ],
         },
       },
@@ -246,7 +246,6 @@ export const FLIGHT_RESPONSE_EXAMPLE = {
               messageText: '오사카 항공권 더 보기',
               extra: { city: '오사카', offset: 5 },
             },
-            { label: '다른 도시 보기', action: 'message', messageText: '항공권 추천해줘' },
           ],
         },
       },
@@ -360,8 +359,7 @@ export const ATTRACTION_RESPONSE_EXAMPLE = {
               link: { web: 'https://bot.nolmoa.com/r/Ab3xY9kQ2mZp' },
             },
           ],
-          // ⚠️ listCard 버튼은 2개가 한계라 '다른 도시 보기' 가 밀려난다.
-          //    더 보기 → 사진 출처 → 다른 도시 보기 순으로 채운다.
+          // ⚠️ listCard 버튼은 2개가 한계다. 더 보기 · 사진 출처로 찬다.
           buttons: [
             {
               label: '더 보기',

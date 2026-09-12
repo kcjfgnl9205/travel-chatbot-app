@@ -496,14 +496,14 @@ export class AttractionService {
   }
 
   /**
-   * 카드 하단 버튼. **listCard 는 2개가 한계라 우선순위를 정해야 한다.**
+   * 카드 하단 버튼. listCard 는 2개가 한계다.
    *
-   *   ① 더 보기      — 다음 5곳. 남아 있을 때만 단다
-   *   ② 사진 출처    — 사진이 한 장이라도 실렸을 때만
-   *   ③ 다른 도시 보기
+   *   ① 더 보기    — 다음 5곳. 남아 있을 때만 단다
+   *   ② 사진 출처  — 사진이 한 장이라도 실렸을 때만
    *
-   * ③ 을 맨 뒤에 둔 이유: 도시 바로가기는 이미 quickReplies 가 하고 있어서
-   * 버튼 자리를 쓸 이유가 가장 적다.
+   * 예전 '다른 도시 보기' 는 뺐다. 누르면 도시 없는 문장("관광지 추천해줘")이 가서
+   * 되묻기만 나왔다 — **관광지가 안 나오는 버튼**이었다. 도시 전환은 quickReplies 가
+   * 이미 하고 있어서 두 칸뿐인 자리를 쓸 이유가 없다.
    *
    * ⚠️ 사진 출처는 **엄밀한 CC BY-SA 표시가 아니다.** 저작자와 라이선스를 사진마다
    *    밝히는 게 원칙인데, listCard 한 줄에는 링크가 하나뿐이고 그 자리는 지도가
@@ -531,7 +531,6 @@ export class AttractionService {
     if (attractions.some((a) => a.imageUrl)) {
       buttons.push(t.webLinkButton('사진 출처: 위키미디어', PHOTO_CREDIT_URL));
     }
-    buttons.push(t.messageButton('다른 도시 보기', '관광지 추천해줘'));
     return buttons.slice(0, t.MAX_LIST_BUTTONS);
   }
 }
