@@ -23,6 +23,15 @@ export interface ResponsesRequest {
   instructions?: string;
   /** 웹 검색을 붙이려면 [{ type: 'web_search' }]. */
   tools?: Record<string, unknown>[];
+  /**
+   * 툴을 **반드시** 쓰게 할지. 'required' 면 최소 한 번은 호출한다.
+   *
+   * ⚠️ 기본값('auto')으로 두면 모델이 검색을 건너뛰고 빈 결과를 낸다.
+   *    실측: 같은 질의에 어떤 때는 웹을 20번 뒤지고(60초, 20건), 어떤 때는
+   *    `searches=0 candidates=0 chars=17` 로 5초 만에 `{"candidates":[]}` 를 뱉었다.
+   *    사용자에게는 "지금은 정리하지 못했어요" 로 보이는데 원인은 검색을 안 한 것이다.
+   */
+  toolChoice?: 'auto' | 'required';
   /** minimal | low | medium | high */
   effort?: string;
   /** 구조화 출력. { type: 'json_schema', name, schema, strict } */
@@ -184,7 +193,10 @@ export class OpenAiService {
       input: req.input,
     };
     if (req.instructions) payload.instructions = req.instructions;
-    if (req.tools?.length) payload.tools = req.tools;
+    if (req.tools?.length) {
+      payload.tools = req.tools;
+      if (req.toolChoice) payload.tool_choice = req.toolChoice;
+    }
     if (req.effort) payload.reasoning = { effort: req.effort };
     if (req.format) payload.text = { format: req.format };
     if (req.maxOutputTokens) payload.max_output_tokens = req.maxOutputTokens;
