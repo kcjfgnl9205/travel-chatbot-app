@@ -94,9 +94,16 @@ describe('진단 엔드포인트 접근 제어', () => {
         const res = await request(app.getHttpServer())
           .get(`${ENDPOINT}?utterance=${U}&trace=1`)
           .expect(200);
-        // 키가 없으니 파싱을 못 한다 — query 는 못 만들고 발화만 돌아온다
+        // 키가 없어도 사전에 있는 도시(오사카)는 파싱된다 — 검색만 못 한다.
         expect(res.body.debug.utterance).toContain('오사카');
-        expect(res.body.debug.query).toBeNull();
+        expect(res.body.debug.query.citySlug).toBe('osaka');
+        expect(res.body.debug.hotels).toEqual([]);
+
+        // 사전에 없는 도시는 모델이 유일한 수단이라 query 를 못 만든다.
+        const unknown = await request(app.getHttpServer())
+          .get(`${ENDPOINT}?utterance=${encodeURIComponent('없는도시 호텔')}&trace=1`)
+          .expect(200);
+        expect(unknown.body.debug.query).toBeNull();
       },
     );
   });

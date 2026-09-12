@@ -72,10 +72,29 @@ describe('항공권 발화 파싱', () => {
     it('도착지를 주면 모델을 부르지 않는다', async () => {
       const parsed = await nlu.resolve('', { destination: '오사카' });
       expect(parsed.destName).toBe('오사카');
-      // 엔티티 값은 슬러그로 못 바꾼다 — 영문 슬러그를 아는 건 모델뿐이다.
-      // 한글 슬러그도 캐시 키로는 문제없다 (호텔 경로가 이미 그렇게 돈다).
-      expect(parsed.destSlug).toBe('오사카');
+      // 사전에 있는 도시라 슬러그·공항 코드까지 채워진다. 모델 경로와 같은 키로
+      // 모여야 캐시가 갈리지 않는다.
+      expect(parsed.destSlug).toBe('osaka');
+      expect(parsed.destCode).toBe('KIX');
       expect(openai.calls).toHaveLength(0);
+    });
+
+    it('사전에 없는 도시는 엔티티 값을 그대로 쓴다', async () => {
+      const parsed = await nlu.resolve('', { destination: '없는도시' });
+      expect(parsed.destName).toBe('없는도시');
+      expect(parsed.destCode).toBeNull();
+      expect(openai.calls).toHaveLength(0);
+    });
+
+    it('도착지가 있어도 날짜 단서가 있으면 모델을 마저 부른다', async () => {
+      // sys.date 엔티티는 "다음달 3일" 을 절대 날짜로 안 줄 때가 있다.
+      // 날짜를 놓치면 검색이 통째로 틀어지므로 여기서는 돈을 쓰는 게 맞다.
+      const parsed = await nlu.resolve('2026-10-03 오사카 왕복', {
+        destination: '오사카',
+      });
+      expect(parsed.destSlug).toBe('osaka');
+      expect(parsed.departDate).toBe('2026-10-03');
+      expect(openai.calls).toHaveLength(1);
     });
 
     it('엔티티 날짜가 YYYY-MM-DD 가 아니면 버린다 — 캐시 키와 프롬프트가 오염된다', async () => {
@@ -88,10 +107,11 @@ describe('항공권 발화 파싱', () => {
   });
 
   describe('별칭 캐시 — 이게 없으면 매 메시지가 유료다', () => {
+    // 사전에 있는 도시("오사카")는 모델을 부르지 않으므로 캐시 검증에 쓸 수 없다.
     it('같은 문장은 한 번만 파싱한다', async () => {
-      await nlu.resolve('오사카 항공권 찾아줘');
-      await nlu.resolve('오사카 항공권 찾아줘');
-      await nlu.resolve('오사카 항공권 찾아줘');
+      await nlu.resolve('없는도시 항공권 찾아줘');
+      await nlu.resolve('없는도시 항공권 찾아줘');
+      await nlu.resolve('없는도시 항공권 찾아줘');
       expect(openai.calls).toHaveLength(1);
     });
 
@@ -111,19 +131,54 @@ describe('항공권 발화 파싱', () => {
     });
   });
 
+  describe('도시 사전 — 엔티티가 안 왔을 때의 폴백', () => {
+    it('도착지 하나뿐인 발화는 모델 없이 끝낸다', async () => {
+      const parsed = await nlu.resolve('다낭 항공권 추천해줘');
+      expect(parsed.destSlug).toBe('danang');
+      expect(parsed.destCode).toBe('DAD');
+      expect(openai.calls).toHaveLength(0);
+    });
+
+    it('출발지를 말한 발화는 사전에 맡기지 않는다 — 노선이 뒤집힌다', async () => {
+      // "오사카에서 서울" 을 사전에 맡기면 더 긴 별칭인 오사카가 도착지로 잡힌다.
+      const parsed = await nlu.resolve('오사카에서 서울 가는 항공권');
+      expect(parsed.originSlug).toBe('osaka');
+      expect(parsed.destSlug).toBe('seoul');
+      expect(openai.calls).toHaveLength(1);
+    });
+
+    it('엔티티가 도착지를 줘도 출발지를 말했으면 모델이 마저 채운다', async () => {
+      // 출발지 엔티티는 아직 오픈빌더에 없다. 그래서 발화에서 긁어야 한다.
+      const parsed = await nlu.resolve('부산에서 오사카 항공권', {
+        destination: '오사카',
+      });
+      expect(parsed.destSlug).toBe('osaka');
+      expect(parsed.originName).toBe('부산');
+    });
+  });
+
   describe('모델 실패는 되묻기로 떨어진다 (5초 예산)', () => {
     it('타임아웃', async () => {
       openai.timeoutNext = true;
-      const outcome = await nlu.resolveDetailed('오사카 항공권');
+      const outcome = await nlu.resolveDetailed('없는도시 항공권');
       expect(outcome.parsed.destSlug).toBeNull();
       expect(outcome.timedOut).toBe(true);
     });
 
     it('키가 없으면 시도조차 하지 않는다', async () => {
       openai.enabled = false;
-      const outcome = await nlu.resolveDetailed('오사카 항공권');
+      const outcome = await nlu.resolveDetailed('없는도시 항공권');
       expect(outcome.source).toBe('skipped');
       expect(outcome.error).toContain('OPENAI_API_KEY');
+      expect(openai.calls).toHaveLength(0);
+    });
+
+    it('키가 없어도 사전에 있는 도시는 살아 있다', async () => {
+      openai.enabled = false;
+      const outcome = await nlu.resolveDetailed('세부 항공권');
+      expect(outcome.parsed.destSlug).toBe('cebu');
+      expect(outcome.parsed.destCode).toBe('CEB');
+      expect(outcome.source).toBe('table');
       expect(openai.calls).toHaveLength(0);
     });
   });

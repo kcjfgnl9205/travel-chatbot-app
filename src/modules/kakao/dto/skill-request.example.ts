@@ -22,10 +22,13 @@ export const SKILL_REQUEST_EXAMPLE = {
   action: {
     id: 'action-1',
     name: '호텔추천액션',
-    // 오픈빌더 엔티티가 도시를 뽑아주면 여기 들어온다.
-    // 비어 있어도 서버가 발화 텍스트에서 폴백 파싱한다.
-    params: {},
-    detailParams: {},
+    // 오픈빌더 커스텀 엔티티 `여행도시` 가 매칭되면 이 모양으로 온다.
+    // origin 은 사용자가 친 말 그대로, value 는 엔티티 대표값이다 — 서버는 value 를 쓴다.
+    // 비어 있어도 도시 사전 → 모델 순으로 발화에서 폴백 파싱한다.
+    params: { 여행도시: '오사카' },
+    detailParams: {
+      여행도시: { origin: '오사카', value: '오사카', groupName: '' },
+    },
     clientExtra: {},
   },
 };
@@ -128,10 +131,13 @@ export const FLIGHT_REQUEST_EXAMPLE = {
   action: {
     id: 'action-2',
     name: '항공권검색액션',
-    // 오픈빌더 엔티티가 출발지/도착지/날짜를 뽑아주면 여기 들어온다.
-    // 비어 있어도 서버가 발화 텍스트에서 파싱한다.
-    params: {},
-    detailParams: {},
+    // 지금 블록에 붙어 있는 엔티티는 `여행도시`(도착지) 하나다.
+    // 출발지는 태깅돼 있지 않아 발화에서 파싱하고, 못 찾으면 서울(ICN) 출발로 본다.
+    // 날짜도 엔티티가 없어 모델이 "다음달 3일" 을 절대 날짜로 바꾼다.
+    params: { 여행도시: '오사카' },
+    detailParams: {
+      여행도시: { origin: '오사카', value: '오사카', groupName: '' },
+    },
     clientExtra: {},
   },
 };
@@ -276,8 +282,11 @@ export const ATTRACTION_REQUEST_EXAMPLE = {
   action: {
     id: 'action-3',
     name: '관광지추천액션',
-    params: {},
-    detailParams: {},
+    // 호텔·항공권과 같은 `여행도시` 엔티티를 쓴다. 세 블록의 도시 추출이 동일하다.
+    params: { 여행도시: '오사카' },
+    detailParams: {
+      여행도시: { origin: '오사카', value: '오사카', groupName: '' },
+    },
     clientExtra: {},
   },
 };
