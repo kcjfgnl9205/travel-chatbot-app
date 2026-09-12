@@ -238,12 +238,15 @@ describe('카카오 호텔 스킬', () => {
     expect(provider.calls.map((c) => c.cityName)).toContain('파리');
   });
 
-  it('"다른 도시 보기" 의 messageText 가 실제로 되묻기 응답을 만든다', async () => {
+  it('버튼은 "더 보기" 하나뿐이다 — 도시 전환은 quickReplies 가 한다', async () => {
+    // 예전 '다른 도시 보기' 는 도시 없는 문장을 보내 되묻기만 나왔다.
+    // 호텔이 안 나오는 버튼이 두 칸뿐인 자리를 먹고 있었다.
     const card = await recommendUntilCard(app, '오사카 호텔');
-    const button = card.buttons.find((b: any) => b.label === '다른 도시 보기');
+    expect(card.buttons.map((b: any) => b.label)).toEqual(['더 보기']);
 
-    const second = await post(kakaoPayload(button.messageText)).expect(201);
-    expect(textOf(second.body)).toContain('어느 도시');
+    const quick = (await post(kakaoPayload('오사카 호텔')).expect(201)).body.template
+      .quickReplies;
+    expect(quick.map((q: any) => q.label)).toContain('도쿄 호텔');
   });
 
   // ------------------------------------------------------------ 더 보기
@@ -274,8 +277,8 @@ describe('카카오 호텔 스킬', () => {
       await recommendUntilCard(app, '오사카 호텔 추천해줘');
 
       const res = await post(payload).expect(201);
-      const labels = listCardOf(res.body).buttons.map((b: any) => b.label);
-      expect(labels).not.toContain('더 보기');
+      // 마지막 페이지에는 버튼이 아예 없다 — 달 게 '더 보기' 뿐이었다.
+      expect(listCardOf(res.body).buttons).toBeUndefined();
     });
 
     it('발화만으로도 넘어간다 — 그룹챗방에서 action:block 이 안 될 때의 우회', async () => {

@@ -99,8 +99,16 @@ export const SKILL_RESPONSE_EXAMPLE = {
               link: { web: 'https://bot.nolmoa.com/r/6kCgoISYegpS' },
             },
           ],
+          // ⚠️ 버튼은 '더 보기' 하나뿐이고, **다음 페이지가 있을 때만** 달린다.
+          //    남은 게 없으면 buttons 키가 아예 없다.
           buttons: [
-            { label: '다른 도시 보기', action: 'message', messageText: '호텔 추천해줘' },
+            {
+              label: '더 보기',
+              action: 'block',
+              blockId: '6a9398f895f722d77da02d42',
+              messageText: '오사카 호텔 더 보기',
+              extra: { city: '오사카', offset: 5 },
+            },
           ],
         },
       },
@@ -211,46 +219,32 @@ export const FLIGHT_RESPONSE_EXAMPLE = {
         },
       },
       {
-        carousel: {
-          type: 'itemCard',
+        // ⚠️ **캐러셀(itemCard)이 아니다.** 그룹챗방이 itemCard 를 못 그려서
+        //    말풍선이 통째로 사라진다 — 호텔·관광지와 같은 listCard 로 맞췄다.
+        //    (FLIGHT_CARD_STYLE=carousel 로 되돌리면 예전 itemCard 가 나간다)
+        listCard: {
+          header: { title: '서울→오사카 항공권 5편' },
           items: [
             {
-              head: { title: '서울 → 오사카 · 10/3(토)' },
-              itemList: [
-                { title: '항공사', description: '대한항공 KE723' },
-                { title: '가는편', description: '10/3(토) 09:20→11:00' },
-                { title: '오는편', description: '10/6(화) 12:30→14:20' },
-                { title: '소요', description: '1시간 40분 · 직항' },
-              ],
-              itemListAlignment: 'right',
-              itemListSummary: { title: '예상가', description: '1인 289,000원' },
-              buttons: [
-                {
-                  action: 'webLink',
-                  label: '예약 페이지 보기',
-                  webLinkUrl: 'https://bot.nolmoa.com/r/Ab3xY9kQ2mZp',
-                },
-              ],
-              buttonLayout: 'vertical',
+              // 가격을 제목에 둔다 — 편을 고르는 첫 번째 축이다.
+              title: '대한항공 KE723 · 289,000원',
+              // 왕복은 두 구간의 출발 시각만 들어간다. 도착 시각·소요는 자리가 없다.
+              description: '10/3(토) 09:20 ↔ 10/6(화) 12:30 · 직항',
+              link: { web: 'https://bot.nolmoa.com/r/Ab3xY9kQ2mZp' },
             },
             {
-              head: { title: '서울 → 오사카 · 10/3(토)' },
-              itemList: [
-                { title: '항공사', description: '피치항공 MM028' },
-                { title: '가는편', description: '10/3(토) 08:05→09:45' },
-                { title: '오는편', description: '10/6(화) 10:30→12:25' },
-                { title: '소요', description: '1시간 40분 · 직항' },
-              ],
-              itemListAlignment: 'right',
-              itemListSummary: { title: '예상가', description: '1인 148,000원' },
-              buttons: [
-                {
-                  action: 'webLink',
-                  label: '예약 페이지 보기',
-                  webLinkUrl: 'https://bot.nolmoa.com/r/9pQmZk2Yx3bA',
-                },
-              ],
-              buttonLayout: 'vertical',
+              title: '피치항공 MM028 · 148,000원',
+              description: '10/3(토) 08:05 ↔ 10/6(화) 10:30 · 직항',
+              link: { web: 'https://bot.nolmoa.com/r/9pQmZk2Yx3bA' },
+            },
+          ],
+          buttons: [
+            {
+              label: '더 보기',
+              action: 'block',
+              blockId: '6a957136fd013545b6516a99',
+              messageText: '오사카 항공권 더 보기',
+              extra: { city: '오사카', offset: 5 },
             },
           ],
         },
@@ -351,17 +345,34 @@ export const ATTRACTION_RESPONSE_EXAMPLE = {
           items: [
             {
               title: '오사카성',
-              description: '약 6,000원 · 2시간 · 주오구',
+              description: '1,200엔 · 2시간 · 주오구',
+              // 위키백과에서 찾은 사진. 못 찾은 관광지는 이 키가 아예 없다(실측 87%).
+              imageUrl:
+                'https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Osaka_Castle_02bs3200.jpg/960px-Osaka_Castle_02bs3200.jpg',
               link: { web: 'https://bot.nolmoa.com/r/6kCgoISYegpS' },
             },
             {
               title: '도톤보리',
               description: '무료 · 2시간 · 난바',
+              imageUrl:
+                'https://upload.wikimedia.org/wikipedia/commons/thumb/f/f3/Dotombori_neon_signs.JPG/960px-Dotombori_neon_signs.JPG',
               link: { web: 'https://bot.nolmoa.com/r/Ab3xY9kQ2mZp' },
             },
           ],
+          // ⚠️ listCard 버튼은 2개가 한계다. 더 보기 · 사진 출처로 찬다.
           buttons: [
-            { label: '다른 도시 보기', action: 'message', messageText: '관광지 추천해줘' },
+            {
+              label: '더 보기',
+              action: 'block',
+              blockId: '6aa4162f8918b2f42808222f',
+              messageText: '오사카 관광지 더 보기',
+              extra: { city: '오사카', offset: 5 },
+            },
+            {
+              label: '사진 출처: 위키미디어',
+              action: 'webLink',
+              webLinkUrl: 'https://commons.wikimedia.org/wiki/Commons:Licensing',
+            },
           ],
         },
       },

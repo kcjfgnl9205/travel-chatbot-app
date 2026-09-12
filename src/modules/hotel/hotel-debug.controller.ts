@@ -132,7 +132,13 @@ export class HotelDebugController {
                   },
                 ],
                 buttons: [
-                  { label: '다른 도시 보기', action: 'message', messageText: '호텔 추천해줘' },
+                  {
+                    label: '더 보기',
+                    action: 'block',
+                    blockId: '6a9398f895f722d77da02d42',
+                    messageText: '오사카 호텔 더 보기',
+                    extra: { city: '오사카', offset: 5 },
+                  },
                 ],
               },
             },
