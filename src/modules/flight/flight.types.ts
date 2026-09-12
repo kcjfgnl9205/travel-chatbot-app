@@ -196,6 +196,47 @@ export function legText(
 }
 
 /**
+ * listCard 한 줄의 제목. '대한항공 KE723 · 325,000원'
+ *
+ * **가격을 제목에 둔다.** 항공편을 고르는 첫 번째 축이고, listCard 에서 제목이
+ * 설명보다 눈에 먼저 들어온다. 40자까지 쓸 수 있어 자리도 넉넉하다.
+ */
+export function listRowTitle(f: Flight): string {
+  const airline = [f.airline, f.flightNo].filter(Boolean).join(' ');
+  return [airline, priceText(f)].filter(Boolean).join(' · ');
+}
+
+/**
+ * listCard 한 줄의 설명. **40자 1줄**이라 itemCard 5줄이 담던 걸 다 못 넣는다.
+ *
+ *   편도: '10/3(토) 09:20→11:45 · 2시간 25분 · 직항'
+ *   왕복: '10/3(토) 09:20 ↔ 10/7(수) 12:30 · 직항'
+ *
+ * 왕복은 두 구간의 날짜·출발 시각만으로 자리가 차서 **도착 시각과 소요 시간을 버린다.**
+ * 대신 직항 여부는 남긴다 — 경유가 몇 번인지가 시각 다음으로 중요한 판단 기준이고,
+ * 그건 예약 페이지를 열기 전에 알아야 거르기 때문이다.
+ */
+export function listRowDescription(f: Flight): string {
+  const schedule =
+    f.tripType === 'round'
+      ? [departLabel(f.departDate, f.departTime), departLabel(f.returnDate, f.returnDepartTime)]
+          .filter(Boolean)
+          .join(' ↔ ')
+      : legText(f.departDate, f.departTime, f.arriveTime);
+
+  const tail = f.tripType === 'round' ? stopsText(f) : durationLine(f);
+  return [schedule, tail].filter(Boolean).join(' · ');
+}
+
+/** '10/3(토) 09:20'. 왕복 한 구간을 날짜+출발시각으로만 줄인 것. */
+function departLabel(
+  date: string | null | undefined,
+  depart: string | null | undefined,
+): string {
+  return [dateLabel(date), depart].filter(Boolean).join(' ');
+}
+
+/**
  * 카카오 itemCard 의 key-value 줄.
  *
  * ⚠️ **최대 5줄이고 key 는 6자까지다.** 왕복이면 항공사·가는편·오는편·소요로 4줄이 차므로

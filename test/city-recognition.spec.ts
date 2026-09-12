@@ -118,9 +118,58 @@ describe('도시 인식', () => {
 });
 
 describe('도시 사전', () => {
-  it('카카오 엔티티에 등록한 85개를 그대로 담는다', async () => {
+  it('카카오 엔티티에 등록한 237개를 그대로 담는다', async () => {
+    // 오픈빌더 엔티티와 같은 목록이어야 한다. 어긋나면 "카카오는 도시로 뽑았는데
+    // 서버는 모르는 도시" 상태가 생긴다. 엔티티에 추가하면 여기에도 추가한다.
     const { CITY_TABLE } = await import('../src/modules/nlu/city-table');
-    expect(CITY_TABLE).toHaveLength(85);
+    expect(CITY_TABLE).toHaveLength(237);
+  });
+
+  it('별칭이 두 도시에 겹치지 않는다', async () => {
+    // 겹치면 Map 이 뒤엣것으로 덮어써서 한 도시가 조용히 사라진다.
+    const { CITY_TABLE, normalizeAlias } = await import('../src/modules/nlu/city-table');
+    const owner = new Map<string, string>();
+    for (const city of CITY_TABLE) {
+      for (const alias of [city.slug, city.nameKo, ...city.aliases]) {
+        const key = normalizeAlias(alias);
+        const previous = owner.get(key);
+        expect(previous ?? city.slug).toBe(city.slug);
+        owner.set(key, city.slug);
+      }
+    }
+  });
+
+  it('새로 등록된 도시들이 실제로 읽힌다', async () => {
+    for (const [utterance, slug] of [
+      ['레이캬비크 여행지 추천해줘', 'reykjavik'],
+      ['시엠립 호텔 추천해줘', 'siem-reap'],
+      ['그라나다 관광지 알려줘', 'granada'],
+      ['헬싱키 항공권 찾아줘', 'helsinki'],
+      ['유후인 온천 숙소', 'yufuin'],
+      ['족자카르타 여행지', 'yogyakarta'],
+    ] as const) {
+      expect(findCityInText(utterance)?.slug).toBe(slug);
+    }
+  });
+
+  it('⚠️ 도시이면서 흔한 한국어인 말은 문장에서 긁지 않는다', () => {
+    // 237개로 늘리면서 들어온 위험들이다. 엔티티로 오면 그대로 쓴다.
+    expect(findCityInText('어느 나라 가고 싶어')).toBeNull();
+    expect(findCityInText('퍼스트 클래스로 예약')).toBeNull();
+    expect(findCityInText('사파리 투어 있어?')).toBeNull();
+    // ⚠️ "사파리" 안에는 **파리**도 들어 있다. 최장 일치로는 못 막는다 —
+    //    더 긴 별칭이 아예 없기 때문이다. 훑기 전에 말 자체를 지워야 한다.
+    expect(findCityInText('테니스 코트 있는 호텔')).toBeNull();
+    expect(findCityInText('포르투갈 여행지 추천')).toBeNull(); // 나라지 도시가 아니다
+    expect(findCityInText('포르투 여행지 추천')?.slug).toBe('porto');
+    expect(findCityInText('파리 여행지 추천')?.slug).toBe('paris');
+    expect(lookupCity('나라')?.slug).toBe('nara');
+    expect(lookupCity('퍼스')?.slug).toBe('perth');
+  });
+
+  it('영문 도시명은 띄어 써도 잡힌다', () => {
+    expect(findCityInText('new york 호텔')?.slug).toBe('new-york');
+    expect(findCityInText('kuala lumpur 여행지')?.slug).toBe('kuala-lumpur');
   });
 
   it('표기가 달라도 같은 도시로 모은다', () => {

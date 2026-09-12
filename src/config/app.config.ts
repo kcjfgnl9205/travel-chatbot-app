@@ -49,6 +49,7 @@ export interface AppConfig {
   flightCacheTtlMinutes: number;
   flightDefaultOriginName: string;
   flightDefaultOriginCode: string;
+  flightCardStyle: 'list' | 'carousel';
 
   attractionProvider: string;
   attractionResultLimit: number;
@@ -152,6 +153,12 @@ export function loadConfig(): AppConfig {
     // 보고, 카드에 '서울 출발' 을 적어 사용자가 틀렸음을 바로 알 수 있게 한다.
     flightDefaultOriginName: str('FLIGHT_DEFAULT_ORIGIN_NAME', '서울'),
     flightDefaultOriginCode: str('FLIGHT_DEFAULT_ORIGIN_CODE', 'ICN'),
+    // ⚠️ **그룹챗봇(팀톡방)은 itemCard 를 못 그린다 — 말풍선이 통째로 사라진다.**
+    //    호텔·관광지가 같은 방에서 멀쩡한 건 listCard 라서다. 그래서 기본값이 list 다.
+    //    itemCard 는 정보 밀도가 훨씬 높으므로(항공사·가는편·오는편·소요·좌석 5줄),
+    //    일반 채널 챗봇을 따로 운영하게 되면 거기서는 carousel 로 되돌릴 수 있다.
+    flightCardStyle:
+      str('FLIGHT_CARD_STYLE', 'list') === 'carousel' ? 'carousel' : 'list',
 
     attractionProvider: str('ATTRACTION_PROVIDER', 'openai'),
     // listCard 는 5줄이 한계다. 그보다 크게 잡으면 검색만 비싸지고 잘려 나간다.

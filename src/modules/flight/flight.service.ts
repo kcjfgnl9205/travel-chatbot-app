@@ -39,6 +39,8 @@ import {
   FlightQuery,
   cabinText,
   cardRows,
+  listRowDescription,
+  listRowTitle,
   dateLabel,
   flightCacheKey,
   flightKey,
@@ -199,6 +201,16 @@ export class FlightService {
 
     // 미스 → 지금 응답할 수 없다. 검색은 백그라운드로 돌린다.
     const callbackUrl = callbackUrlOf(payload);
+    // ⚠️ **콜백 URL 은 오픈빌더에서 그 블록의 [콜백 사용] 을 켠 경우에만 실린다.**
+    //    꺼져 있으면 사용자는 "30초 뒤에 다시 물어봐 주세요" 를 받고 같은 질문을 두 번
+    //    해야 한다. 분기는 여기 있으므로 그건 서버가 아니라 설정 문제다 — 어느 쪽인지
+    //    로그로 남겨야 오픈빌더를 봐야 하는지 코드를 봐야 하는지 가릴 수 있다.
+    if (!callbackUrl) {
+      this.logger.warn(
+        `callbackUrl 없음 — 오픈빌더에서 이 블록의 [콜백 사용] 이 꺼져 있다. ` +
+          `block=${blockNameOf(payload) ?? '-'} domain=${DOMAIN}`,
+      );
+    }
     void this.searchInBackground(query, ctx, callbackUrl);
 
     return callbackUrl
@@ -417,6 +429,8 @@ export class FlightService {
 
     const rows: Record<string, unknown>[] = [];
     const cards: t.Json[] = [];
+    // 두 모양을 같은 순회에서 만든다. clickId·애드픽 변환은 한 번만 돌아야 한다.
+    const listItems: t.Json[] = [];
     /** 애드픽 변환이 안 돼 원본 주소로 나가는 카드. 수익화가 안 되는 노출이다. */
     const unconverted: string[] = [];
 
@@ -458,6 +472,7 @@ export class FlightService {
         userId: ctx.userId,
       });
 
+      const link_ = redirectUrl(this.config, clickId);
       cards.push(
         t.itemCard({
           headTitle: cardHead(flight, query),
@@ -465,7 +480,14 @@ export class FlightService {
           // 시각과 금액이 세로로 정렬돼야 카드끼리 비교가 된다.
           itemListAlignment: 'right',
           summary: { title: '예상가', description: priceSummary(flight, query) },
-          buttons: [t.webLinkButton('예약 페이지 보기', redirectUrl(this.config, clickId))],
+          buttons: [t.webLinkButton('예약 페이지 보기', link_)],
+        }),
+      );
+      listItems.push(
+        t.listItem({
+          title: listRowTitle(flight),
+          description: listRowDescription(flight),
+          linkUrl: link_,
         }),
       );
     });
@@ -481,10 +503,26 @@ export class FlightService {
     if (!cards.length) return this.noResult(query);
     if (recommendationId) await this.items.createMany(rows);
 
-    return t.textThenCarousel(
-      introText(query, cards.length),
-      'itemCard',
-      cards,
+    // ⚠️ **그룹챗봇(팀톡방)은 itemCard 를 못 그린다 — 말풍선이 통째로 사라진다.**
+    //    호텔·관광지가 같은 방에서 멀쩡한 건 listCard 라서고, 그래서 기본이 list 다.
+    //    앞 말풍선은 두 모양 모두에 붙인다 — 출발지를 추측했다는 사실과 가격이 확정
+    //    운임이 아니라는 말이 거기 실려 있고, 둘 다 header 40자에는 안 들어간다.
+    if (this.config.flightCardStyle === 'carousel') {
+      return t.textThenCarousel(
+        introText(query, cards.length),
+        'itemCard',
+        cards,
+        this.routeQuickReplies(query.destSlug),
+      );
+    }
+
+    return t.textThenListCard(
+      introText(query, listItems.length),
+      {
+        headerTitle: `${query.originName}→${query.destName} 항공권 ${listItems.length}편`,
+        items: listItems,
+        buttons: [t.messageButton('다른 도시 보기', '항공권 추천해줘')],
+      },
       this.routeQuickReplies(query.destSlug),
     );
   }

@@ -221,6 +221,32 @@ export function carousel(
  * 같은 공통 맥락을 카드마다 반복해 넣을 수는 없으니 앞에 말풍선 하나로 세운다.
  * (카카오는 outputs 를 3개까지 받는다)
  */
+/**
+ * 안내 문구 + 리스트 카드.
+ *
+ * ⚠️ **그룹챗봇(팀톡방)은 itemCard 를 못 그린다 — 말풍선이 통째로 사라진다.**
+ *    호텔·관광지가 같은 방에서 멀쩡한 건 listCard 라서다. 항공권도 같은 모양으로
+ *    맞추되, 노선·조건·"예상가" 안내는 listCard header(40자)에 안 들어가므로
+ *    캐러셀 때와 마찬가지로 앞에 말풍선 하나를 세운다.
+ *
+ * 그 말풍선이 들고 가는 게 둘 있다. 둘 다 없애면 안 된다.
+ *   · **출발지를 추측했다는 사실** — 부산에서 가려던 사람이 고쳐 말할 유일한 단서
+ *   · **가격이 확정 운임이 아니라는 말** — 없으면 카드 가격을 믿고 눌렀다 배신당한다
+ */
+export function textThenListCard(
+  text: string,
+  card: ListCardInput,
+  quickReplies?: Json[],
+): Json {
+  const listCard: Json = {
+    header: { title: cut(card.headerTitle, MAX_LIST_HEADER_TITLE) },
+    items: card.items.slice(0, MAX_LIST_ITEMS),
+  };
+  if (card.buttons?.length) listCard.buttons = card.buttons.slice(0, MAX_LIST_BUTTONS);
+
+  return skillResponse([{ simpleText: { text } }, { listCard }], quickReplies);
+}
+
 export function textThenCarousel(
   text: string,
   type: 'basicCard' | 'commerceCard' | 'listCard' | 'itemCard',
