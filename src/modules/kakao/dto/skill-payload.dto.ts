@@ -25,8 +25,25 @@ export interface KakaoSkillPayload {
   intent?: Record<string, unknown>;
 }
 
+/**
+ * 사용자가 친 문장. **봇 멘션은 떼어낸다.**
+ *
+ * ⚠️ 단톡방에서는 모든 발화가 "@여행메이트 ..." 로 시작한다. 그런데 봇 이름에
+ *    **"여행" 이 들어 있어서** 멘션을 안 떼면 "@여행메이트 안녕 다들 뭐해?" 같은
+ *    잡담이 1차 필터(TRAVEL_HINT)를 통과해 버린다. 인사말 한 줄이 모델 호출 한 번이
+ *    되고, 그게 방 인원수만큼 곱해진다.
+ */
 export function utteranceOf(p: KakaoSkillPayload): string {
-  return (p.userRequest?.utterance ?? '').trim();
+  const raw = (p.userRequest?.utterance ?? '').trim();
+  const botName = typeof p.bot?.name === 'string' ? p.bot.name.trim() : '';
+
+  // 봇 이름은 공백을 포함할 수 있다 ("여행메이트 TST"). 이름을 알면 그걸 먼저 떼고,
+  // 모르면 맨 앞의 @토큰 하나를 뗀다.
+  let text = raw;
+  if (botName && text.startsWith(`@${botName}`)) {
+    text = text.slice(botName.length + 1);
+  }
+  return text.replace(/^@\S+\s*/, '').trim();
 }
 
 /** 사용자 식별자. botUserKey 우선, 없으면 user.id. */
@@ -39,6 +56,18 @@ export function userKeyOf(p: KakaoSkillPayload): string {
 
 export function blockNameOf(p: KakaoSkillPayload): string | null {
   return p.userRequest?.block?.name ?? null;
+}
+
+/**
+ * 요청을 보낸 블록의 ID.
+ *
+ * **"더 보기" 버튼이 부를 블록이 곧 이 블록이다.** 시나리오 블록을 전부 지웠으므로
+ * 라우터로 들어온 요청은 폴백 블록이 부른 것이고, 그래서 설정 없이도 버튼이 산다 —
+ * 블록을 다시 만들어 ID 가 바뀌어도 저절로 따라간다.
+ */
+export function blockIdOf(p: KakaoSkillPayload): string {
+  const id = p.userRequest?.block?.id;
+  return typeof id === 'string' ? id.trim() : '';
 }
 
 /**

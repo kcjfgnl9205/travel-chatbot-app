@@ -5,6 +5,23 @@
 
 > **전제**: 호텔 마스터 데이터를 소유하지 않는다. AI/크롤링이 요청마다 호텔과 **원본 주소**(아고다 등)를 찾아오고, 애드픽 API 가 그것을 **커미션 링크**로 바꾼다. 사용자에게는 커미션 링크만 노출된다.
 
+> ## ⚠️ 라우터 재설계로 테이블이 늘었다
+>
+> 이 문서가 설명하는 6개(`users` · `messages` · `recommendations` · `recommendation_items` ·
+> `affiliate_links` · `search_cache`)는 그대로 있고, 노출·클릭 추적은 하나도 바뀌지 않았다.
+> 다만 **검색 캐시가 `search_cache` → `search_results` 로 옮겨갔고**, 지역 마스터가 생겼다:
+>
+> | 새 테이블 | 하는 일 |
+> |---|---|
+> | `places` | 지역 마스터. 미리 채우지 않고 **쓰면서 자란다**. 세부 지역은 `parent_id` 로 도시에 매달린다 |
+> | `place_aliases` | 별칭 → 지역. "오사카"/"osaka"/"오사카시" 를 한 id 로 모은다 — **캐시 적중률의 전부** |
+> | `search_results` | 검색 결과 20건 저장 + TTL + **`pending` 선점(single-flight)** |
+> | `intent_cache` | 같은 문장 재파싱 방지 (7일) |
+>
+> 정의는 [`0004_router.sql`](../supabase/migrations/0004_router.sql), 설계 의도는 [ROUTER.md](ROUTER.md).
+> `search_cache` 는 이제 코드가 읽지 않는다 (롤백용으로 남겨뒀다).
+
+
 ---
 
 ## 1. 한눈에

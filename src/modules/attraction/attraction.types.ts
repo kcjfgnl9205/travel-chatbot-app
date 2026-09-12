@@ -1,5 +1,3 @@
-import { CacheKeyPart } from '../search-cache/search-cache.service';
-
 /**
  * provider 가 돌려주는 관광지 1건.
  *
@@ -70,11 +68,6 @@ export interface AttractionQuery {
   citySlug: string;
   cityName: string;
   limit: number;
-}
-
-/** 캐시 키에 들어가는 조건들. 관광지는 도시 하나가 전부다. */
-export function attractionCacheKey(query: AttractionQuery): CacheKeyPart[] {
-  return [query.citySlug, query.limit];
 }
 
 /** 캐시에서 살려낸 값이 관광지 모양인가. 배포로 필드가 바뀌면 미스로 떨어뜨린다. */

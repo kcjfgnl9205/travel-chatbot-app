@@ -1,118 +1,70 @@
-import request from 'supertest';
-
-import { findCityInText, lookupCity } from '../src/modules/nlu/city-table';
 import {
-  ATTRACTIONS,
-  FLIGHTS,
-  RECOMMEND,
   TestApp,
   createApp,
   kakaoPayload,
+  listCardOf,
+  post,
+  textOf,
 } from './helpers';
-
-const textOf = (body: any): string =>
-  (body.template?.outputs ?? [])
-    .map((o: any) => o.simpleText?.text ?? '')
-    .join('\n');
+import { findCityInText, lookupCity } from '../src/modules/places/city-table';
 
 /**
- * 도시 인식 회귀 테스트.
+ * 지역 인식 회귀 테스트.
  *
- * 증상은 "도시를 말했는데도 되묻는다" 였다. 원인이 둘이었다.
+ * 증상은 "지역을 말했는데도 되묻는다" 였다. 원인은 사전을 안 보고 모델 호출 하나에만
+ * 기댄 것이었다 — 모델이 늦거나 키가 없으면 아는 도시까지 통째로 죽었다.
  *
- *   1. 카카오가 `여행도시` 엔티티로 뽑아준 도시를 서버가 안 읽었다
- *      (영문 파라미터 이름만 보고 있었다).
- *   2. 엔티티가 없을 때의 폴백이 모델 호출 하나뿐이라, 2.5초를 넘기거나
- *      키가 없으면 아는 도시까지 통째로 죽었다.
- *
- * 그래서 이 파일은 **모델을 꺼놓고** 돈다. 모델 없이도 사전에 있는 도시는
- * 전부 살아 있어야 한다.
+ * 그래서 이 파일은 **모델을 꺼놓고** 돈다. 모델 없이도 사전에 있는 도시는 전부
+ * 살아 있어야 하고, 그게 곧 5초 예산의 안전장치다.
  */
-describe('도시 인식', () => {
-  let t: TestApp;
+describe('지역 인식 (모델 없이)', () => {
+  let ctx: TestApp;
 
   beforeAll(async () => {
-    t = await createApp();
+    ctx = await createApp();
   });
   afterAll(async () => {
-    await t.app.close();
+    await ctx.app.close();
   });
   beforeEach(() => {
-    t.openai.enabled = false;
+    ctx.reset();
+    ctx.openai.enabled = false;
   });
   afterEach(() => {
-    t.openai.enabled = true;
+    ctx.openai.enabled = true;
   });
 
-  const post = (url: string, payload: Record<string, unknown>) =>
-    request(t.app.getHttpServer()).post(url).send(payload);
-
   describe('제보된 발화 — 전부 "어느 도시…" 로 떨어지던 것들', () => {
-    const cases: [string, string][] = [
-      [ATTRACTIONS, '세부 여행지 추천해줘'],
-      [ATTRACTIONS, '세부여행지 추천'],
-      [ATTRACTIONS, '다낭 여행지 추천해줘'],
-      [ATTRACTIONS, '프라하 여행지 추천해줘'],
-      [ATTRACTIONS, '/여행지검색 하와이'],
-      [RECOMMEND, '세부 호텔 추천해줘'],
-      [RECOMMEND, '다낭 호텔 추천해줘'],
-      [FLIGHTS, '프라하 항공권 추천해줘'],
+    const cases = [
+      '세부 여행지 추천해줘',
+      '세부여행지 추천',
+      '다낭 여행지 추천해줘',
+      '프라하 여행지 추천해줘',
+      '/여행지검색 하와이',
+      '세부 호텔 추천해줘',
+      '다낭 호텔 추천해줘',
+      '프라하 항공권 추천해줘',
     ];
 
-    it.each(cases)('%s ← "%s"', async (url, utterance) => {
-      const res = await post(url, kakaoPayload(utterance)).expect(201);
-      expect(textOf(res.body)).not.toContain('어느 도시');
-      expect(t.openai.calls).toHaveLength(0);
+    it.each(cases)('"%s" 는 되묻지 않는다', async (utterance) => {
+      const res = await post(ctx.app, kakaoPayload(utterance)).expect(201);
+
+      expect(textOf(res.body)).not.toContain('어느 지역');
+      expect(ctx.openai.calls).toHaveLength(0);
     });
 
     it('도쿄디즈니는 도쿄가 아니다', async () => {
-      const res = await post(
-        RECOMMEND,
-        kakaoPayload('도쿄디즈니 호텔 추천해줘'),
-      ).expect(201);
-      expect(textOf(res.body)).toContain('도쿄디즈니');
+      await post(ctx.app, kakaoPayload('도쿄디즈니 호텔 추천해줘'));
+      await new Promise((r) => setTimeout(r, 50));
+      const res = await post(ctx.app, kakaoPayload('도쿄디즈니 호텔 추천해줘'));
+
+      expect(listCardOf(res.body).header.title).toContain('도쿄디즈니');
     });
 
-    it('도시가 정말 없으면 지금처럼 되묻는다', async () => {
-      const res = await post(ATTRACTIONS, kakaoPayload('여행지 추천해줘')).expect(201);
-      expect(textOf(res.body)).toContain('어느 도시');
-    });
-  });
+    it('지역이 정말 없으면 되묻는다', async () => {
+      const res = await post(ctx.app, kakaoPayload('여행지 추천해줘')).expect(201);
 
-  describe('여행도시 엔티티', () => {
-    /** 카카오가 커스텀 엔티티를 매칭했을 때 실제로 보내는 모양. */
-    const withEntity = (utterance: string, city: string) => {
-      const payload = kakaoPayload(utterance) as any;
-      payload.action.params = { 여행도시: city };
-      payload.action.detailParams = {
-        여행도시: { origin: city, value: city, groupName: '' },
-      };
-      return payload;
-    };
-
-    it('발화가 기본값이어도 파라미터만으로 검색한다 — 오픈빌더 스킬 테스트가 이 모양이다', async () => {
-      const res = await post(
-        ATTRACTIONS,
-        withEntity('발화 내용', '오사카'),
-      ).expect(201);
-      expect(textOf(res.body)).toContain('오사카');
-      expect(textOf(res.body)).not.toContain('어느 도시');
-    });
-
-    it('세 엔드포인트가 같은 파라미터를 읽는다', async () => {
-      for (const url of [RECOMMEND, FLIGHTS, ATTRACTIONS]) {
-        const res = await post(url, withEntity('발화 내용', '부다페스트')).expect(201);
-        expect(textOf(res.body)).toContain('부다페스트');
-      }
-    });
-
-    it('sys 엔티티가 value 를 JSON 문자열로 줘도 읽는다', async () => {
-      const payload = kakaoPayload('여행지 추천해줘') as any;
-      payload.action.detailParams = {
-        여행도시: { origin: '마카오', value: '{"value":"마카오"}', groupName: '' },
-      };
-      const res = await post(ATTRACTIONS, payload).expect(201);
-      expect(textOf(res.body)).toContain('마카오');
+      expect(textOf(res.body)).toContain('어느 지역');
     });
   });
 });
@@ -121,13 +73,13 @@ describe('도시 사전', () => {
   it('카카오 엔티티에 등록한 237개를 그대로 담는다', async () => {
     // 오픈빌더 엔티티와 같은 목록이어야 한다. 어긋나면 "카카오는 도시로 뽑았는데
     // 서버는 모르는 도시" 상태가 생긴다. 엔티티에 추가하면 여기에도 추가한다.
-    const { CITY_TABLE } = await import('../src/modules/nlu/city-table');
+    const { CITY_TABLE } = await import('../src/modules/places/city-table');
     expect(CITY_TABLE).toHaveLength(237);
   });
 
   it('별칭이 두 도시에 겹치지 않는다', async () => {
     // 겹치면 Map 이 뒤엣것으로 덮어써서 한 도시가 조용히 사라진다.
-    const { CITY_TABLE, normalizeAlias } = await import('../src/modules/nlu/city-table');
+    const { CITY_TABLE, normalizeAlias } = await import('../src/modules/places/city-table');
     const owner = new Map<string, string>();
     for (const city of CITY_TABLE) {
       for (const alias of [city.slug, city.nameKo, ...city.aliases]) {

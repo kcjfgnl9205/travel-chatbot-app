@@ -1,9 +1,13 @@
 # travel-chatbot-app
 
-카카오톡 여행 챗봇 스킬 서버. **NestJS + Supabase**.
-현재 범위: **호텔 추천 · 항공권 검색 · 관광지 추천 (gpt-5-mini + 웹 검색)**
+카카오톡 **여행메이트 그룹챗봇** 스킬 서버. **NestJS + Supabase**.
+범위: **호텔 · 항공권 · 관광지 3가지 (gpt-5-mini + 웹 검색)**
 
-운영: https://bot.nolmoa.com · 기획: [docs/PLAN.md](docs/PLAN.md) · DB: [docs/DB.md](docs/DB.md) · 항공권: [docs/FLIGHT.md](docs/FLIGHT.md) · 관광지: [docs/ATTRACTION.md](docs/ATTRACTION.md) · 배포: [docs/DEPLOY.md](docs/DEPLOY.md)
+**진입점이 하나다.** 오픈빌더에서 시나리오 블록·엔티티를 전부 지웠으므로 봇을 멘션한
+모든 발화가 폴백으로 떨어지고, 폴백 블록이 `POST /api/v1/kakao/router` 하나를 부른다.
+무엇을 묻는지는 URL 이 아니라 **발화**가 정한다 → **[docs/ROUTER.md](docs/ROUTER.md)**
+
+운영: https://bot.nolmoa.com · 라우터: [docs/ROUTER.md](docs/ROUTER.md) · DB: [docs/DB.md](docs/DB.md) · 항공권: [docs/FLIGHT.md](docs/FLIGHT.md) · 관광지: [docs/ATTRACTION.md](docs/ATTRACTION.md) · 배포: [docs/DEPLOY.md](docs/DEPLOY.md)
 
 > FastAPI 로 먼저 만들었다가 NestJS 로 전환했다. 전환 기록과 주의점은 [docs/MIGRATION.md](docs/MIGRATION.md).
 
@@ -23,64 +27,81 @@ npm run start:dev             # http://localhost:8000
 운영에서도 항상 켜져 있다: https://bot.nolmoa.com/docs
 
 ```bash
-# 스킬 호출 테스트 (호텔)
-curl -s -X POST localhost:8000/api/v1/kakao/hotels/recommend \
-  -H 'content-type: application/json' \
-  -d '{"userRequest":{"utterance":"오사카 호텔 추천해줘","user":{"properties":{"botUserKey":"u1"}}}}' | jq
-
-# 스킬 호출 테스트 (항공권)
-curl -s -X POST localhost:8000/api/v1/kakao/flights/search \
-  -H 'content-type: application/json' \
-  -d '{"userRequest":{"utterance":"다음달 3일 오사카 왕복 항공권 2명","user":{"properties":{"botUserKey":"u1"}}}}' | jq
-
-# 스킬 호출 테스트 (관광지)
-curl -s -X POST localhost:8000/api/v1/kakao/attractions/recommend \
-  -H 'content-type: application/json' \
-  -d '{"userRequest":{"utterance":"오사카 관광지 추천해줘","user":{"properties":{"botUserKey":"u1"}}}}' | jq
+# 스킬 호출 테스트 — 셋 다 같은 URL 이다. 발화가 도메인을 정한다.
+for u in "오사카 호텔 추천해줘" "오사카 항공권 찾아줘" "도톤보리 맛집 알려줘"; do
+  curl -s -X POST localhost:8000/api/v1/kakao/router \
+    -H 'content-type: application/json' \
+    -d "{\"userRequest\":{\"utterance\":\"$u\",\"user\":{\"properties\":{\"botUserKey\":\"u1\"}}}}" | jq
+done
 ```
+
+첫 호출은 "찾고 있어요" 가 정상이다 — 검색이 7~30초라 백그라운드로 빠진다.
+같은 걸 한 번 더 물으면 카드가 나온다.
 
 `SUPABASE_*` 를 비워두면 **no-op 모드**로 동작한다. DB 적재만 건너뛰고 카카오 응답과 리다이렉트는 정상이라, 오픈빌더 연동을 먼저 확인할 때 쓴다.
 
 ```bash
-npm test           # 249개
+npm test           # 213개
 npx tsc --noEmit
 ```
 
 ---
 
-## 호텔은 어떻게 찾는가
+## 무엇을 어떻게 찾는가
 
-고정 데이터가 아니라 **gpt-5-mini 가 웹을 검색해서** 찾는다. 도시 화이트리스트는 없다 — "방콕", "이스탄불", 뭐든 물어보면 검색한다.
+고정 데이터가 아니라 **gpt-5-mini 가 웹을 검색해서** 찾는다. 지역 화이트리스트는 없다 —
+"방콕", "이스탄불", "도톤보리", 뭐든 물어보면 검색한다.
 
-발화 해석도 모델이 한다. 키워드 매칭은 실제 카카오 사용자를 못 버틴다:
+블록이 없으므로 **무엇을 묻는지부터 서버가 정한다.**
 
-| 발화                                          | 결과                |
-| --------------------------------------------- | ------------------- |
-| `오사카 여행갈건데 4명기준으로 숙소 추천해줘` | `osaka`, guests 4   |
-| `오사카 호텔 추천`                            | `osaka` ← 오타 교정 |
-| `동경 숙소`                                   | `tokyo` ← 표기 통일 |
+| 발화 | 해석 |
+| --- | --- |
+| `오사카 호텔 추천해줘` | hotel · 오사카 ← 키워드+사전, **모델 호출 0회** |
+| `오사카 호텔 4명 9월 22~24일` | hotel · 오사카 · ignored: 4명, 9월 22~24일 |
+| `부산에서 오사카 가는 비행기` | flight · 오사카 · from 부산 ← 지명이 둘이라 모델 |
+| `도톤보리 맛집 알려줘` | attraction · 도톤보리(오사카) ← 사전에 없어 모델 |
+| `안녕 다들 뭐해?` | 도움말 카드. **모델 호출 0회** |
 
 ```
-[사용자] "오사카 여행갈건데 4명기준으로 숙소 추천해줘"
+[단톡방] "@여행메이트 오사카 호텔 4명 9월 22~24일 추천해줘"
     ↓
-발화 캐시 ─ 히트 ─→ (모델 호출 없음)
+멘션 제거 → 여행 신호 확인(정규식)  ── 없으면 도움말 [끝, 0원]
+    ↓
+의도·지역 해석 ─ 캐시/키워드+사전 ─→ (모델 호출 없음)
     │
-   미스 → gpt-5-nano 파싱 (툴 없음, minimal, 4초 컷) → { osaka, guests:4 }
+   미스 → gpt-5-nano (툴 없음, minimal, 4초 컷)
+    ↓   { intent: hotel, place: 오사카, ignored: [4명, 9월 22~24일] }
+지역 정규화 → place_id (사전 → place_aliases → 모델 → 원문 등록)
     ↓
-캐시 조회 ─── 히트 ──→ listCard 즉시 응답 (~50ms)
+search_results 조회 ─ 히트 ─→ listCard 5줄 + 고지 즉시 응답 (~50ms)
     │
-   미스
+   미스 → pending 선점 (동시 요청은 여기서 하나로 묶인다)
     ↓
-useCallback 응답 (~100ms)  "방콕 호텔을 찾고 있어요 🔍"
+useCallback 응답 (~100ms)  "오사카 호텔을 찾고 있어요 🔍"
     ↓  ← 여기서 카카오와의 5초 예산은 끝난다
 [백그라운드]
-  gpt-5-mini + web_search  →  후보 15곳 수집    (구조화 출력)
-  gpt-5-mini               →  가격·위치·평점 비교 → 상위 5곳 (구조화 출력)
-  예약 URL → 애드픽 커미션 링크 변환
-  clickId 발급 + DB 적재
+  gpt-5-mini + web_search  →  후보 30곳 수집    (구조화 출력)
+  gpt-5-mini               →  가격·위치·평점 비교 → 상위 20곳 (구조화 출력)
+  예약 URL → 애드픽 커미션 링크 변환 · clickId 발급 · DB 적재
+  search_results 에 20건 저장 (5건씩 4페이지로 낸다)
     ↓
 POST callbackUrl → listCard 도착 (합쳐서 7~30초)
 ```
+
+### ⚠️ 날짜·인원은 검색에 반영되지 않는다
+
+캐시를 **지역**(항공권은 노선·왕복여부)으로만 가른다. 날짜까지 키에 넣으면 캐시가 거의
+안 맞아 질문 하나가 곧 AI 호출 하나가 된다.
+
+대신 **반영하지 않았다는 사실을 카드 아래에 반드시 적는다.**
+
+```
+AI가 정리한 참고 정보예요. 가격은 실제와 다를 수 있어요.
+날짜·인원(4명, 9월 22일~24일)은 반영되지 않았어요.
+```
+
+> 이건 타협이 아니라 **전제 조건**이다. 고지 없이 날짜를 무시한 결과를 주면 그 날짜에
+> 예약 불가한 호텔과 다른 가격이 나오고, 사용자는 속았다고 느낀다.
 
 ### ⚠️ 오픈빌더에서 콜백을 켜야 한다
 
@@ -88,126 +109,89 @@ POST callbackUrl → listCard 도착 (합쳐서 7~30초)
 
 켜져 있으면 카카오가 요청에 `userRequest.callbackUrl` 을 실어 보낸다. 이 필드의 존재 여부가 "콜백을 써도 되는가"의 유일한 판단 근거다 ([skill-payload.dto.ts](src/modules/kakao/dto/skill-payload.dto.ts)). 꺼진 상태에서 `useCallback` 을 보내면 사용자는 **아무 말풍선도 못 받는다.**
 
+> ⚠️ **그룹챗봇이 콜백 푸시를 실제로 받는지는 검증되지 않았다.** 팀톡방에서 확인하고,
+> 안 되면 폴백 블록의 [콜백 사용] 을 끄면 된다 — 코드가 자동으로 "다시 물어봐 주세요"
+> 경로로 간다.
+
 콜백이 꺼져 있으면 자동으로 폴백한다: "찾고 있어요, 30초 뒤에 다시 물어봐 주세요" 로 넘기고 백그라운드에서 검색해 캐시에 넣는다. 두 번째 요청부터는 캐시에서 바로 나간다.
 
 ### 검색이 되는지 확인하려면
 
-스킬 엔드포인트 응답으로는 **성공·실패를 알 수 없다.** 검색을 기다리지 않고 응답하므로 늘 "찾고 있어요" 다. 키가 틀렸든 OpenAI 가 죽었든 응답은 똑같다.
+라우터 응답으로는 **성공·실패를 알 수 없다.** 검색을 기다리지 않고 응답하므로 늘
+"찾고 있어요" 다. 키가 틀렸든 OpenAI 가 죽었든 응답은 똑같다.
 
-그래서 **같은 로직을 동기로 돌리는 진단 엔드포인트**를 따로 뒀다.
-
-스킬과 **똑같이 발화 하나만** 받아서 파싱부터 검색까지 다 돌리고, **사용자에게 실제로 배달되는 말풍선 JSON 을 그대로** 돌려준다.
-
-> ⚠️ 스킬 엔드포인트의 **즉시 응답과는 다르다.** 캐시 미스면 거기서는 `useCallback` 만 나가고 이 카드는 잠시 뒤 **콜백으로** 배달된다 — 여기 나오는 건 그 콜백 본문이다. 캐시 히트일 때만 스킬 응답 자체와 같다.
+그래서 **같은 로직을 동기로 돌리는 진단 엔드포인트**를 따로 뒀다. 둘 다 `DEBUG_TOKEN`
+이 비어 있으면 **404** 다.
 
 ```bash
-curl -sG https://bot.nolmoa.com/api/v1/debug/hotel-search \
-  -H "x-debug-token: $DEBUG_TOKEN" \
-  --data-urlencode "utterance=오사카 여행갈건데 4명기준으로 숙소 추천해줘" | jq
+# ① 해석만 — 싸고 빠르다. "왜 도움말이 나오지?" 를 가릴 때 여기부터 본다
+curl -s -X POST https://bot.nolmoa.com/api/v1/debug/parse \
+  -H 'content-type: application/json' -H "x-debug-token: $DEBUG_TOKEN" \
+  -d '{"utterance":"오사카 호텔 4명 9월 22~24일 추천해줘"}' | jq
 ```
 
 ```json
 {
-  "version": "2.0",
-  "template": {
-    "outputs": [
-      {
-        "listCard": {
-          "header": { "title": "오사카 호텔 추천 5곳" },
-          "items": [
-            {
-              "title": "호텔 그란비아 오사카",
-              "description": "1박 172,000원~ · 평점 9.1 · 우메다",
-              "link": { "web": "https://bot.nolmoa.com/r/Ab3xY9kQ2mZp" }
-            }
-          ],
-          "buttons": [{ "label": "더 보기", "action": "block", "blockId": "6a93…", "extra": { "city": "오사카", "offset": 5 } }]
-        }
-      }
-    ],
-    "quickReplies": [{ "label": "도쿄 호텔", "action": "message", "messageText": "도쿄 호텔 추천해줘" }]
-  }
+  "intent": { "intent": "hotel", "place": "오사카", "from": null,
+              "tripType": "rt", "ignored": ["4명", "9월 22일~24일"] },
+  "place": { "id": 12, "canonicalName": "오사카", "slug": "osaka", "kind": "city", "iata": "KIX" },
+  "cacheKey": "hotel:12",
+  "timing": { "parseMs": 780, "totalMs": 910 }
 }
 ```
 
-**조립은 `HotelService` 의 같은 코드를 태운다.** 제목 40자 잘림, 설명 문구, 줄 링크, 버튼·퀵리플라이까지 운영과 동일하다 — 진단용으로 비슷한 걸 따로 만들면 검증이 되지 않는다. 도시를 못 알아들으면 되묻기가, 결과가 없으면 그 안내 문구가 나오는 것도 스킬과 같다.
-
-`clickId` 는 인메모리에 남으므로 **줄 링크를 그대로 눌러 애드픽 이동까지 확인**할 수 있다. 응답을 통째로 복사해 오픈빌더 스킬 테스트에 넣어봐도 된다.
-
-#### 진단 정보는 `trace=true`
+`intent` 가 unknown 인지, `place` 를 못 뽑은 건지, 지역이 엉뚱하게 정규화된 건지가
+여기서 갈린다. **셋은 완전히 다른 문제다.**
 
 ```bash
-curl -sG https://bot.nolmoa.com/api/v1/debug/hotel-search \
-  -H "x-debug-token: $DEBUG_TOKEN" \
-  --data-urlencode "utterance=오사카 호텔 추천해줘" -d trace=true | jq .debug
+# ② 전체 파이프라인 — 검색까지 끝까지 돌린다 (7~30초, OpenAI 요금)
+curl -s -X POST https://bot.nolmoa.com/api/v1/debug/search \
+  -H 'content-type: application/json' -H "x-debug-token: $DEBUG_TOKEN" \
+  -d '{"utterance":"오사카 호텔 추천해줘"}' | jq .response
 ```
+
+**사용자에게 실제로 배달되는 말풍선 JSON 을 그대로** 돌려준다.
+
+> ⚠️ 라우터의 **즉시 응답과는 다르다.** 캐시 미스면 거기서는 `useCallback` 만 나가고
+> 이 카드는 잠시 뒤 **콜백으로** 배달된다 — 여기 나오는 건 그 콜백 본문이다.
+
+**조립은 운영과 같은 코드를 태운다.** 제목 40자 잘림, 설명 문구, 줄 링크, 버튼·고지
+말풍선까지 동일하다 — 진단용으로 비슷한 걸 따로 만들면 검증이 되지 않는다.
+**캐시를 읽지도 쓰지도 않고**, 통계(`recommendations`)에도 아무것도 쓰지 않는다
+(진단 호출이 섞이면 전환율 집계가 틀어진다). `clickId` 는 인메모리에 남으므로
+**줄 링크를 눌러 이동까지 확인**할 수 있다.
+
+> ⚠️ 호출 한 번이 곧 OpenAI 요금이다. `/docs` 가 공개돼 있으므로 **운영에서는
+> `DEBUG_TOKEN` 을 반드시 채운다.**
+
+### "더 보기" — 버튼이 커서를 들고 다닌다
+
+listCard 는 5줄이 한계다. 그래서 **찾는 개수와 보여주는 개수를 분리했다** —
+`RESULT_MAX_ITEMS`(기본 20)만큼 찾아 **한 행에 통째로 저장**하고, 카드에는 5줄씩 끊어
+최대 4페이지로 낸다. **2페이지를 위해 AI 를 다시 부르지 않는다.**
+
+서버는 "누가 어디까지 봤는지" 를 기억하지 않는다. 버튼이 커서를 싣는다.
 
 ```json
-{
-  "ok": true,
-  "utterance": "오사카 여행갈건데 4명기준으로 숙소 추천해줘",
-  "parsed": { "citySlug": "osaka", "cityName": "오사카", "guests": 4, "nights": null },
-  "timings": {
-    "parseMs": 780,
-    "searchMs": 11240,
-    "rankMs": 3380,
-    "thumbnailMs": 820,
-    "totalMs": 16230
-  },
-  "counts": {
-    "searchCalls": 3,
-    "picks": 5,
-    "droppedUntrusted": 1,
-    "hotels": 4
-  },
-  "hotels": [
-    { "name": "…", "cardDescription": "1박 172,000원~ · 평점 9.1 · 우메다" }
-  ],
-  "hint": null
-}
+{ "label": "더 보기", "action": "block", "blockId": "<폴백 블록>",
+  "messageText": "오사카 호텔 더 보기",
+  "extra": { "cache_key": "hotel:12", "offset": 5 } }
 ```
 
-**여기서 진짜 걸리는 시간을 잰다.** 발화 파싱도 호텔 검색도 캐시를 타지 않고 매번 실제로 부르며, 통계(`recommendations`)에는 아무것도 쓰지 않는다(진단 호출이 섞이면 전환율 집계가 틀어진다). 실패하면 `debug.ok: false` 와 에러 메시지가 그대로 담기고, 결과가 비면 `hint` 가 어디를 봐야 하는지 알려준다.
-
-`parsed` 로 **모델이 발화를 어떻게 알아들었는지** 확인할 수 있고, `timings.parseMs` 가 카카오 5초 예산에서 실제로 깎이는 시간이다.
-
-결과가 비면 `parse` 블록이 **"도시를 못 알아들었다"와 "타임아웃이라 물어보지도 못했다"를 구분해준다.** 둘은 완전히 다른 문제다.
-
-```json
-"parse": { "source": "model", "model": "gpt-5-nano", "timeoutMs": 4000,
-           "timedOut": true, "error": "openai timeout after 4000ms" }
-```
-
-파싱 모델(`OPENAI_PARSE_MODEL`)은 검색 모델과 분리돼 있다. 검색은 품질이 중요하고 콜백 예산(1분)을 쓰지만, **파싱은 5초 예산 안에서 도는 유일한 모델 호출이라 속도가 곧 품질이다.** 느리면 도시를 못 알아들은 것과 똑같이 보인다.
-
-| 옵션              | 용도                                                                         |
-| ----------------- | ---------------------------------------------------------------------------- |
-| `trace=true`       | 소요 시간·개수·설정·실패 원인을 `debug` 키로 같이 받는다                    |
-| `affiliate=false`  | 애드픽 변환을 건너뛴다 (**기본은 켜짐**)                                     |
-| `candidates=true`  | 1차 웹 검색 원문을 그대로 본다 — 모델이 뭘 긁어왔는지 (`trace=true` 필요)   |
-
-> `affiliate` 를 켜든 끄든 **카드 JSON 은 같다.** 줄 링크는 어차피 `/r/{clickId}` 이고, 애드픽 주소는 그 302 목적지로만 쓰인다. 끄면 그 목적지가 원본 주소가 되므로, **커미션 링크가 제대로 나가는지 보려면 켜둔 채로 확인해야 한다** — `counts.affiliateFallback` 이 0 이어야 정상이다.
-
-> ⚠️ 호출 한 번이 곧 OpenAI 요금이다. `/docs` 가 공개돼 있으므로 **운영에서는 `DEBUG_TOKEN` 을 반드시 채운다.** 비워두면 `APP_ENV=production` 에서 404 로 닫힌다.
->
-> 한글 도시명은 URL 인코딩이 필요하다 (`--data-urlencode`). 스웨거에서는 자동으로 된다.
-
-### "더 보기" — listCard 5줄 뒤
-
-listCard 는 5줄이 한계다. 그래서 **찾는 개수와 보여주는 개수를 분리했다** — `*_RESULT_LIMIT`(기본 10)만큼 찾아 캐시에 넣고, 카드에는 5줄씩 끊어 낸다. 검색 비용은 거의 그대로다(1차 후보 수집은 어차피 15곳이고 2차가 더 많이 고를 뿐). 대신 호텔 썸네일·관광지 사진을 10건 받아오므로 그만큼 느려진다.
-
-버튼은 두 경로를 다 받는다.
+`blockId` 는 설정(`KAKAO_BLOCK_ID_FALLBACK`)이 비어 있으면 **요청이 알려준
+`userRequest.block.id`** 를 쓴다. 라우터를 부른 게 곧 폴백 블록이므로 그게 정답이고,
+블록을 다시 만들어 ID 가 바뀌어도 저절로 따라간다.
 
 | 방식 | 어떻게 | 한계 |
 |---|---|---|
-| `block` (기본) | `extra: { city, offset }` → 서버가 `action.clientExtra` 로 받는다 | 서버가 상태를 안 들고 N 페이지 |
-| `message` | 평범한 메시지 버튼 (`"도쿄 호텔 더 보기"`) | 발화에 offset 을 못 실어 **다음 한 페이지까지만** |
+| `block` (기본) | `extra: { cache_key, offset }` → 서버가 `action.clientExtra` 로 받는다 | 서버가 상태를 안 들고 4페이지 |
+| `message` | 평범한 메시지 버튼 (`"오사카 호텔 더 보기"`) | 커서를 못 실어 **서버가 발화자별로 30분 기억** |
 
-⚠️ **그룹챗방에서 `action: "block"` 이 되는지 확인되지 않았다.** itemCard 가 안 됐던 전례가 있다. 버튼을 눌렀는데 아무 반응이 없으면 `MORE_BUTTON_STYLE=message` 로 내리면 되고, 그 경로의 발화(`"도쿄 호텔 더 보기"`)는 오픈빌더에 이미 등록돼 있다.
+⚠️ **그룹챗방에서 `action: "block"` 이 되는지 확인되지 않았다.** itemCard 가 안 됐던
+전례가 있다. 버튼을 눌렀는데 아무 반응이 없으면 `MORE_BUTTON_STYLE=message` 로 내려라.
 
-⚠️ **다음 페이지가 없으면 버튼을 달지 않는다.** 남은 게 없는데 달면 눌러도 같은 5개가 다시 나오고, 사용자는 그걸 고장으로 읽는다.
-
-**버튼은 "더 보기" 하나뿐이다** (관광지만 '사진 출처' 가 하나 더 붙는다). 예전 '다른 도시 보기' 는 뺐다 — 누르면 도시 없는 문장이 가서 되묻기만 나왔고, **결과가 안 나오는 버튼**이 두 칸뿐인 자리를 먹고 있었다. 도시 전환은 quickReplies 가 이미 한다.
+⚠️ **다음 페이지가 없으면 버튼을 달지 않는다.** 남은 게 없는데 달면 눌러도 같은 5개가
+다시 나오고, 사용자는 그걸 고장으로 읽는다.
 
 ### 카드 이미지는 어디서 오나
 
@@ -241,10 +225,14 @@ listCard 는 5줄이 한계다. 그래서 **찾는 개수와 보여주는 개수
 
 | 장치                   | 하는 일                                                                         |
 | ---------------------- | ------------------------------------------------------------------------------- |
-| 발화 캐시              | 같은 문장은 두 번 파싱하지 않는다 (`NLU_ALIAS_TTL_MINUTES`)                     |
-| 검색 결과 캐시         | 같은 도시를 100명이 물어도 OpenAI 호출은 1회 (`SEARCH_CACHE_TTL_MINUTES`)       |
-| 메모리 캐시 단         | DB 가 죽어도 캐시는 산다. 캐시가 죽으면 요청 하나가 곧 요금이다                 |
-| in-flight 병합         | 같은 도시 동시 요청을 검색 1회로 묶는다                                         |
+| 1차 필터 (정규식)      | 여행과 무관한 잡담은 **모델을 아예 안 부른다** — 단톡방 발화의 대부분이다      |
+| 키워드 + 도시 사전     | "오사카 호텔 추천해줘" 는 모델 없이 끝난다 (0ms · 0원)                          |
+| 의도 캐시              | 같은 문장은 두 번 해석하지 않는다 (`INTENT_CACHE_TTL_MINUTES`, 7일)             |
+| 지역 별칭              | "동경"·"osaka"·"오사카시" 가 한 `place_id` 로 모인다 — 캐시 적중률의 전부       |
+| 검색 결과 저장         | 같은 지역을 100명이 물어도 OpenAI 호출은 1회 (`*_CACHE_TTL_MINUTES`)            |
+| 메모리 단              | DB 가 죽어도 저장소는 산다. 저장소가 죽으면 요청 하나가 곧 요금이다             |
+| `pending` 선점         | 동시 요청을 검색 1회로 묶는다 (Redis 없이 Postgres 만으로)                      |
+| 더보기 = 저장된 행     | 2~4페이지는 AI 호출 0회                                                         |
 | 호스트 허용 목록       | 모델이 지어낸 예약 URL 을 버린다 — 트립닷컴·마이리얼트립·클룩·호텔스닷컴만 통과 |
 | 썸네일 수집·검증       | 예약 페이지에서 대표 이미지를 긁고, 살아 있는 주소만 카드에 넣는다              |
 | 두 호출 다 구조화 출력 | 모델이 결과 대신 "진행할까요?" 라고 되묻을 자리를 없앤다                        |
@@ -253,19 +241,18 @@ listCard 는 5줄이 한계다. 그래서 **찾는 개수와 보여주는 개수
 
 ## 엔드포인트
 
-| 메서드 | 경로                             | 용도                                                                |
-| ------ | -------------------------------- | ------------------------------------------------------------------- |
-| POST   | `/api/v1/kakao/hotels/recommend` | 오픈빌더 [호텔추천] 블록 스킬 → `listCard`                          |
-| POST   | `/api/v1/kakao/flights/search`   | 오픈빌더 [항공권검색] 블록 스킬 → `itemCard` 캐러셀                 |
-| POST   | `/api/v1/kakao/attractions/recommend` | 오픈빌더 [관광지추천] 블록 스킬 → `listCard` (구글맵 링크)     |
-| POST   | `/api/v1/kakao/fallback`         | 폴백 블록 (호텔·항공권·관광지 안내)                                 |
-| GET    | `/r/{clickId}`                   | **클릭 카운트 → 애드픽 302 리다이렉트** (DB 왕복 1회)               |
-| GET    | `/health`                        | 앱 생존 (DB 안 건드림)                                              |
-| GET    | `/health/db`                     | Supabase 실제 연결 진단                                             |
-| GET    | `/api/v1/debug/hotel-search`     | **진단용 동기 검색** — 사용자가 보는 말풍선 그대로 (`DEBUG_TOKEN`)  |
-| GET    | `/api/v1/debug/flight-search`    | 같은 것의 항공권판 (`DEBUG_TOKEN`)                                  |
-| GET    | `/api/v1/debug/attraction-search`| 같은 것의 관광지판 (`DEBUG_TOKEN`)                                  |
-| GET    | `/docs`                          | Swagger (운영에서도 켜져 있다)                                      |
+| 메서드 | 경로 | 용도 |
+| ------ | ---- | ---- |
+| POST | `/api/v1/kakao/router` | **유일한 스킬 진입점.** 폴백 블록이 부른다 |
+| GET | `/r/{clickId}` | 클릭 카운트 → 애드픽/구글맵 302 (DB 왕복 1회) |
+| GET | `/health` · `/health/db` | 앱 생존 · Supabase 연결 진단 |
+| POST | `/api/v1/debug/parse` | 발화 해석만 (`DEBUG_TOKEN`) |
+| POST | `/api/v1/debug/search` | **동기 전체 파이프라인** — 실제 말풍선 그대로 (`DEBUG_TOKEN`) |
+| GET | `/docs` | Swagger (운영에서도 켜져 있다) |
+
+예전의 `hotels/recommend` · `flights/search` · `attractions/recommend` · `fallback` 은
+**없앴다.** 오픈빌더에 블록이 없어 아무도 부를 수 없고, 열어두면 "쓰이지 않는데 살아
+있는 경로" 가 된다. 도메인 코드는 그대로 남아 라우터가 내부에서 부른다.
 
 ### 링크는 이렇게 만들어진다
 
@@ -312,9 +299,9 @@ AI 검색 → 원본 주소 (kr.trip.com/hotels/detail?id=12345)
       {
         "label": "더 보기",
         "action": "block",
-        "blockId": "6a9398f895f722d77da02d42",
+        "blockId": "6a90f3a995f722d77d9fd0e6",
         "messageText": "오사카 호텔 더 보기",
-        "extra": { "city": "오사카", "offset": 5 }
+        "extra": { "cache_key": "hotel:12", "offset": 5 }
       }
     ]
   }
@@ -323,68 +310,65 @@ AI 검색 → 원본 주소 (kr.trip.com/hotels/detail?id=12345)
 
 **각 줄의 `link.web` 이 호텔마다 다른 `clickId`** 를 가리킨다. 줄 전체가 클릭 영역이라 별도 버튼 없이도 어떤 호텔을 골랐는지 추적된다.
 
-카카오 제약은 [`templates.ts`](src/modules/kakao/templates.ts) 에서 처리한다 — items **최대 5개**, 버튼 최대 2개, 라벨 14자. 그래서 서비스는 **애드픽 API 를 호출하기 전에** 호텔을 5개로 자른다.
+카카오 제약은 [`templates.ts`](src/modules/kakao/templates.ts) 에서 처리한다 — items **최대 5개**, 버튼 최대 2개, 라벨 14자. 그래서 서비스는 **애드픽 API 를 호출하기 전에** 이번 페이지의 5개로 자른다 — 이번 카드에 안 나갈 호텔까지 변환하면 분당 60회 제한을 헛되이 쓴다.
 
-### 항공권은 `itemCard` 캐러셀
+카드 **뒤에는 고지 말풍선이 하나 더 붙는다.** header 40자·설명 40자에는 "AI 가 정리한
+참고 정보" 도 "날짜·인원은 반영되지 않았다" 도 안 들어가는데, 둘 다 없으면 사용자가
+결과를 사실로 믿는다. 앞에 세우면 결과를 가리므로 **카드가 먼저다.**
 
-> 전체 흐름·프롬프트·실패 진단은 **[docs/FLIGHT.md](docs/FLIGHT.md)** 에 따로 정리했다.
+### 항공권도 `listCard` 다
 
-항공권은 listCard 에 담을 수 없다. **한 줄이 40자**인데 항공권 1건을 고르려면 항공사·편명·출발/도착 시각·소요·경유·가격이 다 필요하다. 그래서 key-value 줄을 세로로 쌓을 수 있는 [itemCard](https://kakaobusiness.gitbook.io/main/tool/chatbot/skill_guide/answer_json_format) 를 캐러셀로 보낸다.
+> 전체 흐름·프롬프트·실패 진단은 **[docs/FLIGHT.md](docs/FLIGHT.md)**.
 
-캐러셀에는 listCard 의 `header` 같은 자리가 없다. 노선·조건·가격 주의 같은 **공통 맥락은 앞에 `simpleText` 하나를 세워** 전달한다 (카카오는 outputs 를 3개까지 받는다).
+원래는 `itemCard` 캐러셀이었다. 항공권 1건을 고르려면 항공사·편명·시각·소요·경유·가격이
+다 필요한데 listCard 한 줄은 40자뿐이라, key-value 5줄을 쌓을 수 있는 itemCard 가 맞았다.
+
+**그런데 그룹챗봇이 itemCard 를 못 그린다 — 말풍선이 통째로 사라진다.** 팀톡방에서
+항공권만 무응답이던 원인이 이것이다. 호텔·관광지가 같은 방에서 멀쩡한 건 listCard 라서다.
+
+그래서 정보 밀도를 포기하고 모양을 맞췄다. 한 줄에 들어갈 것만 남긴다.
 
 ```json
 {
-  "outputs": [
-    { "simpleText": { "text": "서울→오사카 왕복 항공권 5편이에요 ✈️\n…\n가격은 검색 시점 기준이라 실제 예약가와 다를 수 있어요." } },
-    {
-      "carousel": {
-        "type": "itemCard",
-        "items": [
-          {
-            "head": { "title": "서울 → 오사카 · 10/3(토)" },
-            "itemList": [
-              { "title": "항공사", "description": "대한항공 KE723" },
-              { "title": "가는편", "description": "10/3(토) 09:20→11:00" },
-              { "title": "오는편", "description": "10/6(화) 12:30→14:20" },
-              { "title": "소요", "description": "1시간 40분 · 직항" }
-            ],
-            "itemListAlignment": "right",
-            "itemListSummary": { "title": "예상가", "description": "1인 289,000원" },
-            "buttons": [
-              { "action": "webLink", "label": "예약 페이지 보기", "webLinkUrl": "https://…/r/Ab3xY9kQ2mZp" }
-            ]
-          }
-        ]
+  "listCard": {
+    "header": { "title": "서울→오사카 항공권 5편" },
+    "items": [
+      {
+        "title": "대한항공 KE723 · 289,000원",
+        "description": "10/3(토) 09:20→11:00 · 1시간 40분 · 직항",
+        "link": { "web": "https://…/r/Ab3xY9kQ2mZp" }
       }
-    }
-  ]
+    ],
+    "buttons": [{ "label": "더 보기", "action": "block", "…": "…" }]
+  }
 }
 ```
 
-itemCard 제한이 listCard 보다 빡빡하다 — **itemList 5줄, key 6자, value 1줄(20자), 캐러셀 10장.** 넘기면 잘려서 보이는 게 아니라 **말풍선이 통째로 렌더링되지 않는다.** 그래서 `templates.ts` 가 잘라 넣고, 값이 빈 줄은 아예 만들지 않는다. 왕복이면 4줄이 차므로 새 줄을 넣기 전에 무엇을 뺄지 먼저 정해야 한다.
-
-`itemListAlignment: "right"` 는 취향이 아니다. 시각과 금액이 세로로 정렬돼야 카드를 넘기며 비교할 수 있다.
+**가격을 제목에 둔다.** 항공편을 고르는 첫 번째 축이고, listCard 는 제목이 설명보다
+눈에 먼저 들어온다. 왕복이면 두 구간의 날짜·출발 시각만으로 40자가 차서 **도착 시각과
+소요 시간을 버린다** — 대신 직항 여부는 남긴다. 경유가 몇 번인지는 예약 페이지를 열기
+전에 알아야 거르기 때문이다.
 
 **호텔과 다른 점 세 가지**
 
 | | 호텔 | 항공권 |
 | --- | --- | --- |
-| 카드 | `listCard` 한 장 (5줄) | `simpleText` + `itemCard` 캐러셀 |
-| 캐시 TTL | `SEARCH_CACHE_TTL_MINUTES` (60분) | `FLIGHT_CACHE_TTL_MINUTES` (30분) — 운임이 빨리 상한다 |
+| 캐시 키 | `hotel:{place_id}` (24시간) | `flight:{from}>{to}:{rt\|ow}` (6시간) — 운임이 빨리 상한다 |
+| 왜 키가 다른가 | 지역 하나 | **출발지·도착지·왕복여부**가 다 들어가야 한다. 지역만으로 잡으면 왕복 요청에 편도 결과가 나간다 |
 | 항목의 신원 | `source_url` (호텔 1곳 = 주소 1개) | 편명 + 출발시각 — **여러 편이 같은 노선 검색 페이지를 공유한다** |
 
-마지막 줄이 중요하다. 호텔처럼 주소로 중복을 지우면 **카드가 한 장만 남는다.**
+마지막 줄이 중요하다. 호텔처럼 주소로 중복을 지우면 **줄이 하나만 남는다.**
 
 ### ⚠️ 항공권 가격은 확정 운임이 아니다
 
 실시간 운임 API 가 없다. 웹 검색으로 얻는 건 "그 노선이 대략 얼마인가"이지 지금 살 수 있는 가격이 아니다. 그래서
 
-- 카드 요약 줄은 `예상가` 로 적는다 (`최저가` 가 아니다)
-- 안내 말풍선에 "가격은 검색 시점 기준이라 실제 예약가와 다를 수 있어요" 가 **항상** 들어간다
+- 고지 말풍선에 "AI가 정리한 참고 정보예요. 가격은 실제와 다를 수 있어요" 가 **항상** 들어간다
+- **날짜를 검색에 넘기지 않으므로** 특정 날짜의 운임이 아니라 "최근 기준 일반적인 요금대" 다. 그 사실도 고지에 적힌다
 - 실제 금액은 예약 페이지에서 확정된다
 
-`/api/v1/debug/flight-search?trace=true` 의 `counts.searchCalls` 가 0 이면 모델이 웹 검색을 안 하고 기억으로 답한 것이라 그 가격은 더더욱 믿을 수 없다.
+서버 로그의 `searchCalls` 가 0 이면 모델이 웹 검색을 안 하고 기억으로 답한 것이라 그
+가격은 더더욱 믿을 수 없다.
 
 GDS·항공사 API 가 붙으면 `FLIGHT_PROVIDER` 만 갈아끼우면 된다 — 서비스와 카드 조립 코드는 그대로다.
 
@@ -392,7 +376,8 @@ GDS·항공사 API 가 붙으면 `FLIGHT_PROVIDER` 만 갈아끼우면 된다 �
 
 "오사카 항공권" 처럼 출발지를 빼고 말하는 게 보통이다. 되묻는 대신 `FLIGHT_DEFAULT_ORIGIN_*`(기본 서울/ICN)에서 출발한다고 보고, **안내 말풍선에 "서울 출발 기준이에요" 를 적는다.** 부산에서 출발하려던 사람이 그 한 줄을 보고 고쳐 말할 수 있어야 한다 — 조용히 추측하면 잘못된 노선의 가격을 믿게 된다.
 
-`FlightNluService` 는 이 추측을 하지 않는다. 출발지가 없으면 `null` 을 주고, 채우는 건 `FlightService.queryOf()` 다 (`originAssumed` 플래그가 그 사실을 카드까지 들고 간다).
+발화 해석기는 이 추측을 하지 않는다. 출발지가 없으면 `null` 을 주고, 채우는 건
+`SearchService` 다 (`originAssumed` 플래그가 그 사실을 고지 말풍선까지 들고 간다).
 
 
 ### 관광지는 `listCard` + 구글맵
@@ -420,7 +405,8 @@ mapsUrl('오사카성', '오사카')
   [더 보기] [사진 출처: 위키미디어]
 ```
 
-발화 파서는 **호텔과 공유한다** (뽑을 게 도시 하나로 같다). 별칭 캐시도 공유되므로 "오사카 호텔" 을 물어본 사람이 "오사카 관광지" 를 물으면 파싱이 공짜다.
+발화 해석기와 지역 정규화는 **세 도메인이 공유한다.** "오사카 호텔" 을 물어본 사람이
+"오사카 관광지" 를 물으면 지역 해석이 공짜다 (같은 `place_id` 에 닿는다).
 
 ### ⚠️ 입장료를 원화로 환산시키지 않는다
 
@@ -463,25 +449,37 @@ mapsUrl('오사카성', '오사카')
 ## Supabase 셋업
 
 1. 프로젝트 생성 — **리전 Seoul** 권장
-2. SQL Editor 에 [`0001_init.sql`](supabase/migrations/0001_init.sql) → [`0002_flight.sql`](supabase/migrations/0002_flight.sql) → [`0003_attraction.sql`](supabase/migrations/0003_attraction.sql) 순서로 붙여넣고 실행 (재실행 안전)
+2. SQL Editor 에 [`0001_init.sql`](supabase/migrations/0001_init.sql) → [`0002_flight.sql`](supabase/migrations/0002_flight.sql) → [`0003_attraction.sql`](supabase/migrations/0003_attraction.sql) → [`0004_router.sql`](supabase/migrations/0004_router.sql) 순서로 붙여넣고 실행 (재실행 안전)
 3. `.env` 에 `SUPABASE_URL` 과 `SUPABASE_SERVICE_ROLE_KEY` 입력 → [자세히](docs/DEPLOY.md)
 
 시드 스크립트는 없다. **호텔·항공권·관광지 데이터는 전부 provider 가 런타임에 만든다.**
 
-### 테이블 (6개 — 세 도메인 공용)
+### 테이블 (9개 — 세 도메인 공용)
 
-| 그룹      | 테이블                                                            |
-| --------- | ----------------------------------------------------------------- |
-| 캐시      | `search_cache` · `affiliate_links`                                |
+| 그룹 | 테이블 |
+| --- | --- |
+| 지역 | `places` · `place_aliases` |
+| 결과·캐시 | `search_results` · `intent_cache` · `affiliate_links` |
 | 행동 로그 | `users` · `messages` · `recommendations` · `recommendation_items` |
 
 **전부 코드가 실제로 읽고 쓴다.** 빈 껍데기 테이블은 없다.
+(`search_cache` 는 라우터 이전 구조의 잔재다 — 이제 읽지 않지만 롤백을 위해 남겨뒀다)
 
-흐름: 발화 1건 → `messages` 1행 → `recommendations` 1행 → `recommendation_items` N행(노출) → 클릭 시 그 행의 `click_count` 증가
+흐름: 발화 1건 → `messages` 1행 → `search_results` 1행(20건, 여러 사람이 공유) →
+`recommendations` 1행(카드 1장) → `recommendation_items` N행(노출) → 클릭 시 `click_count` 증가
 
-**호텔 마스터 테이블은 없다.** 매번 AI/크롤링으로 새로 받는 목록이라 이름으로는 같은 호텔을 못 묶는다. 호텔 신원은 `source_url` 이고 `affiliate_links` 가 그 역할을 한다. 집계는 **이름이 아니라 `source_url` 로** 한다.
+**`places` 를 미리 채우지 않는다.** 질의를 받을 때마다 모르는 지역을 등록하며 자란다.
+"오사카" / "osaka" / "오사카시" 가 같은 `place_id` 로 모이는 것이 캐시 적중률의 전부이고,
+세부 지역("도톤보리")은 자기 행을 갖고 `parent_id` 로 도시에 매달린다.
 
-**항공권·관광지도 같은 테이블을 쓴다.** `domain` 컬럼(`hotel` | `flight` | `attraction`)이 셋을 가른다 — 도메인마다 테이블을 복제하면 "이번 주 클릭 수" 같은 질문이 전부 union 이 되고, 클릭 추적 경로(`/r/{clickId}`)가 어느 테이블을 볼지부터 알아내야 한다. 컬럼 이름이 호텔 시절 그대로인 것들(`recommendation_items.hotel_name` 등)의 의미는 [`0002_flight.sql`](supabase/migrations/0002_flight.sql) 의 주석에 정리돼 있다.
+**호텔 마스터 테이블은 없다.** 매번 AI 로 새로 받는 목록이라 이름으로는 같은 호텔을 못
+묶는다. 호텔 신원은 `source_url` 이고 `affiliate_links` 가 그 역할을 한다.
+
+**항공권·관광지도 같은 테이블을 쓴다.** `domain`/`kind` 컬럼이 셋을 가른다 — 도메인마다
+테이블을 복제하면 "이번 주 클릭 수" 같은 질문이 전부 union 이 되고, 클릭 추적 경로
+(`/r/{clickId}`)가 어느 테이블을 볼지부터 알아내야 한다. 컬럼 이름이 호텔 시절 그대로인
+것들(`recommendation_items.hotel_name` 등)의 의미는
+[`0002_flight.sql`](supabase/migrations/0002_flight.sql) 주석에 정리돼 있다.
 
 ERD와 컬럼별 설명은 **[docs/DB.md](docs/DB.md)**.
 
@@ -489,47 +487,45 @@ ERD와 컬럼별 설명은 **[docs/DB.md](docs/DB.md)**.
 
 ## 카카오 오픈빌더 연결
 
-1. **스킬** 3개 등록
-   - 호텔: `https://bot.nolmoa.com/api/v1/kakao/hotels/recommend`
-   - 항공권: `https://bot.nolmoa.com/api/v1/kakao/flights/search`
-   - 관광지: `https://bot.nolmoa.com/api/v1/kakao/attractions/recommend`
+**블록을 만들지 않는다.** 시나리오 블록·나의 엔티티·대표 명령어를 전부 지운 상태가 전제다.
+
+1. **스킬** 1개 등록 — `https://bot.nolmoa.com/api/v1/kakao/router`
 2. **헤더** `X-Skill-Token` = `.env` 의 `KAKAO_SKILL_TOKEN` ← 빠뜨리면 401
-3. **블록** 3개 생성
-   - `호텔추천` — 예시 발화: `오사카 호텔 추천해줘`, `도쿄 숙소 알려줘`
-   - `항공권검색` — 예시 발화: `오사카 항공권 찾아줘`, `다음달 3일 도쿄 왕복 2명`
-   - `관광지추천` — 예시 발화: `오사카 관광지 추천해줘`, `도쿄 가볼만한 곳`
-4. 폴백 블록 → `/api/v1/kakao/fallback`
-5. **세 블록 모두 [콜백 사용] 을 켠다** ← 안 켜면 첫 검색이 사용자에게 안 간다 ([왜](#-오픈빌더에서-콜백을-켜야-한다))
+3. **폴백 블록** → 그 스킬 연결 + 봇 응답을 **스킬데이터**로
+4. **폴백 블록의 [콜백 사용] 을 켠다** ← 안 켜면 첫 검색 결과가 사용자에게 안 간다 ([왜](#-오픈빌더에서-콜백을-켜야-한다))
+5. 봇 입장 / 도움말 블록에 사용법 안내
 6. 배포 (HTTPS 필수, **응답 5초 제한**)
 
-### 도시는 어떻게 찾는가
+블록이 하나도 없으므로 **봇을 멘션한 모든 발화가 폴백으로 떨어진다.** 그게 이 구조의
+전제이자 장점이다 — 사용자가 명령어를 외우지 않아도 되고, 엔티티 목록(237개 도시)을
+오픈빌더와 코드 양쪽에서 맞춰둘 필요도 없다.
 
-세 블록 모두 같은 순서를 탄다. 위에서 걸리면 아래는 안 본다.
+### 지역은 어떻게 찾는가
+
+위에서 걸리면 아래는 안 본다.
 
 | 순서 | 수단 | 비용 | 무엇을 잡나 |
 |---|---|---|---|
-| 1 | 오픈빌더 엔티티 `여행도시` | 0ms · 0원 | 카카오가 이미 도시로 확정한 값 |
-| 2 | 도시 사전 [`city-table.ts`](src/modules/nlu/city-table.ts) | 0ms · 0원 | 등록된 237개 도시 + 별칭(동경·Cebu·싱가폴) |
-| 3 | 모델 (gpt-5-mini) | ~2초 · 유료 | 사전에 없는 도시, 오타, 긴 문장 |
+| 1 | 프로세스 메모리 · `place_aliases` | 0ms · 0원 | 전에 누군가 물어본 지역 |
+| 2 | 도시 사전 [`city-table.ts`](src/modules/places/city-table.ts) | 0ms · 0원 | 237개 도시 + 별칭(동경·Cebu·싱가폴) + 공항 코드 |
+| 3 | 모델 (gpt-5-nano) | ~1초 · 유료 | 사전에 없는 곳(도톤보리·해운대·시부야), 오타 |
+| 4 | 원문 그대로 등록 | 0원 | 모델까지 실패했을 때. **되묻지 않는다** |
 
-**엔티티 이름은 한국어 그대로다.** 오픈빌더 커스텀 엔티티는 한국어 이름을 파라미터
-키로 쓰므로 서버가 보는 것도 `여행도시` 다 (`city`·`sys_location` 등 영문 이름도
-같이 보긴 한다). 영문 이름만 보던 동안에는 카카오가 정확히 뽑아준 도시를 통째로
-버리고 매번 모델에 다시 물었고, 모델이 2.5초를 넘기면 "어느 도시…" 로 되물었다.
+4번이 규칙이다. **지역을 검증하지 않는다** — "그런 도시 없어요" 로 막지 않고 일단
+검색해 본다. 사용자는 지명을 제대로 말했는데 우리가 모르는 경우가 대부분이고, 틀렸다면
+결과가 비는 것으로 드러난다.
 
-**엔티티를 안 만들어도 된다.** 사전과 모델이 폴백으로 남아 있다. 다만 엔티티를 쓰면
-세 블록이 전부 모델 호출 없이 끝나므로 더 빠르고 싸다. 오픈빌더 엔티티에 도시를
-추가하면 `city-table.ts` 에도 같이 추가해 양쪽을 맞춘다.
+⚠️ **도시 이름을 품은 흔한 말은 문장에서 긁지 않는다.** "사파리 투어" 안에는 **파리**가,
+"테니스 코트" 안에는 **니스**가 들어 있다. 최장 일치로는 못 막는다(더 긴 별칭이 아예
+없다). 훑기 전에 그 말들을 지운다. 같은 이유로 "빈 방"·"어느 나라"·"퍼스트 클래스"는
+도시로 보지 않는다.
 
-1·2 로 도시가 정해져도 **발화에 숫자·날짜 단서가 있으면** 모델을 한 번 더 부른다
-("오사카 호텔 4명 2박", "다음달 3일 오사카 왕복"). 도시는 이미 정해졌으므로 모델이
-도시를 바꿔 말해도 무시한다.
+⚠️ **지명이 둘이면 사전으로 끝내지 않는다.** "서울에서 세부 가는" 은 어느 쪽이 목적지인지
+사전으로 못 가리므로 모델에 넘긴다. 틀린 지역으로 검색하는 것보다 낫다.
 
-⚠️ **항공권은 날짜 엔티티가 와도 모델을 부른다.** `sys_date` 가 "다음달 3일" 을 절대 날짜로 주지 않을 때가 있고, 그러면 검색이 통째로 틀어진다. `YYYY-MM-DD` 형식만 엔티티 값으로 받아들인다.
-
-⚠️ **도시 이름을 품은 흔한 말은 문장에서 긁지 않는다.** "사파리 투어" 안에는 **파리**가, "테니스 코트" 안에는 **니스**가 들어 있다. 최장 일치로는 못 막는다(더 긴 별칭이 아예 없다). 훑기 전에 그 말들을 지운다. 같은 이유로 "빈 방"·"어느 나라"·"퍼스트 클래스"는 도시로 보지 않는다 — 엔티티로 오면 그대로 쓴다.
-
-⚠️ **항공권 출발지 엔티티는 없다.** 오픈빌더에서 발화의 출발지를 태깅하지 않았으므로 도시가 두 개 넘어오길 기대하면 안 된다. 출발지는 발화에서 파싱하고, 없으면 서울(ICN) 출발로 본다.
+⚠️ **봇 멘션을 먼저 떼어낸다.** 봇 이름에 "여행" 이 들어 있어서, 안 떼면
+"@여행메이트 안녕 다들 뭐해?" 같은 인사말이 1차 필터를 통과해 모델 호출이 된다 —
+방 인원수만큼 곱해진다.
 
 ---
 
@@ -546,32 +542,28 @@ src/
 │   ├── database.config.ts             DB 활성 판단, 기대 테이블 목록
 │   └── config.module.ts               전역 제공
 ├── modules/
-│   ├── kakao/                         스킬 엔드포인트
-│   │   ├── kakao.controller.ts        호텔 추천 / 항공권 검색 / 관광지 추천 / 폴백
-│   │   ├── templates.ts               listCard·itemCard·캐러셀 빌더 (길이·개수 제한)
-│   │   └── dto/skill-payload.dto.ts   오픈빌더 요청 접근자
-│   ├── hotel/                         유스케이스 전체 흐름
-│   │   ├── hotel.service.ts           캐시 조회 / 콜백 / 백그라운드 검색
-│   │   ├── hotel.types.ts             Hotel, HOTEL_PROVIDER 토큰
+│   ├── kakao/                         카카오 진입점 — 엔드포인트가 하나뿐이다
+│   │   ├── router.controller.ts       POST /api/v1/kakao/router
+│   │   ├── cards.ts                   사용자가 읽는 문구 (도움말·고지·실패)
+│   │   ├── paging.ts                  커서·페이지 자르기·더보기 버튼
+│   │   ├── templates.ts               listCard 빌더 (길이·개수 제한)
+│   │   └── dto/skill-payload.dto.ts   오픈빌더 요청 접근자 (멘션 제거 포함)
+│   ├── intent/intent.service.ts       의도·지역·무시한 조건 추출 (캐시 → 키워드 → 모델)
+│   ├── places/                        지역 정규화 — 캐시 적중률이 여기서 결정된다
+│   │   ├── places.service.ts          사전 → 별칭 → 모델 → 원문 등록
+│   │   └── city-table.ts              도시 사전 237개 (+ 공항 코드)
+│   ├── search/                        도메인을 모르는 오케스트레이션
+│   │   ├── search.service.ts          캐시 조회 · 선점 · 백그라운드 검색 · 페이지 · 콜백
+│   │   ├── search-store.service.ts    저장소 2단(메모리 → Supabase) + single-flight
+│   │   └── search.types.ts            SearchDomain 계약 (도메인이 구현한다)
+│   ├── hotel/ flight/ attraction/     도메인 — "어떻게 찾고 어떻게 한 줄로 그리는가"
+│   │   ├── *.service.ts               search() + rows() 두 가지만
+│   │   ├── *.types.ts                 항목 타입·카드 문구·PROVIDER 토큰
 │   │   └── providers/openai.provider.ts   gpt-5-mini 2단 호출
-│   ├── flight/                        항공권. 호텔과 같은 흐름, 카드만 다르다
-│   │   ├── flight.service.ts          캐시 조회 / 콜백 / 백그라운드 검색
-│   │   ├── flight.types.ts            Flight, 카드 문구, FLIGHT_PROVIDER 토큰
-│   │   ├── flight-debug.controller.ts /api/v1/debug/flight-search
-│   │   └── providers/openai.provider.ts   gpt-5-mini 2단 호출
-│   ├── attraction/                    관광지. 예약이 없어 애드픽 단계가 통째로 빠진다
-│   │   ├── attraction.service.ts      캐시 조회 / 콜백 / 백그라운드 검색
-│   │   ├── attraction.types.ts        Attraction, 카드 문구, ATTRACTION_PROVIDER 토큰
-│   │   ├── attraction-debug.controller.ts  /api/v1/debug/attraction-search
-│   │   └── providers/openai.provider.ts    gpt-5-mini 2단 호출
 │   ├── openai/openai.service.ts       Responses API 클라이언트
-│   ├── nlu/                           발화 파싱 (모델 호출 + 별칭 캐시)
-│   │   ├── nlu.service.ts             "오사카 4명" → { osaka, guests:4 } (호텔·관광지 공용)
-│   │   ├── flight-nlu.service.ts      "내일 오사카 왕복 2명" → { ICN→KIX, 날짜, 2명 }
-│   │   └── nlu.ts                     자료구조 + 퀵리플라이용 예시 도시
 │   ├── adpick/adpick.service.ts       커미션 링크 생성 (키 마스킹·동시성 제한)
 │   ├── affiliate/affiliate.service.ts 캐시 우선 링크 해석
-│   ├── search-cache/                  검색 결과 캐시
+│   ├── debug/debug.controller.ts      /api/v1/debug/parse · /search (DEBUG_TOKEN)
 │   ├── redirect/redirect.controller.ts  /r/{clickId}
 │   ├── health/health.controller.ts    /health, /health/db
 │   └── database/                      Supabase (@Global)
@@ -582,9 +574,10 @@ src/
 └── main.ts
 ```
 
-### 설계 규칙 3가지
+### 설계 규칙 4가지
 
-- **DB 실패가 챗봇 응답을 죽이지 않는다.** repository 는 예외 대신 `null` 을 반환하고, 스킬 컨트롤러는 어떤 예외에도 200 + 안내 문구를 돌려준다. 카카오에 500을 주면 사용자에게는 원인 불명의 오류만 뜬다.
+- **라우터는 도메인을 모르고, 도메인은 서로를 모른다.** 네 번째 도메인이 생겨도 `search.service.ts` 는 그대로다 — 도메인은 [`SearchDomain`](src/modules/search/search.types.ts) 네 가지(검색·판별·머리글·줄 그리기)만 구현한다.
+- **DB 실패가 챗봇 응답을 죽이지 않는다.** repository 는 예외 대신 `null` 을 반환하고, 라우터는 어떤 예외에도 200 + 안내 문구를 돌려준다. 카카오에 500을 주면 사용자에게는 원인 불명의 오류만 뜬다.
 - **애드픽 변환이 실패해도 카드는 나간다.** 원본 주소로 폴백한다 — 수익화는 못 해도 사용자는 호텔을 본다. 실패 사유는 `affiliate_links.error` 에 남는다.
 - **provider 만 갈아끼우면 데이터 소스가 바뀐다.** `HotelProvider.search()` 는 async 라 크롤링/LLM 으로 교체할 때 service 를 안 고쳐도 된다. 단 그 시점엔 5초를 넘기므로 카카오 **콜백(useCallback)** 전환이 필요하다.
 
@@ -603,14 +596,23 @@ src/
 
 ## 다음 단계
 
+### 팀톡방에서 검증해야 한다 (셋 다 폴백이 준비돼 있다)
+
+- [ ] **콜백 푸시가 실제로 도착하는가** → 안 되면 폴백 블록의 [콜백 사용] 을 끈다
+- [ ] **`action: "block"` 버튼이 동작하는가** → 안 되면 `MORE_BUTTON_STYLE=message`
+- [ ] **AI 가 20건을 안정적으로 주는가** → 품질이 떨어지면 `RESULT_MAX_ITEMS` 를 10~15로
+
+### 그다음
+
+- [ ] 인기 지역 배치 선(先)채움 — 첫 질문이 늘 30초인 걸 없앤다
+- [ ] 만료 캐시 백그라운드 갱신 (지금은 물어본 사람이 예전 결과를 받고 그때 갱신된다)
+- [ ] 세부 지역 → 부모 지역 폴백 (도톤보리 결과가 빈약하면 오사카로)
 - [ ] 애드픽 API 키 발급 → `.env` 의 `ADPICK_API_KEY` (키만 넣으면 실제 커미션 링크로 전환)
-- [ ] AI/크롤링 provider 구현 (결과 캐시는 이미 붙어 있음 — provider 만 교체하면 동작)
-- [ ] 호텔 썸네일 실제 이미지로 교체 (현재 placeholder)
-- [ ] 체크인/체크아웃 날짜 파싱 → [열린 이슈 4번](docs/PLAN.md)
-- [x] 항공권 도메인 추가 (`recommendations.domain` 으로 구분)
-- [x] "더 보기" 페이지 넘김 (`MORE_BUTTON_STYLE` · 그룹챗방에서 action:block 이 되는지는 미확인)
-- [x] 항공권 카드를 listCard 로 (그룹챗봇이 itemCard 를 못 그린다 — `FLIGHT_CARD_STYLE` 로 되돌릴 수 있다)
 - [ ] 항공권 실시간 운임 API(GDS·항공사) 연동 — 지금은 웹 검색 기반 **예상가**다. `FLIGHT_PROVIDER` 만 갈아끼우면 된다
-- [x] 관광지 도메인 추가 (구글맵 링크, 제휴 없음)
-- [x] 관광지 카드 이미지 — 위키백과 API (실측 87%. 나머지는 사진 없이 나간다)
 - [ ] 관광지 사진별 저작권 표시 — 지금은 카드 단위 출처 버튼뿐 ([ATTRACTION.md](docs/ATTRACTION.md))
+- [x] 단일 진입점 라우터 (블록·엔티티 없이 발화로 도메인을 가른다)
+- [x] 지역 마스터 `places` — 세부 지역(도톤보리)까지 자기 캐시를 갖는다
+- [x] `pending` 선점으로 동시 호출 1회 병합
+- [x] 20건 저장 → 5건씩 4페이지
+- [x] 항공권 카드를 listCard 로 (그룹챗봇이 itemCard 를 못 그린다)
+- [x] 날짜·인원 미반영 고지

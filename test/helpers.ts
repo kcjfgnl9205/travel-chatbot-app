@@ -8,15 +8,17 @@ import { AppModule } from '../src/app.module';
 import { ATTRACTION_PROVIDER } from '../src/modules/attraction/attraction.types';
 import { FLIGHT_PROVIDER } from '../src/modules/flight/flight.types';
 import { HOTEL_PROVIDER } from '../src/modules/hotel/hotel.types';
+import { IntentService } from '../src/modules/intent/intent.service';
 import { OpenAiService } from '../src/modules/openai/openai.service';
+import { PlacesService } from '../src/modules/places/places.service';
+import { SearchService } from '../src/modules/search/search.service';
 import { FakeAttractionProvider } from './fake-attraction-provider';
 import { FakeFlightProvider } from './fake-flight-provider';
 import { FakeHotelProvider } from './fake-provider';
 import { FakeOpenAiService } from './fake-openai';
 
-export const RECOMMEND = '/api/v1/kakao/hotels/recommend';
-export const FLIGHTS = '/api/v1/kakao/flights/search';
-export const ATTRACTIONS = '/api/v1/kakao/attractions/recommend';
+/** **유일한 진입점.** 호텔·항공권·관광지가 전부 여기로 온다. */
+export const ROUTER = '/api/v1/kakao/router';
 
 export interface TestApp {
   app: INestApplication;
@@ -24,6 +26,8 @@ export interface TestApp {
   flightProvider: FakeFlightProvider;
   attractionProvider: FakeAttractionProvider;
   openai: FakeOpenAiService;
+  /** 캐시·별칭·의도 메모리를 한 번에 비운다. 테스트끼리 안 섞이게 하는 스위치. */
+  reset(): void;
 }
 
 export async function createApp(): Promise<TestApp> {
@@ -33,7 +37,7 @@ export async function createApp(): Promise<TestApp> {
   const openai = new FakeOpenAiService();
 
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-    // 실제 OpenAI 를 부르지 않는다 — 검색(provider)도, 발화 파싱(OpenAiService)도.
+    // 실제 OpenAI 를 부르지 않는다 — 검색(provider)도, 발화 해석(OpenAiService)도.
     .overrideProvider(HOTEL_PROVIDER)
     .useValue(provider)
     .overrideProvider(FLIGHT_PROVIDER)
@@ -48,54 +52,100 @@ export async function createApp(): Promise<TestApp> {
   // init() 이 아니라 listen() 인 이유: supertest 는 서버가 안 떠 있으면 요청마다
   // listen(0) 을 부른다. 동시 요청 테스트에서 그게 서로 경합해 ECONNRESET 이 난다.
   await app.listen(0);
-  return { app, provider, flightProvider, attractionProvider, openai };
+
+  const search = app.get(SearchService);
+  const places = app.get(PlacesService);
+  const intent = app.get(IntentService);
+
+  return {
+    app,
+    provider,
+    flightProvider,
+    attractionProvider,
+    openai,
+    reset() {
+      search.clearMemory();
+      places.clearMemory();
+      intent.clearMemory();
+      provider.reset();
+      flightProvider.reset();
+      attractionProvider.reset();
+      openai.reset();
+    },
+  };
 }
 
+/**
+ * 오픈빌더 폴백 블록이 보내는 페이로드.
+ *
+ * **엔티티가 없으므로 params 는 항상 비어 있다.** 지역은 발화에서만 나온다.
+ * clientExtra 는 "더 보기" 버튼이 넘겨주는 유일한 구조화 데이터다.
+ */
 export function kakaoPayload(
   utterance: string,
-  userKey = 'test-user',
-  params: Record<string, unknown> = {},
-  callbackUrl?: string,
+  opts: {
+    userKey?: string;
+    clientExtra?: Record<string, unknown>;
+    callbackUrl?: string;
+    blockId?: string;
+  } = {},
 ): Record<string, unknown> {
+  const userKey = opts.userKey ?? 'test-user';
   const userRequest: Record<string, unknown> = {
     timezone: 'Asia/Seoul',
     params: {},
-    block: { id: 'block-1', name: '호텔추천' },
+    block: { id: opts.blockId ?? 'fallback-block', name: '폴백 블록' },
     utterance,
     lang: 'kr',
-    user: { id: userKey, type: 'accountId', properties: { botUserKey: userKey } },
+    user: { id: userKey, type: 'botUserKey', properties: { botUserKey: userKey } },
   };
   // 오픈빌더에서 콜백을 켠 블록만 이 필드를 실어 보낸다.
-  if (callbackUrl) userRequest.callbackUrl = callbackUrl;
+  if (opts.callbackUrl) userRequest.callbackUrl = opts.callbackUrl;
 
   return {
-    intent: { id: 'intent-1', name: '블록 이름' },
+    intent: { id: 'intent-1', name: '폴백 블록' },
     userRequest,
-    bot: { id: 'bot-1', name: '여행봇' },
-    action: { name: '호텔추천액션', clientExtra: {}, params, detailParams: {}, id: 'action-1' },
+    bot: { id: 'bot-1', name: '여행메이트 TST' },
+    action: {
+      name: '폴백액션',
+      clientExtra: opts.clientExtra ?? {},
+      params: {},
+      detailParams: {},
+      id: 'action-1',
+    },
   };
 }
 
+export const post = (app: INestApplication, body: Record<string, unknown>) =>
+  request(app.getHttpServer()).post(ROUTER).send(body);
+
 export const listCardOf = (body: any) =>
-  body.template?.outputs?.find((o: any) => o.listCard)?.listCard;
+  body?.template?.outputs?.find((o: any) => o.listCard)?.listCard;
+
+/** 카드 아래 고지 말풍선. 카드가 있으면 항상 따라온다. */
+export const noticeOf = (body: any): string =>
+  body?.template?.outputs?.find((o: any) => o.simpleText)?.simpleText?.text ?? '';
+
+export const textOf = (body: any): string =>
+  body?.template?.outputs?.[0]?.simpleText?.text ?? '';
+
+export const moreButtonOf = (body: any) =>
+  listCardOf(body)?.buttons?.find((b: any) => b.label === '더 보기');
 
 /**
  * 카드가 나올 때까지 다시 물어본다.
  *
- * 캐시 미스는 즉시 카드를 주지 않는다 — 백그라운드 검색이 끝나야 캐시에 들어간다.
- * 콜백을 안 쓰는 경로에서 "잠시 후 다시 물어보면 나온다"가 실제로 되는지도 같이 검증된다.
+ * 캐시 미스는 즉시 카드를 주지 않는다 — 백그라운드 검색이 끝나야 저장된다.
+ * 콜백을 안 쓰는 경로에서 "잠시 후 다시 물어보면 나온다" 가 실제로 되는지도 같이 검증된다.
  */
-export async function recommendUntilCard(
+export async function askUntilCard(
   app: INestApplication,
   utterance: string,
-  params: Record<string, unknown> = {},
+  opts: Parameters<typeof kakaoPayload>[1] = {},
 ): Promise<any> {
   for (let attempt = 0; attempt < 40; attempt += 1) {
-    const res = await request(app.getHttpServer())
-      .post(RECOMMEND)
-      .send(kakaoPayload(utterance, 'test-user', params));
-    const card = listCardOf(res.body);
-    if (card) return card;
+    const res = await post(app, kakaoPayload(utterance, opts));
+    if (listCardOf(res.body)) return res.body;
     await new Promise((r) => setTimeout(r, 25));
   }
   throw new Error(`listCard 가 나오지 않았다: ${utterance}`);
@@ -134,85 +184,4 @@ export async function callbackReceiver(): Promise<{
     received,
     close: () => new Promise<void>((r) => server.close(() => r())),
   };
-}
-
-// ------------------------------------------------------------------ 항공권
-export const carouselOf = (body: any) =>
-  body.template?.outputs?.find((o: any) => o.carousel)?.carousel;
-
-/** 캐러셀 안의 itemCard 목록. 없으면 undefined. (FLIGHT_CARD_STYLE=carousel 일 때) */
-export const itemCardsOf = (body: any) => {
-  const carousel = carouselOf(body);
-  return carousel?.type === 'itemCard' ? carousel.items : undefined;
-};
-
-/**
- * 항공권 listCard 의 줄 목록. 없으면 undefined.
- *
- * 항공권은 안내 말풍선 뒤에 카드가 오므로 outputs[0] 이 아니다 — 찾아서 꺼낸다.
- */
-export const flightRowsOf = (body: any) =>
-  body.template?.outputs?.find((o: any) => o.listCard)?.listCard?.items;
-
-/**
- * 카드가 나올 때까지 다시 물어본다 (항공권).
- *
- * 캐시 미스는 즉시 카드를 주지 않는다 — 백그라운드 검색이 끝나야 캐시에 들어간다.
- * 콜백을 안 쓰는 경로에서 "잠시 후 다시 물어보면 나온다"가 실제로 되는지도 같이 검증된다.
- */
-export async function searchUntilCards(
-  app: INestApplication,
-  utterance: string,
-  params: Record<string, unknown> = {},
-): Promise<any[]> {
-  return searchUntil(app, utterance, params, itemCardsOf, 'itemCard 캐러셀');
-}
-
-/** 위와 같되 listCard 줄을 기다린다 (기본 카드 모양). */
-export async function searchUntilRows(
-  app: INestApplication,
-  utterance: string,
-  params: Record<string, unknown> = {},
-): Promise<any[]> {
-  return searchUntil(app, utterance, params, flightRowsOf, 'listCard');
-}
-
-async function searchUntil(
-  app: INestApplication,
-  utterance: string,
-  params: Record<string, unknown>,
-  pick: (body: any) => any[] | undefined,
-  what: string,
-): Promise<any[]> {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const res = await request(app.getHttpServer())
-      .post(FLIGHTS)
-      .send(kakaoPayload(utterance, 'test-user', params));
-    const found = pick(res.body);
-    if (found) return found;
-    await new Promise((r) => setTimeout(r, 25));
-  }
-  throw new Error(`${what} 가 나오지 않았다: ${utterance}`);
-}
-
-// ------------------------------------------------------------------ 관광지
-/**
- * 카드가 나올 때까지 다시 물어본다 (관광지).
- *
- * 캐시 미스는 즉시 카드를 주지 않는다 — 백그라운드 검색이 끝나야 캐시에 들어간다.
- */
-export async function attractionsUntilCard(
-  app: INestApplication,
-  utterance: string,
-  params: Record<string, unknown> = {},
-): Promise<any> {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const res = await request(app.getHttpServer())
-      .post(ATTRACTIONS)
-      .send(kakaoPayload(utterance, 'test-user', params));
-    const card = listCardOf(res.body);
-    if (card) return card;
-    await new Promise((r) => setTimeout(r, 25));
-  }
-  throw new Error(`listCard 가 나오지 않았다: ${utterance}`);
 }

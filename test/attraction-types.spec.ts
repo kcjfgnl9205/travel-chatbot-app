@@ -2,7 +2,6 @@ import { mapsUrl } from '../src/common/maps-url';
 import {
   Attraction,
   admissionText,
-  attractionCacheKey,
   attractionKey,
   durationText,
   isAttraction,
@@ -173,12 +172,6 @@ describe('관광지 신원', () => {
 });
 
 describe('캐시', () => {
-  it('키는 도시와 개수뿐이다 — 관광지는 날짜·인원으로 갈리지 않는다', () => {
-    expect(attractionCacheKey({ citySlug: 'osaka', cityName: '오사카', limit: 5 })).toEqual([
-      'osaka',
-      5,
-    ]);
-  });
 
   it('관광지 모양이면 통과', () => {
     expect(isAttraction(spot())).toBe(true);

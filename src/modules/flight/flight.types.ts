@@ -1,6 +1,11 @@
-import { CacheKeyPart } from '../search-cache/search-cache.service';
-import * as t from '../kakao/templates';
-import { TripType } from '../nlu/flight-nlu.service';
+/**
+ * 편도/왕복.
+ *
+ * 라우터의 `rt`/`ow` 와 표기가 다르다. 여기 이름은 provider 프롬프트와 카드 문구가
+ * 쓰는 값이라 바꾸면 그쪽까지 건드려야 하고, 변환은 한 줄이면 끝난다
+ * ([flight.service.ts](./flight.service.ts) queryOf).
+ */
+export type TripType = 'oneway' | 'round';
 
 /**
  * provider 가 돌려주는 항공권 1건.
@@ -69,11 +74,7 @@ export interface FlightQuery {
   destSlug: string;
   destName: string;
   destCode: string | null;
-  departDate: string | null;
-  returnDate: string | null;
   tripType: TripType;
-  passengers: number | null;
-  cabin: string | null;
   limit: number;
   /**
    * 출발지를 사용자가 말하지 않아서 기본값(서울)으로 채웠는가.
@@ -85,22 +86,17 @@ export interface FlightQuery {
 }
 
 /**
- * 캐시 키에 들어가는 조건들.
+ * 'YYYY-MM-DD' 인지 확인하고 그대로 돌려준다. 아니면 null.
  *
- * ⚠️ **날짜가 반드시 들어가야 한다.** 빠지면 10월 3일을 물은 사람에게 9월 1일
- *    검색 결과가 나간다. 인원·좌석등급도 운임이 달라지므로 같이 넣는다.
+ * ⚠️ 2026-02-30 같은 값은 Date 가 3월 2일로 조용히 굴려버린다. 되돌려 보고 같은지
+ *    확인해야 없는 날짜가 카드에 찍히지 않는다.
  */
-export function flightCacheKey(query: FlightQuery): CacheKeyPart[] {
-  return [
-    query.originCode ?? query.originSlug,
-    query.destCode ?? query.destSlug,
-    query.departDate,
-    query.returnDate,
-    query.tripType,
-    query.passengers,
-    query.cabin,
-    query.limit,
-  ];
+export function isoDate(value: unknown): string | null {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const parsed = new Date(`${raw}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString().slice(0, 10) === raw ? raw : null;
 }
 
 /** 캐시에서 살려낸 값이 항공권 모양인가. 배포로 필드가 바뀌면 미스로 떨어뜨린다. */
@@ -224,7 +220,11 @@ export function listRowDescription(f: Flight): string {
           .join(' ↔ ')
       : legText(f.departDate, f.departTime, f.arriveTime);
 
-  const tail = f.tripType === 'round' ? stopsText(f) : durationLine(f);
+  // ⚠️ 왕복은 두 구간의 날짜·시각만으로 자리가 거의 찬다. 경유지 이름까지 붙이면
+  //    40자를 넘겨 잘린다 — 잘리면 가장 뒤에 있는 **직항 여부**가 사라지므로,
+  //    경유지 이름을 먼저 버린다 ('1회 경유 (홍콩)' → '1회 경유').
+  const tail =
+    f.tripType === 'round' ? stopsText({ ...f, via: null }) : durationLine(f);
   return [schedule, tail].filter(Boolean).join(' · ');
 }
 
@@ -234,42 +234,6 @@ function departLabel(
   depart: string | null | undefined,
 ): string {
   return [dateLabel(date), depart].filter(Boolean).join(' ');
-}
-
-/**
- * 카카오 itemCard 의 key-value 줄.
- *
- * ⚠️ **최대 5줄이고 key 는 6자까지다.** 왕복이면 항공사·가는편·오는편·소요로 4줄이 차므로
- *    여기에 더 넣을 자리가 거의 없다. 새 줄을 넣기 전에 무엇을 뺄지 먼저 정해야 한다.
- * ⚠️ 값이 빈 줄은 만들지 않는다. 카카오는 description 이 빈 항목을 받으면
- *    말풍선을 통째로 렌더링하지 않는다.
- */
-export function cardRows(f: Flight): t.ItemRow[] {
-  const rows: t.ItemRow[] = [];
-
-  const airline = [f.airline, f.flightNo].filter(Boolean).join(' ');
-  rows.push({ title: '항공사', description: airline });
-
-  const outbound = legText(f.departDate, f.departTime, f.arriveTime);
-  if (outbound) {
-    rows.push({ title: f.tripType === 'round' ? '가는편' : '일정', description: outbound });
-  }
-
-  if (f.tripType === 'round') {
-    const inbound = legText(f.returnDate, f.returnDepartTime, f.returnArriveTime);
-    if (inbound) rows.push({ title: '오는편', description: inbound });
-  }
-
-  const duration = durationLine(f);
-  if (duration) rows.push({ title: '소요', description: duration });
-
-  // 남은 자리가 있으면 좌석 등급을 넣는다. 없으면 조용히 버린다 —
-  // 5줄을 넘기면 카드가 아예 안 보이므로, 있으면 좋은 정보에 그 위험을 걸지 않는다.
-  if (f.cabin && rows.length < t.MAX_ITEM_LIST_ROWS) {
-    rows.push({ title: '좌석', description: cabinText(f.cabin) });
-  }
-
-  return rows;
 }
 
 const CABINS: Record<string, string> = {

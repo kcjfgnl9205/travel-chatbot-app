@@ -40,27 +40,30 @@ export interface AppConfig {
   openaiParseTimeoutMs: number;
   nluAliasTtlMinutes: number;
 
+  intentCacheTtlMinutes: number;
+
+  /** 한 번의 검색으로 저장하는 최대 건수. 5건씩 잘라 페이지로 낸다. */
+  resultMaxItems: number;
+  /** 실패한 검색을 기억해두는 시간. 짧게 둬야 재시도가 막히지 않는다. */
+  failedTtlMinutes: number;
+  /** pending 을 꽂아둔 채 죽은 검색을 다른 요청이 되찾아가기까지의 시간. */
+  pendingTimeoutSeconds: number;
+
   hotelProvider: string;
-  hotelResultLimit: number;
-  searchCacheTtlMinutes: number;
+  hotelCacheTtlMinutes: number;
 
   flightProvider: string;
-  flightResultLimit: number;
   flightCacheTtlMinutes: number;
   flightDefaultOriginName: string;
   flightDefaultOriginCode: string;
-  flightCardStyle: 'list' | 'carousel';
 
   attractionProvider: string;
-  attractionResultLimit: number;
   attractionCacheTtlMinutes: number;
   attractionImages: boolean;
   attractionImageTimeoutMs: number;
 
   moreButtonStyle: 'block' | 'message';
-  hotelBlockId: string;
-  flightBlockId: string;
-  attractionBlockId: string;
+  fallbackBlockId: string;
 
   hotelThumbnails: boolean;
   hotelThumbnailTimeoutMs: number;
@@ -123,7 +126,9 @@ export function loadConfig(): AppConfig {
     // 올릴수록 결과가 좋아지지만 콜백 1분 예산을 잡아먹는다.
     openaiSearchEffort: str('OPENAI_SEARCH_EFFORT', 'low'),
     openaiRankEffort: str('OPENAI_RANK_EFFORT', 'low'),
-    openaiCandidateCount: num('OPENAI_CANDIDATE_COUNT', 15),
+    // ⚠️ RESULT_MAX_ITEMS(20)보다 넉넉히 커야 2차 호출이 "고르는" 일을 한다.
+    //    같거나 작으면 후보를 전부 쓰게 되어 선별이 사실상 안 돈다 (부팅 때 경고).
+    openaiCandidateCount: num('OPENAI_CANDIDATE_COUNT', 30),
     // 발화 파싱은 카카오 5초 예산 안에서 돈다. 생각을 시키면 안 된다.
     //
     // 검색용 모델과 분리한 이유: 검색은 품질이 중요하고 콜백 예산(1분)을 쓰지만,
@@ -135,6 +140,17 @@ export function loadConfig(): AppConfig {
     openaiParseTimeoutMs: Math.round(num('OPENAI_PARSE_TIMEOUT_SECONDS', 4) * 1000),
     // 같은 문장을 두 번 파싱하지 않는다. 이게 없으면 매 메시지가 유료가 된다.
     nluAliasTtlMinutes: num('NLU_ALIAS_TTL_MINUTES', 1440),
+    // 단톡방은 같은 문장이 반복된다. 일주일이면 유행하는 질문 하나를 한 번만 산다.
+    intentCacheTtlMinutes: num('INTENT_CACHE_TTL_MINUTES', 10080),
+
+    // 20건을 한 행에 저장하고 5건씩 4페이지로 낸다.
+    // ⚠️ 올릴수록 AI 가 뒤쪽 항목을 지어낼 여지가 커진다. 품질이 떨어지면 내려라.
+    resultMaxItems: num('RESULT_MAX_ITEMS', 20),
+    // 실패를 오래 기억하면 일시적 장애가 그 시간만큼 굳는다.
+    failedTtlMinutes: num('FAILED_TTL_MINUTES', 10),
+    // 검색은 보통 7~30초다. 그보다 넉넉히 잡되, 프로세스가 죽어 pending 이 남았을 때
+    // 다음 사람이 영영 못 물어보는 일은 없어야 한다.
+    pendingTimeoutSeconds: num('PENDING_TIMEOUT_SECONDS', 120),
 
     // 예약 페이지에서 대표 이미지를 긁어온다. 모델은 이미지 주소를 모른다(웹 검색은
     // 텍스트만 준다) — 그래서 시키면 지어낸다. 페이지에서 직접 읽는 게 유일한 정답이다.
@@ -144,50 +160,40 @@ export function loadConfig(): AppConfig {
     hotelThumbnailMaxBytes: num('HOTEL_THUMBNAIL_MAX_KB', 512) * 1024,
 
     hotelProvider: str('HOTEL_PROVIDER', 'openai'),
-    hotelResultLimit: num('HOTEL_RESULT_LIMIT', 10),
-    searchCacheTtlMinutes: num('SEARCH_CACHE_TTL_MINUTES', 60),
+    // 호텔 요금은 하루 사이에도 바뀐다. 하루가 그 변동과 AI 호출 비용의 타협점이다.
+    hotelCacheTtlMinutes: num('HOTEL_CACHE_TTL_MINUTES', 1440),
 
     flightProvider: str('FLIGHT_PROVIDER', 'openai'),
-    // 캐러셀은 10장까지 들어가지만, 5장을 넘기면 고르는 게 아니라 훑는 게 된다.
-    flightResultLimit: num('FLIGHT_RESULT_LIMIT', 10),
-    // 호텔보다 짧게 잡는다. 항공 운임은 하루에도 몇 번 바뀌므로 한 시간 묵은 값은
-    // 이미 틀렸을 가능성이 높다. 그래도 캐시를 아예 끄지는 않는다 —
+    // 운임은 하루에도 몇 번 바뀐다. 그래도 캐시를 끄지는 않는다 —
     // 그러면 같은 노선을 물을 때마다 웹 검색 요금이 그대로 나간다.
-    flightCacheTtlMinutes: num('FLIGHT_CACHE_TTL_MINUTES', 30),
+    flightCacheTtlMinutes: num('FLIGHT_CACHE_TTL_MINUTES', 360),
     // "오사카 항공권" 처럼 출발지를 안 말하는 게 보통이다. 되묻는 대신 여기서 출발한다고
-    // 보고, 카드에 '서울 출발' 을 적어 사용자가 틀렸음을 바로 알 수 있게 한다.
+    // 보고, 카드 아래 안내에 '서울 출발' 을 적어 사용자가 바로 고쳐 말할 수 있게 한다.
     flightDefaultOriginName: str('FLIGHT_DEFAULT_ORIGIN_NAME', '서울'),
     flightDefaultOriginCode: str('FLIGHT_DEFAULT_ORIGIN_CODE', 'ICN'),
-    // ⚠️ **그룹챗봇(팀톡방)은 itemCard 를 못 그린다 — 말풍선이 통째로 사라진다.**
-    //    호텔·관광지가 같은 방에서 멀쩡한 건 listCard 라서다. 그래서 기본값이 list 다.
-    //    itemCard 는 정보 밀도가 훨씬 높으므로(항공사·가는편·오는편·소요·좌석 5줄),
-    //    일반 채널 챗봇을 따로 운영하게 되면 거기서는 carousel 로 되돌릴 수 있다.
-    flightCardStyle:
-      str('FLIGHT_CARD_STYLE', 'list') === 'carousel' ? 'carousel' : 'list',
 
     attractionProvider: str('ATTRACTION_PROVIDER', 'openai'),
-    // listCard 는 5줄이 한계다. 그보다 크게 잡으면 검색만 비싸지고 잘려 나간다.
-    attractionResultLimit: num('ATTRACTION_RESULT_LIMIT', 10),
-    // 호텔(60분)·항공권(30분)보다 훨씬 길다. 호텔 요금과 항공 운임은 시시각각
-    // 바뀌지만 **오사카의 볼거리는 어제와 오늘이 같다.** 짧게 잡을수록 같은 답을
-    // 다시 사는 셈이다. 입장료·휴관 정보가 바뀌는 주기를 생각해 하루로 둔다.
-    attractionCacheTtlMinutes: num('ATTRACTION_CACHE_TTL_MINUTES', 1440),
-    // 카드 썸네일을 위키백과에서 찾을지. 끄면 사진 없는 예전 카드로 돌아간다.
+    // 호텔 요금·항공 운임과 달리 **오사카의 볼거리는 어제와 오늘이 같다.**
+    // 짧게 잡을수록 같은 답을 다시 사는 셈이라 30일로 둔다.
+    attractionCacheTtlMinutes: num('ATTRACTION_CACHE_TTL_MINUTES', 43200),
+    // 카드 썸네일을 위키백과에서 찾을지. 끄면 사진 없는 카드로 돌아간다.
     attractionImages: bool('ATTRACTION_IMAGES', true),
     // 콜백 경로에서만 도는 호출이라 5초 예산과 무관하다. 그래도 짧게 끊는 이유는
-    // 5곳을 동시에 찾기 때문이다 — 하나가 늘어지면 카드 전체가 그만큼 늦는다.
+    // 여러 곳을 동시에 찾기 때문이다 — 하나가 늘어지면 카드 전체가 그만큼 늦는다.
     attractionImageTimeoutMs: Math.round(num('ATTRACTION_IMAGE_TIMEOUT_SECONDS', 3) * 1000),
 
-    // "더 보기" 버튼 방식. block 이면 extra 로 offset 을 실어 보낼 수 있어 N 페이지가
-    // 되고 서버가 상태를 안 들어도 된다.
+    // "더 보기" 버튼 방식. block 이면 clientExtra 로 cache_key·offset 을 실어 보낼 수
+    // 있어 서버가 상태를 안 들고도 4페이지까지 간다.
     // ⚠️ 그룹챗방에서 action:'block' 이 되는지 확인되지 않았다. itemCard 처럼 안 되면
-    //    message 로 내리면 된다 — 그 경우 다음 한 페이지까지만 간다.
+    //    message 로 내리면 된다 — 그 경우 발화자별 커서를 서버가 짧게 기억한다.
     moreButtonStyle: str('MORE_BUTTON_STYLE', 'block') === 'message' ? 'message' : 'block',
-    // 오픈빌더 블록 ID. block 버튼이 어느 블록을 부를지 가리킨다.
-    // 블록을 새로 만들면 ID 가 바뀐다 — 그때는 .env 를 고쳐야 버튼이 산다.
-    hotelBlockId: str('KAKAO_BLOCK_ID_HOTEL', '6a9398f895f722d77da02d42'),
-    flightBlockId: str('KAKAO_BLOCK_ID_FLIGHT', '6a957136fd013545b6516a99'),
-    attractionBlockId: str('KAKAO_BLOCK_ID_ATTRACTION', '6aa4162f8918b2f42808222f'),
+    // 폴백 블록 ID. 시나리오 블록을 전부 지웠으므로 더보기 버튼이 부를 블록은
+    // 폴백 하나뿐이다.
+    //
+    // ⚠️ 비워두면 **요청이 알려준 블록 ID**를 쓴다 (userRequest.block.id). 라우터로
+    //    들어온 요청은 곧 폴백 블록이 부른 요청이므로 그게 정답이고, 블록을 다시
+    //    만들어 ID 가 바뀌어도 저절로 따라간다. 설정은 그걸 덮어쓰고 싶을 때만 쓴다.
+    fallbackBlockId: str('KAKAO_BLOCK_ID_FALLBACK'),
   };
 }
 

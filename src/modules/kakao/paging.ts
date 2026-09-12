@@ -1,23 +1,19 @@
 /**
  * "더 보기" 페이지 넘김.
  *
- * listCard 는 5줄이 한계라 6번째부터는 보여줄 자리가 없다. 예전 버튼("다른 도시 보기")은
- * 도시가 빠진 문장을 보내서 되묻기로 떨어졌는데, 같은 자리에 **다음 5개**를 주는 게
- * 사용자가 실제로 원하는 것이다.
+ * 한 번의 AI 검색으로 20건을 찾아 **한 행에 통째로 저장**하고, listCard 가 5줄이므로
+ * 5건씩 4페이지로 낸다. 2페이지를 보여주려고 AI 를 다시 부르지 않는다 —
+ * 더보기는 **AI 호출 0회**가 전제다.
  *
- * ⚠️ **페이지를 넘기려면 넘길 것이 있어야 한다.** 예전에는 딱 5개만 검색해서 캐싱했다.
- *    이제 *_RESULT_LIMIT 만큼(기본 10) 찾아 캐시에 넣고, 카드에는 5줄씩 끊어서 낸다.
- *    검색 비용은 거의 그대로다 — 후보 수집(1차)은 어차피 15곳이었고, 2차가 더 많이
- *    고를 뿐이다. 대신 호텔 썸네일·관광지 사진은 10건을 받아오므로 그만큼 느려진다.
+ * 서버는 "누가 어디까지 봤는지" 를 기억하지 않는다. **버튼이 커서를 들고 다닌다.**
  *
- * 두 경로를 모두 받는다.
+ *   { label: '더 보기', action: 'block', blockId: <폴백 블록>,
+ *     extra: { cache_key: 'hotel:123', offset: 5 } }
  *
- *   · **block** (권장) — 버튼이 `extra: { city, offset }` 를 실어 보내고 서버는
- *     `action.clientExtra` 로 받는다. 서버가 상태를 안 들고도 N 페이지가 된다.
- *   · **message** (우회) — 그룹챗방에서 `action: "block"` 이 되는지 확인되지 않았다.
- *     itemCard 가 그랬던 것처럼 안 될 수 있어서, 평범한 메시지 버튼도 지원한다.
- *     이 경로는 발화에 offset 을 실을 수 없으므로 **다음 한 페이지까지만** 간다.
- *     (3페이지 이상이 필요해지면 block 경로가 돼야 한다)
+ * ⚠️ 그룹챗방에서 `action: "block"` 이 동작하는지 **확인되지 않았다.** itemCard 가
+ *    그랬던 것처럼 안 될 수 있어서 평범한 메시지 버튼(MORE_BUTTON_STYLE=message)도
+ *    지원한다. 그 경로는 발화에 커서를 실을 수 없으므로 **서버가 발화자별 커서를
+ *    짧게 기억한다** ([CursorMemory](#)).
  */
 
 import * as t from './templates';
@@ -31,75 +27,119 @@ const MORE = /더\s*보기|다음\s*(페이지|것)?$/;
 
 export type MoreButtonStyle = 'block' | 'message';
 
-/**
- * 이번 요청이 보여줘야 할 시작 위치.
- *
- * clientExtra 가 있으면 그 값이 정답이다 — 카카오가 우리가 실어 보낸 걸 그대로 돌려준다.
- * 없는데 발화가 "더 보기" 면 우회 경로다. 그때는 다음 한 페이지로 본다.
- */
-export function offsetOf(payload: KakaoSkillPayload): number {
-  const raw = payload.action?.clientExtra?.offset;
-  const fromExtra = Number(raw);
-  if (Number.isFinite(fromExtra) && fromExtra > 0) return Math.floor(fromExtra);
-
-  return isMoreRequest(utteranceOf(payload)) ? PAGE_SIZE : 0;
-}
-
-/** clientExtra 에 실려 온 도시. 발화에 도시가 없는 "호텔 더 보기" 를 살린다. */
-export function cityFromExtra(payload: KakaoSkillPayload): string | null {
-  const city = payload.action?.clientExtra?.city;
-  if (typeof city !== 'string') return null;
-  const trimmed = city.trim();
-  return trimmed || null;
-}
-
 export function isMoreRequest(utterance: string): boolean {
   return MORE.test(utterance.trim());
 }
 
-/**
- * 카드 하단 "더 보기" 버튼. **다음 페이지가 남아 있을 때만 부른다.**
- *
- * 남은 게 없는데 버튼을 달면 눌러도 같은 5개가 다시 나오고, 사용자는 그걸
- * 고장으로 읽는다. 없으면 없는 게 낫다.
- */
-export function moreButton(input: {
-  style: MoreButtonStyle;
-  blockId: string;
-  /** '도쿄 호텔 더 보기' — block 경로에서도 이 문장이 사용자 발화로 남는다. */
-  messageText: string;
-  cityName: string;
-  nextOffset: number;
-}): t.Json {
-  if (input.style === 'message' || !input.blockId) {
-    return t.messageButton('더 보기', input.messageText);
-  }
-  return {
-    label: '더 보기',
-    action: 'block',
-    blockId: input.blockId,
-    messageText: input.messageText,
-    extra: { city: input.cityName, offset: input.nextOffset },
-  };
+/** 버튼이 실어 보낸 캐시 키. 이게 있으면 AI 를 부르지 않고 저장된 행에서 잘라 보낸다. */
+export function cacheKeyOf(payload: KakaoSkillPayload): string | null {
+  const raw = payload.action?.clientExtra?.cache_key;
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  return trimmed || null;
+}
+
+/** 버튼이 실어 보낸 시작 위치. 없으면 0. */
+export function offsetOf(payload: KakaoSkillPayload): number {
+  const raw = Number(payload.action?.clientExtra?.offset);
+  if (!Number.isFinite(raw) || raw <= 0) return 0;
+  return Math.floor(raw);
 }
 
 /**
  * 목록에서 이번 페이지만 잘라낸다.
  *
- * offset 이 목록을 넘어가면 빈 배열이 아니라 **마지막 페이지**를 준다.
- * 캐시가 만료돼 결과 수가 줄어든 사이에 "더 보기" 를 누르면 빈 카드가 나가는데,
- * 그건 사용자에게 고장으로 보인다.
+ * offset 이 목록을 넘어가면 빈 배열이 아니라 **마지막 페이지**를 준다. 캐시가 갱신돼
+ * 결과 수가 줄어든 사이에 "더 보기" 를 누르면 빈 카드가 나가는데, 사용자에게 그건
+ * 고장으로 보인다.
  */
-export function pageOf<T>(items: T[], offset: number): { page: T[]; start: number } {
-  if (offset <= 0 || offset < items.length) {
+export function pageOf<T>(items: T[], offset: number, maxItems: number): { page: T[]; start: number } {
+  const capped = items.slice(0, maxItems);
+  if (offset <= 0 || offset < capped.length) {
     const start = Math.max(0, offset);
-    return { page: items.slice(start, start + PAGE_SIZE), start };
+    return { page: capped.slice(start, start + PAGE_SIZE), start };
   }
-  const start = Math.max(0, (Math.ceil(items.length / PAGE_SIZE) - 1) * PAGE_SIZE);
-  return { page: items.slice(start, start + PAGE_SIZE), start };
+  const start = Math.max(0, (Math.ceil(capped.length / PAGE_SIZE) - 1) * PAGE_SIZE);
+  return { page: capped.slice(start, start + PAGE_SIZE), start };
 }
 
-/** 다음 페이지가 남아 있는가. */
-export function hasNextPage(total: number, start: number): boolean {
-  return start + PAGE_SIZE < total;
+/** 다음 페이지가 남아 있는가. 없으면 버튼을 달지 않는다. */
+export function hasNextPage(total: number, start: number, maxItems: number): boolean {
+  return start + PAGE_SIZE < Math.min(total, maxItems);
+}
+
+/**
+ * 카드 하단 "더 보기" 버튼. **다음 페이지가 남아 있을 때만 부른다.**
+ *
+ * 남은 게 없는데 버튼을 달면 눌러도 같은 5개가 다시 나오고, 사용자는 그걸 고장으로
+ * 읽는다. 없으면 없는 게 낫다.
+ */
+export function moreButton(input: {
+  style: MoreButtonStyle;
+  blockId: string;
+  /** '오사카 호텔 더 보기' — block 경로에서도 이 문장이 사용자 발화로 남는다. */
+  messageText: string;
+  cacheKey: string;
+  nextOffset: number;
+}): t.Json {
+  if (input.style === 'message' || !input.blockId) {
+    return t.messageButton('더 보기', input.messageText);
+  }
+  return t.blockButton({
+    label: '더 보기',
+    blockId: input.blockId,
+    messageText: input.messageText,
+    extra: { cache_key: input.cacheKey, offset: input.nextOffset },
+  });
+}
+
+/**
+ * 발화자별 커서. **`action: "block"` 이 안 될 때의 우회로다.**
+ *
+ * 메시지 버튼은 발화("오사카 호텔 더 보기")밖에 못 보낸다. 그 문장만으로는 어느
+ * 페이지인지 알 수 없으므로, 카드를 보낸 쪽이 "이 사람에게 방금 0~4를 보여줬다"를
+ * 잠깐 기억해둔다. 단톡방이라 **사람마다 따로** 들고 있어야 한다.
+ *
+ * 오래 들고 있을 필요는 없다. 더보기는 카드를 본 직후에 눌린다.
+ */
+const CURSOR_TTL_MS = 30 * 60_000;
+const CURSOR_MAX_ENTRIES = 2000;
+
+export interface Cursor {
+  cacheKey: string;
+  /** 다음에 보여줄 시작 위치. */
+  offset: number;
+}
+
+export class CursorMemory {
+  private readonly cursors = new Map<string, Cursor & { expiresAt: number }>();
+
+  remember(userKey: string, cursor: Cursor): void {
+    if (this.cursors.size >= CURSOR_MAX_ENTRIES) {
+      // 가장 오래된 항목부터 버린다 (Map 은 삽입 순서를 지킨다).
+      const oldest = this.cursors.keys().next().value;
+      if (oldest !== undefined) this.cursors.delete(oldest);
+    }
+    this.cursors.delete(userKey);
+    this.cursors.set(userKey, { ...cursor, expiresAt: Date.now() + CURSOR_TTL_MS });
+  }
+
+  take(userKey: string): Cursor | null {
+    const hit = this.cursors.get(userKey);
+    if (!hit) return null;
+    if (hit.expiresAt <= Date.now()) {
+      this.cursors.delete(userKey);
+      return null;
+    }
+    return { cacheKey: hit.cacheKey, offset: hit.offset };
+  }
+
+  clear(): void {
+    this.cursors.clear();
+  }
+}
+
+/** 발화가 "더 보기" 인데 버튼이 커서를 안 실어 온 경우. 우회 경로를 타야 한다. */
+export function needsCursorFallback(payload: KakaoSkillPayload): boolean {
+  return !cacheKeyOf(payload) && isMoreRequest(utteranceOf(payload));
 }

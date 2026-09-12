@@ -7,7 +7,12 @@ import {
   RecommendationItemsRepository,
   RecommendationsRepository,
 } from './repositories/recommendations.repository';
-import { SearchCacheRepository } from './repositories/search-cache.repository';
+import { IntentCacheRepository } from './repositories/intent-cache.repository';
+import {
+  PlaceAliasesRepository,
+  PlacesRepository,
+} from './repositories/places.repository';
+import { SearchResultsRepository } from './repositories/search-results.repository';
 import { UsersRepository } from './repositories/users.repository';
 import { SupabaseService } from './supabase.service';
 
@@ -19,7 +24,10 @@ const PROVIDERS = [
   RecommendationsRepository,
   RecommendationItemsRepository,
   AffiliateLinksRepository,
-  SearchCacheRepository,
+  PlacesRepository,
+  PlaceAliasesRepository,
+  SearchResultsRepository,
+  IntentCacheRepository,
 ];
 
 /**

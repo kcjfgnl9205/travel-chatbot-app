@@ -41,9 +41,9 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
-/** 5줄 제한을 넘겨서 자르기까지 검증되도록 6곳을 준다. */
+/** 페이지 넘김(5줄씩)까지 검증되도록 12곳을 준다. */
 export function defaultHotels(query: HotelQuery): Hotel[] {
-  return Array.from({ length: 6 }, (_, i) => ({
+  return Array.from({ length: 12 }, (_, i) => ({
     name: `${query.cityName} 테스트 호텔 ${i + 1}`,
     citySlug: query.citySlug,
     sourceUrl: `https://example.com/agoda/hotel/${query.citySlug}-${i + 1}`,
@@ -51,7 +51,7 @@ export function defaultHotels(query: HotelQuery): Hotel[] {
     source: 'ai',
     address: `${query.cityName} 중심가`,
     starRating: 4,
-    reviewScore: 9 - i * 0.1,
+    reviewScore: Math.round((9 - i * 0.1) * 10) / 10,
     priceFrom: 120000 + i * 10000,
     currency: 'KRW',
     thumbnailUrl: `https://example.com/img/${i + 1}.jpg`,

@@ -35,17 +35,17 @@ export class FakeOpenAiService {
     }
 
     const format = req.format as { name?: string } | undefined;
-    if (format?.name === 'parsed_utterance') {
+    if (format?.name === 'parsed_intent') {
       return {
-        text: JSON.stringify(parseUtterance(req.input)),
+        text: JSON.stringify(parseIntent(req.input)),
         searchCalls: 0,
         status: 'completed',
         ms: 1,
       };
     }
-    if (format?.name === 'parsed_flight_utterance') {
+    if (format?.name === 'place_lookup') {
       return {
-        text: JSON.stringify(parseFlightUtterance(req.input)),
+        text: JSON.stringify(lookupPlace(req.input)),
         searchCalls: 0,
         status: 'completed',
         ms: 1,
@@ -64,12 +64,7 @@ export class FakeOpenAiService {
   }
 }
 
-/**
- * 모델이 할 일을 표로 대신한다.
- *
- * 진짜 모델은 자연어를 이해하지만, 테스트는 "NluService 가 모델 답을 어떻게 다루는가"를
- * 보는 것이지 모델 성능을 보는 게 아니다. 오타 교정(오사카→오사카)도 여기서 흉내 낸다.
- */
+/** 모델이 아는 도시. [발화에 등장하는 표기, 표준 한국어명, 슬러그] */
 const CITIES: [string, string, string][] = [
   // [발화에 등장하는 표기, 표준 한국어명, 슬러그]
   ['인천', '인천', 'incheon'],
@@ -94,82 +89,89 @@ const CITIES: [string, string, string][] = [
   ['zxcv', 'zxcv', 'zxcv'],
 ];
 
-export function parseUtterance(utterance: string): Record<string, unknown> {
+/**
+ * 의도·지역 추출을 표로 대신한다.
+ *
+ * 진짜 모델은 자연어를 이해하지만, 테스트가 보는 건 "IntentService 가 모델 답을
+ * 어떻게 다루는가" 이지 모델 성능이 아니다. 오타 교정도 여기서 흉내 낸다.
+ */
+export function parseIntent(utterance: string): Record<string, unknown> {
   const lowered = utterance.toLowerCase();
 
-  let found: [string, string, string] | null = null;
-  let at = Number.MAX_SAFE_INTEGER;
-  for (const entry of CITIES) {
-    const idx = lowered.indexOf(entry[0].toLowerCase());
-    if (idx >= 0 && idx < at) {
-      at = idx;
-      found = entry;
-    }
+  const intent = /호텔|숙소/.test(utterance)
+    ? 'hotel'
+    : /항공|비행기|티켓/.test(utterance)
+      ? 'flight'
+      : /관광|명소|맛집|볼거리|가볼/.test(utterance)
+        ? 'attraction'
+        : 'unknown';
+
+  // "부산에서 오사카" 처럼 두 지명이 나오면 앞이 출발지, 뒤가 목적지다.
+  const hits = [...CITIES, ...AREAS]
+    .map((entry) => ({ entry, at: lowered.indexOf(entry[0].toLowerCase()) }))
+    .filter((h) => h.at >= 0)
+    .sort((a, b) => a.at - b.at);
+  const unique = hits.filter(
+    (h, i) => hits.findIndex((x) => x.entry[2] === h.entry[2]) === i,
+  );
+  const origin = unique.length > 1 && /에서|출발/.test(utterance) ? unique[0] : null;
+  const destination = origin ? unique[1] : unique[0];
+
+  const ignored: string[] = [];
+  for (const pattern of [/\d+\s*명/g, /\d+\s*월\s*\d+\s*일?/g, /\d+\s*박/g]) {
+    for (const m of utterance.matchAll(pattern)) ignored.push(m[0]);
   }
 
-  const guests = /(\d+)\s*(?:명|인)/.exec(utterance);
-  const nights = /(\d+)\s*박/.exec(utterance);
-
   return {
-    city_name: found?.[1] ?? null,
-    city_slug: found?.[2] ?? null,
-    guests: guests ? Number(guests[1]) : null,
-    nights: nights ? Number(nights[1]) : null,
+    intent,
+    place: destination?.entry[1] ?? null,
+    from: origin?.entry[1] ?? null,
+    trip_type: /편도/.test(utterance) ? 'ow' : 'rt',
+    ignored,
   };
 }
 
-/**
- * 항공권 파싱을 표로 대신한다.
- *
- * 진짜 모델은 "다음달 3일" 을 절대 날짜로 바꿔주지만, 테스트가 확인하려는 건
- * FlightNluService 가 모델 답을 어떻게 다루는가다. 그래서 발화에 이미 들어 있는
- * YYYY-MM-DD 만 읽고, 그런 게 없으면 날짜 없음으로 답한다.
- *
- * ⚠️ input 은 "오늘은 YYYY-MM-DD 이다.\n발화: ..." 형태로 온다. 앞의 오늘 날짜를
- *    발화의 날짜로 오인하지 않도록 발화 부분만 떼서 본다.
- */
-export function parseFlightUtterance(input: string): Record<string, unknown> {
-  const utterance = input.includes('발화:') ? input.split('발화:')[1] : input;
-  const lowered = utterance.toLowerCase();
+/** 사전에 없는 지명을 모델이 정리해주는 상황. */
+export function lookupPlace(raw: string): Record<string, unknown> {
+  const area = AREAS.find((a) => raw.includes(a[0]));
+  if (area) {
+    return {
+      canonical_name: area[1],
+      slug: area[2],
+      country_code: 'JP',
+      kind: 'area',
+      iata: null,
+      parent_name: area[3],
+    };
+  }
 
-  const cityAt = (skip = 0): [string, string, string] | null => {
-    const hits = CITIES.map((entry) => ({
-      entry,
-      at: lowered.indexOf(entry[0].toLowerCase()),
-    }))
-      .filter((h) => h.at >= 0)
-      .sort((a, b) => a.at - b.at);
-    // 같은 도시가 표에 여러 표기로 들어 있어 중복 히트가 난다. 슬러그로 압축한다.
-    const unique = hits.filter(
-      (h, i) => hits.findIndex((x) => x.entry[2] === h.entry[2]) === i,
-    );
-    return unique[skip]?.entry ?? null;
-  };
-
-  // "인천에서 오사카" 처럼 두 도시가 나오면 앞이 출발지, 뒤가 도착지다.
-  const first = cityAt(0);
-  const second = cityAt(1);
-  const origin = second ? first : null;
-  const destination = second ?? first;
-
-  const dates = utterance.match(/\d{4}-\d{2}-\d{2}/g) ?? [];
-  const pax = /(\d+)\s*(?:명|인)/.exec(utterance);
-  const round = /왕복/.test(utterance) || dates.length > 1;
+  const city = CITIES.find((c) => raw.toLowerCase().includes(c[0].toLowerCase()));
+  if (city) {
+    return {
+      canonical_name: city[1],
+      slug: city[2],
+      country_code: null,
+      kind: 'city',
+      iata: AIRPORTS[city[2]] ?? null,
+      parent_name: null,
+    };
+  }
 
   return {
-    origin_name: origin?.[1] ?? null,
-    origin_slug: origin?.[2] ?? null,
-    origin_code: origin ? AIRPORTS[origin[2]] ?? null : null,
-    destination_name: destination?.[1] ?? null,
-    destination_slug: destination?.[2] ?? null,
-    destination_code: destination ? AIRPORTS[destination[2]] ?? null : null,
-    depart_date: dates[0] ?? null,
-    return_date: round ? (dates[1] ?? null) : null,
-    trip_type: round ? 'round' : 'oneway',
-    passengers: pax ? Number(pax[1]) : null,
-    cabin: /비즈니스/.test(utterance) ? 'business' : null,
+    canonical_name: null,
+    slug: null,
+    country_code: null,
+    kind: 'city',
+    iata: null,
+    parent_name: null,
   };
 }
+
+/** 사전(city-table)에 없는 세부 지역. [발화 표기, 표준명, 슬러그, 부모 도시] */
+const AREAS: [string, string, string, string][] = [
+  ['도톤보리', '도톤보리', 'dotonbori', '오사카'],
+  ['시부야', '시부야', 'shibuya', '도쿄'],
+];
 
 /** 모델이 아는 척하는 공항 코드. 표에 없으면 null 이 온다 (실제 모델도 그렇다). */
 const AIRPORTS: Record<string, string> = {
