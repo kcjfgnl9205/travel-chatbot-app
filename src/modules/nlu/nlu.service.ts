@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import { AppConfig, CONFIG } from '../../config/app.config';
 import { OpenAiService, parseJsonLoose } from '../openai/openai.service';
+import { findCityInText, lookupCity } from './city-table';
 import { EMPTY_QUERY, ParsedQuery, citySlugOf, utteranceKeyOf } from './nlu';
 
 /**
@@ -11,6 +12,18 @@ import { EMPTY_QUERY, ParsedQuery, citySlugOf, utteranceKeyOf } from './nlu';
  * "오사카 호텔"                                → { osaka, 오사카 }  ← 오타 교정
  * "동경 숙소"                                  → { tokyo, 도쿄 }    ← 표기 통일
  *
+ * **도시를 찾는 순서가 셋이다.** 위에서 걸리면 아래는 안 본다.
+ *
+ *   1. **오픈빌더 엔티티** (`여행도시`). 카카오가 이미 도시로 확정한 값이라 가장 정확하고
+ *      공짜다. 블록에 엔티티가 붙어 있으면 사실상 여기서 끝난다.
+ *   2. **도시 사전** ([city-table.ts](./city-table.ts)). 엔티티가 안 왔을 때의 폴백.
+ *      역시 0ms·0원이고, 모델이 2.5초를 넘겨 되묻던 경우를 없애준다.
+ *   3. **모델** (gpt-5-mini). 사전에 없는 도시·오타·긴 문장이 여기로 온다.
+ *
+ * 1·2 로 도시가 정해져도 **발화에 숫자가 섞여 있으면** 인원·박수를 뽑으려고 모델을
+ * 한 번 더 부른다 ("오사카 호텔 4명 2박"). 도시는 이미 정해졌으므로 모델이 도시를
+ * 틀리게 말해도 무시한다.
+ *
  * ⚠️ **이건 카카오 5초 예산 안에서 돈다.** 그래서 두 가지를 지킨다.
  *   1. 같은 문장은 두 번 부르지 않는다 (별칭 캐시). 이게 없으면 매 메시지가 유료다.
  *   2. 짧게 끊는다 (OPENAI_PARSE_TIMEOUT_SECONDS, 기본 2.5초). 늦으면 포기하고
@@ -18,6 +31,13 @@ import { EMPTY_QUERY, ParsedQuery, citySlugOf, utteranceKeyOf } from './nlu';
  *
  * 검색용 호출(7~30초)과 달리 툴도 안 쓰고 effort 도 minimal 이라 훨씬 싸고 빠르다.
  */
+
+/**
+ * 인원·박수 단서. 이게 없으면 도시가 정해진 순간 모델을 부르지 않는다.
+ *
+ * "세부 여행지 추천해줘" 에 모델을 붙이면 2.5초와 요금을 아무것도 아닌 데 쓴다.
+ */
+const DETAIL_HINT = /[0-9０-９]|가족|커플|혼자|둘이|셋이|넷이/;
 
 const INSTRUCTIONS = [
   '너는 한국어 여행 챗봇의 발화 파서다.',
@@ -79,12 +99,26 @@ interface CacheEntry {
  */
 export interface ParseOutcome {
   parsed: ParsedQuery;
-  /** entity: 오픈빌더가 준 값 · cache: 별칭 캐시 · model: 모델 호출 · skipped: 시도 안 함 */
-  source: 'entity' | 'cache' | 'model' | 'skipped';
+  /**
+   * entity: 오픈빌더가 준 값 · table: 도시 사전 · cache: 별칭 캐시 ·
+   * model: 모델 호출 · skipped: 시도 안 함
+   */
+  source: 'entity' | 'table' | 'cache' | 'model' | 'skipped';
   /** 모델 호출이 실패한 이유. 성공했거나 시도 안 했으면 null. */
   error: string | null;
   timedOut: boolean;
   ms: number;
+}
+
+export interface ResolveOptions {
+  /** 캐시를 읽지도 쓰지도 않는다. 진단 엔드포인트가 콜드 경로를 재려고 쓴다. */
+  fresh?: boolean;
+  /**
+   * 도시만 있으면 된다. 인원·박수를 위한 추가 모델 호출을 건너뛴다.
+   *
+   * 관광지는 "4명" 을 알아도 쓸 데가 없다 — 호텔만 인원을 검색에 넘긴다.
+   */
+  cityOnly?: boolean;
 }
 
 /** 별칭 캐시 상한. 문장 하나당 한 칸이라 넉넉히 잡아도 가볍다. */
@@ -101,29 +135,29 @@ export class NluService {
   ) {}
 
   /**
-   * 캐시만 본다. 모델을 부르지 않으므로 공짜다.
+   * 공짜로 알 수 있는 것만 본다 — 별칭 캐시와 도시 사전. 모델은 부르지 않는다.
    * 폴백 블록처럼 "굳이 돈 쓸 필요 없는" 경로에서 쓴다.
    */
   peek(utterance: string): ParsedQuery {
     const key = utteranceKeyOf(utterance);
     const hit = this.cache.get(key);
-    if (!hit) return EMPTY_QUERY;
-    if (hit.expiresAt <= Date.now()) {
-      this.cache.delete(key);
-      return EMPTY_QUERY;
-    }
-    return hit.parsed;
+    if (hit && hit.expiresAt > Date.now()) return hit.parsed;
+    if (hit) this.cache.delete(key);
+
+    const city = findCityInText(utterance);
+    if (!city) return EMPTY_QUERY;
+    return { ...EMPTY_QUERY, cityName: city.nameKo, citySlug: city.slug };
   }
 
   /**
-   * 발화를 파싱한다. 오픈빌더 엔티티 → 별칭 캐시 → 모델 순으로 본다.
+   * 발화를 파싱한다. 엔티티 → 도시 사전 → 별칭 캐시 → 모델 순으로 본다.
    *
-   * @param cityParam 오픈빌더가 뽑아준 도시 (city / sys_location). 있으면 그게 정답이다.
+   * @param cityParam 오픈빌더가 뽑아준 도시 (여행도시 엔티티). 있으면 그게 정답이다.
    */
   async resolve(
     utterance: string,
     cityParam?: string | null,
-    opts: { fresh?: boolean } = {},
+    opts: ResolveOptions = {},
   ): Promise<ParsedQuery> {
     return (await this.resolveDetailed(utterance, cityParam, opts)).parsed;
   }
@@ -132,7 +166,7 @@ export class NluService {
   async resolveDetailed(
     utterance: string,
     cityParam?: string | null,
-    opts: { fresh?: boolean } = {},
+    opts: ResolveOptions = {},
   ): Promise<ParseOutcome> {
     const started = Date.now();
     const done = (
@@ -149,18 +183,42 @@ export class NluService {
 
     // fresh: 캐시를 읽지도 쓰지도 않는다. 진단 엔드포인트가 콜드 경로의
     // 진짜 소요 시간을 재려고 쓴다 — 두 번째 호출이 0ms 로 찍히면 의미가 없다.
-    const cached = opts.fresh ? EMPTY_QUERY : this.peek(utterance);
+    // peek 이 아니라 캐시를 직접 본다 — 사전 조회는 아래에서 따로 하고,
+    // 출처(source)를 cache 와 table 로 구분해야 진단이 거짓말을 하지 않는다.
+    const cached = opts.fresh ? EMPTY_QUERY : this.cached(utterance);
 
-    // 엔티티가 왔으면 모델을 부를 이유가 없다 — 이미 도시로 뽑힌 값이다.
+    // 엔티티가 왔으면 모델에 도시를 다시 물을 이유가 없다 — 이미 도시로 뽑힌 값이다.
+    // 사전에 있으면 대표 한국어명으로 통일한다 ("동경" 엔티티 → 도쿄/tokyo).
     const param = cityParam?.trim();
     if (param) {
-      return done(
-        { ...cached, cityName: param, citySlug: citySlugOf(param) },
+      const known = lookupCity(param);
+      return this.withDetails(
+        {
+          ...cached,
+          cityName: known?.nameKo ?? param,
+          citySlug: known?.slug ?? citySlugOf(param),
+        },
+        utterance,
         'entity',
+        opts,
+        done,
       );
     }
 
     if (cached.citySlug) return done(cached, 'cache');
+
+    // 엔티티가 안 왔다 — 모델을 부르기 전에 사전을 본다. 공짜고 즉시 끝난다.
+    const fromTable = findCityInText(utterance);
+    if (fromTable) {
+      return this.withDetails(
+        { ...cached, cityName: fromTable.nameKo, citySlug: fromTable.slug },
+        utterance,
+        'table',
+        opts,
+        done,
+      );
+    }
+
     if (!utterance.trim()) return done(EMPTY_QUERY, 'skipped');
     if (!this.openai.enabled) {
       this.logger.warn('OPENAI_API_KEY 가 없어 발화 파싱을 건너뛴다');
@@ -183,6 +241,52 @@ export class NluService {
   }
 
   // ---------------------------------------------------------------- 내부
+  /** 별칭 캐시만 본다. 사전은 보지 않는다 (peek 과 다른 점). */
+  private cached(utterance: string): ParsedQuery {
+    const key = utteranceKeyOf(utterance);
+    const hit = this.cache.get(key);
+    if (!hit) return EMPTY_QUERY;
+    if (hit.expiresAt <= Date.now()) {
+      this.cache.delete(key);
+      return EMPTY_QUERY;
+    }
+    return hit.parsed;
+  }
+
+  /**
+   * 도시는 이미 정해졌다. 인원·박수만 모델로 마저 채운다.
+   *
+   * 숫자가 없는 발화("세부 호텔 추천해줘")는 모델을 부르지 않고 그대로 돌려준다.
+   * 모델이 도시를 다르게 말해도 무시한다 — 엔티티·사전이 더 믿을 만하다.
+   */
+  private async withDetails(
+    parsed: ParsedQuery,
+    utterance: string,
+    source: ParseOutcome['source'],
+    opts: ResolveOptions,
+    done: (
+      parsed: ParsedQuery,
+      source: ParseOutcome['source'],
+      error?: string | null,
+    ) => ParseOutcome,
+  ): Promise<ParseOutcome> {
+    const enough =
+      opts.cityOnly ||
+      parsed.guests !== null ||
+      !DETAIL_HINT.test(utterance) ||
+      !this.openai.enabled;
+    if (enough) return done(parsed, source);
+
+    const { parsed: detail, error } = await this.callModel(utterance);
+    const merged: ParsedQuery = {
+      ...parsed,
+      guests: detail.guests ?? parsed.guests,
+      nights: detail.nights ?? parsed.nights,
+    };
+    if (!opts.fresh) this.remember(utteranceKeyOf(utterance), merged);
+    return done(merged, source, error);
+  }
+
   private async callModel(
     utterance: string,
   ): Promise<{ parsed: ParsedQuery; error: string | null }> {

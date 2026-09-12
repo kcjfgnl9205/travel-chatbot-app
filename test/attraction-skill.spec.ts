@@ -217,12 +217,20 @@ describe('카카오 관광지 스킬', () => {
     // 관광지 스킬이 한 번 파싱하면 그 결과가 NluService 캐시에 남고,
     // 호텔 스킬이 같은 문장을 받으면 모델을 다시 부르지 않는다.
     // (항공권만 노선·날짜 때문에 파서가 따로 있다)
-    expect(nlu.peek('오사카 관광지 추천해줘').citySlug).toBeNull();
+    // 사전에 없는 도시로 본다 — 사전에 있으면 애초에 모델을 안 부르므로
+    // 캐시가 공유되는지 안 되는지가 드러나지 않는다.
+    expect(nlu.peek('없는도시 관광지 추천해줘').citySlug).toBeNull();
 
-    await post(kakaoPayload('오사카 관광지 추천해줘')).expect(201);
+    await post(kakaoPayload('없는도시 관광지 추천해줘')).expect(201);
 
-    expect(nlu.peek('오사카 관광지 추천해줘').citySlug).toBe('osaka');
-    expect(nlu.peek('오사카 관광지 추천해줘').cityName).toBe('오사카');
+    expect(nlu.peek('없는도시 관광지 추천해줘').citySlug).toBe('nowhere');
+    expect(nlu.peek('없는도시 관광지 추천해줘').cityName).toBe('없는도시');
+  });
+
+  it('사전에 있는 도시는 모델 없이 바로 검색된다 — 되묻지 않는다', async () => {
+    // 제보된 증상이 이거였다. "세부 여행지 추천해줘" 가 "어느 도시…" 로 떨어졌다.
+    const res = await post(kakaoPayload('세부 여행지 추천해줘')).expect(201);
+    expect(textOf(res.body)).not.toContain('어느 도시');
   });
 
   // ------------------------------------------------------------ 퀵리플라이

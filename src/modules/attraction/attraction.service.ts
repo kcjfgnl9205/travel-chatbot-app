@@ -19,7 +19,7 @@ import {
   userKeyOf,
   utteranceOf,
 } from '../kakao/dto/skill-payload.dto';
-import { CITIES, hasCity } from '../nlu/nlu';
+import { CITIES, CITY_PARAMS, hasCity } from '../nlu/nlu';
 import { NluService } from '../nlu/nlu.service';
 import { SearchCacheService } from '../search-cache/search-cache.service';
 import {
@@ -140,10 +140,11 @@ export class AttractionService {
     // 호텔과 **같은 파서**를 쓴다. 뽑을 게 도시 하나로 같기 때문이다.
     // 별칭 캐시도 공유되므로 "오사카 호텔" 을 물어본 사람이 "오사카 관광지" 를
     // 물으면 파싱이 공짜다. 항공권만 노선·날짜 때문에 파서가 따로 있다.
-    const parsed = await this.nlu.resolve(
-      utterance,
-      paramOf(payload, 'city', 'location', 'sys_location'),
-    );
+    // cityOnly: 관광지는 인원·박수를 쓰지 않는다. 그걸 뽑자고 모델을 한 번 더
+    // 부르면 5초 예산에서 아무 데도 안 쓰이는 값에 2.5초를 쓰는 셈이다.
+    const parsed = await this.nlu.resolve(utterance, paramOf(payload, ...CITY_PARAMS), {
+      cityOnly: true,
+    });
 
     const user = await this.users.getOrCreate(userKeyOf(payload));
     const userId = (user?.id as string) ?? null;

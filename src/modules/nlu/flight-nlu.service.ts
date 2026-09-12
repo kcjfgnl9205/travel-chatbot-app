@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import { AppConfig, CONFIG } from '../../config/app.config';
 import { OpenAiService, parseJsonLoose } from '../openai/openai.service';
+import { findCityInText, lookupCity } from './city-table';
 import { citySlugOf, utteranceKeyOf } from './nlu';
 
 /**
@@ -144,8 +145,11 @@ export const hasRoute = (p: ParsedFlight): boolean => p.destSlug !== null;
 /** resolve() 와 같지만 실패 원인까지 돌려준다. 진단 엔드포인트가 쓴다. */
 export interface FlightParseOutcome {
   parsed: ParsedFlight;
-  /** entity: 오픈빌더가 준 값 · cache: 별칭 캐시 · model: 모델 호출 · skipped: 시도 안 함 */
-  source: 'entity' | 'cache' | 'model' | 'skipped';
+  /**
+   * entity: 오픈빌더가 준 값 · table: 도시 사전 · cache: 별칭 캐시 ·
+   * model: 모델 호출 · skipped: 시도 안 함
+   */
+  source: 'entity' | 'table' | 'cache' | 'model' | 'skipped';
   error: string | null;
   timedOut: boolean;
   ms: number;
@@ -173,11 +177,52 @@ interface CacheEntry {
 /** 별칭 캐시 상한. 문장 하나당 한 칸이라 넉넉히 잡아도 가볍다. */
 const MAX_ENTRIES = 5000;
 
-/** 오픈빌더 엔티티로 넘어올 수 있는 파라미터 이름들. */
-export const ORIGIN_PARAMS = ['origin', 'departure', 'from_city'];
-export const DEST_PARAMS = ['destination', 'arrival', 'to_city', 'city', 'sys_location'];
-export const DEPART_PARAMS = ['depart_date', 'date', 'sys_date'];
-export const RETURN_PARAMS = ['return_date'];
+/**
+ * 오픈빌더 엔티티로 넘어올 수 있는 파라미터 이름들.
+ *
+ * **한국어 이름이 먼저다.** 오픈빌더 커스텀 엔티티는 한국어 이름을 그대로 파라미터
+ * 키로 쓴다 — 지금 블록에 붙어 있는 건 `여행도시` 하나다. 영문 이름만 보고 있던 탓에
+ * 카카오가 뽑아준 도착지를 통째로 버리고 매번 모델에 다시 물었다.
+ *
+ * ⚠️ **출발지 엔티티는 아직 없다.** 오픈빌더에서 발화의 출발지를 태깅하지 않았으므로
+ *    도시가 두 개 넘어오길 기대하면 안 된다. 출발지를 말하지 않으면
+ *    FLIGHT_DEFAULT_ORIGIN_*(서울/ICN)으로 채운다.
+ */
+export const ORIGIN_PARAMS = ['출발지', '출발도시', '여행도시1', 'origin', 'departure', 'from_city'];
+export const DEST_PARAMS = [
+  '여행도시',
+  '도착지',
+  '도착도시',
+  '목적지',
+  '여행지',
+  '도시',
+  'destination',
+  'arrival',
+  'to_city',
+  'city',
+  'sys_location',
+];
+export const DEPART_PARAMS = ['출발일', '가는날', '날짜', 'depart_date', 'date', 'sys_date'];
+export const RETURN_PARAMS = ['귀국일', '오는날', 'return_date'];
+
+/**
+ * 날짜·인원·좌석 단서. 도착지가 이미 정해져도 이게 있으면 모델을 마저 부른다.
+ *
+ * "오사카 항공권" 은 뽑을 게 도착지뿐이라 모델이 필요 없지만, "다음달 3일 오사카 왕복"
+ * 은 날짜를 놓치면 검색이 통째로 틀어진다. sys.date 엔티티는 "다음달 3일" 을 절대
+ * 날짜로 주지 않을 때가 있어 엔티티만 믿을 수도 없다.
+ */
+const DETAIL_HINT =
+  /[0-9０-９]|내일|모레|글피|주말|다음\s*주|담주|이번\s*주|다음\s*달|이번\s*달|올해|내년|왕복|편도|비즈니스|이코노미|퍼스트|일등석|가족|커플|혼자/;
+
+/**
+ * 출발지를 말한 흔적 ("부산에서", "김포 출발").
+ *
+ * 이게 있으면 발화에 도시가 둘이므로 **사전으로 도착지를 고르면 안 된다** —
+ * "오사카에서 서울 가는 비행기" 를 사전에 맡기면 더 긴 별칭인 오사카가 도착지로
+ * 잡혀 노선이 뒤집힌다. 어느 쪽이 출발지인지 가리는 건 모델의 일이다.
+ */
+const ROUTE_HINT = /에서|출발|부터/;
 
 @Injectable()
 export class FlightNluService {
@@ -231,26 +276,32 @@ export class FlightNluService {
     // 소요 시간을 재려고 쓴다 — 두 번째 호출이 0ms 로 찍히면 의미가 없다.
     const cached = opts.fresh ? EMPTY_FLIGHT : this.peek(utterance);
 
-    // 오픈빌더가 도착지를 뽑아줬으면 모델을 부를 이유가 없다.
-    // 날짜는 엔티티가 있어도 모델을 부른다 — sys_date 는 "다음달 3일" 같은 걸
-    // 절대 날짜로 주지 않을 때가 있고, 그러면 검색이 통째로 틀어진다.
+    // 오픈빌더가 도착지를 뽑아줬으면 모델에 도착지를 다시 물을 이유가 없다.
     const dest = hints.destination?.trim();
     if (dest) {
-      return done(
-        {
-          ...cached,
-          destName: dest,
-          destSlug: citySlugOf(dest),
-          originName: hints.origin?.trim() || cached.originName,
-          originSlug: hints.origin?.trim() ? citySlugOf(hints.origin.trim()) : cached.originSlug,
-          departDate: isoDate(hints.departDate) ?? cached.departDate,
-          returnDate: isoDate(hints.returnDate) ?? cached.returnDate,
-        },
+      return this.withDetails(
+        { ...cached, ...routeOf(dest, hints, cached) },
+        utterance,
         'entity',
+        opts,
+        done,
       );
     }
 
     if (cached.destSlug) return done(cached, 'cache');
+
+    // 엔티티가 안 왔다 — 모델을 부르기 전에 사전을 본다. 공짜고 즉시 끝난다.
+    // 출발지를 말한 발화는 사전에 맡기지 않는다 (ROUTE_HINT 주석 참고).
+    const fromTable = ROUTE_HINT.test(utterance) ? null : findCityInText(utterance);
+    if (fromTable) {
+      return this.withDetails(
+        { ...cached, ...routeOf(fromTable.nameKo, hints, cached) },
+        utterance,
+        'table',
+        opts,
+        done,
+      );
+    }
     if (!utterance.trim()) return done(EMPTY_FLIGHT, 'skipped');
     if (!this.openai.enabled) {
       this.logger.warn('OPENAI_API_KEY 가 없어 항공권 발화 파싱을 건너뛴다');
@@ -268,6 +319,45 @@ export class FlightNluService {
   }
 
   // ---------------------------------------------------------------- 내부
+  /**
+   * 노선은 이미 정해졌다. 날짜·인원·좌석만 모델로 마저 채운다.
+   *
+   * 단서가 없는 발화("세부 항공권 추천해줘")는 모델을 부르지 않는다. 부르는 경우에도
+   * 도착지는 엔티티·사전 값을 그대로 쓴다 — 모델이 도시를 바꿔 말해도 무시한다.
+   */
+  private async withDetails(
+    parsed: ParsedFlight,
+    utterance: string,
+    source: FlightParseOutcome['source'],
+    opts: { fresh?: boolean },
+    done: (
+      parsed: ParsedFlight,
+      source: FlightParseOutcome['source'],
+      error?: string | null,
+    ) => FlightParseOutcome,
+  ): Promise<FlightParseOutcome> {
+    // 날짜와 출발지는 서로 다른 이유로 필요하다. 하나가 채워졌다고 다른 하나를
+    // 포기하면 "부산에서 오사카 항공권" 이 서울 출발로 검색된다.
+    const needsDates = parsed.departDate === null && DETAIL_HINT.test(utterance);
+    const needsOrigin = parsed.originSlug === null && ROUTE_HINT.test(utterance);
+    if ((!needsDates && !needsOrigin) || !this.openai.enabled) return done(parsed, source);
+
+    const { parsed: detail, error } = await this.callModel(utterance);
+    const merged: ParsedFlight = {
+      ...parsed,
+      originName: parsed.originName ?? detail.originName,
+      originSlug: parsed.originSlug ?? detail.originSlug,
+      originCode: parsed.originCode ?? detail.originCode,
+      departDate: parsed.departDate ?? detail.departDate,
+      returnDate: parsed.returnDate ?? detail.returnDate,
+      tripType: detail.tripType,
+      passengers: detail.passengers ?? parsed.passengers,
+      cabin: detail.cabin ?? parsed.cabin,
+    };
+    if (!opts.fresh) this.remember(this.keyOf(utterance), merged);
+    return done(merged, source, error);
+  }
+
   private async callModel(
     utterance: string,
   ): Promise<{ parsed: ParsedFlight; error: string | null }> {
@@ -349,6 +439,33 @@ export interface FlightHints {
   destination?: string | null;
   departDate?: string | null;
   returnDate?: string | null;
+}
+
+/**
+ * 도착지 이름 하나 + 엔티티 힌트로 노선을 만든다.
+ *
+ * 사전에 있으면 대표 한국어명·슬러그·IATA 를 채운다 (세부 → cebu/CEB). 공항 코드가
+ * 붙으면 검색 프롬프트가 "세부" 라는 말 대신 CEB 를 쓸 수 있어 결과가 덜 흔들린다.
+ */
+function routeOf(
+  destination: string,
+  hints: FlightHints,
+  cached: ParsedFlight,
+): Partial<ParsedFlight> {
+  const dest = lookupCity(destination);
+  const origin = hints.origin?.trim() || null;
+  const originCity = lookupCity(origin);
+
+  return {
+    destName: dest?.nameKo ?? destination,
+    destSlug: dest?.slug ?? citySlugOf(destination),
+    destCode: dest?.iata ?? cached.destCode,
+    originName: originCity?.nameKo ?? origin ?? cached.originName,
+    originSlug: origin ? (originCity?.slug ?? citySlugOf(origin)) : cached.originSlug,
+    originCode: originCity?.iata ?? cached.originCode,
+    departDate: isoDate(hints.departDate) ?? cached.departDate,
+    returnDate: isoDate(hints.returnDate) ?? cached.returnDate,
+  };
 }
 
 /**

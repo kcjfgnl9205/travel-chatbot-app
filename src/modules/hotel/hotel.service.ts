@@ -21,7 +21,7 @@ import {
   userKeyOf,
   utteranceOf,
 } from '../kakao/dto/skill-payload.dto';
-import { CITIES, hasCity } from '../nlu/nlu';
+import { CITIES, CITY_PARAMS, hasCity } from '../nlu/nlu';
 import { NluService } from '../nlu/nlu.service';
 import { SearchCacheService } from '../search-cache/search-cache.service';
 import {
@@ -136,10 +136,7 @@ export class HotelService {
     const started = Date.now();
     const utterance = utteranceOf(payload);
     // 모델 호출이 들어간다(캐시 미스일 때만). 5초 예산의 첫 지출이라 타임아웃이 짧다.
-    const parsed = await this.nlu.resolve(
-      utterance,
-      paramOf(payload, 'city', 'location', 'sys_location'),
-    );
+    const parsed = await this.nlu.resolve(utterance, paramOf(payload, ...CITY_PARAMS));
 
     const user = await this.users.getOrCreate(userKeyOf(payload));
     const userId = (user?.id as string) ?? null;
