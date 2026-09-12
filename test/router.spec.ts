@@ -227,6 +227,32 @@ describe('POST /api/v1/kakao/router', () => {
     expect(res.body.version).toBe('2.0');
   });
 
+  it('검색을 할 수 없는 상태면 기다리라고 하지 않는다', async () => {
+    // OPENAI_API_KEY 가 빠진 서버. provider 가 스스로 "지금은 못 한다" 고 말한다.
+    (ctx.provider as { enabled?: boolean }).enabled = false;
+    try {
+      const res = await post(ctx.app, kakaoPayload('오사카 호텔 추천해줘'));
+
+      // ⚠️ "30초쯤 뒤에 다시 물어봐 주세요" 는 결과가 영원히 안 오는데 기다리게 하는 말이다.
+      expect(textOf(res.body)).not.toContain('30초');
+      expect(textOf(res.body)).toContain('안 되고 있어요');
+      // 검색을 시도하지도, 실패 행을 남기지도 않는다 — 키를 꽂으면 바로 살아나야 한다.
+      expect(ctx.provider.calls).toHaveLength(0);
+    } finally {
+      delete (ctx.provider as { enabled?: boolean }).enabled;
+    }
+  });
+
+  it('키를 꽂으면 바로 살아난다 — 실패를 굳혀두지 않았다', async () => {
+    (ctx.provider as { enabled?: boolean }).enabled = false;
+    await post(ctx.app, kakaoPayload('후쿠오카 호텔 추천해줘'));
+    delete (ctx.provider as { enabled?: boolean }).enabled;
+
+    const body = await askUntilCard(ctx.app, '후쿠오카 호텔 추천해줘');
+
+    expect(listCardOf(body).items).toHaveLength(5);
+  });
+
   // ---------------------------------------------------------- 콜백
   it('콜백이 켜져 있으면 대기 응답을 주고 결과를 밀어준다', async () => {
     const receiver = await callbackReceiver();

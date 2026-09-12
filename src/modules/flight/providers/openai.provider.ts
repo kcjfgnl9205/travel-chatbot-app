@@ -254,6 +254,11 @@ export class OpenAiFlightProvider implements FlightProvider {
     private readonly openai: OpenAiService,
   ) {}
 
+  /** 키가 없으면 검색을 시도조차 하지 않는다. 호출부가 미리 알아야 한다. */
+  get enabled(): boolean {
+    return this.openai.enabled;
+  }
+
   async search(query: FlightQuery): Promise<Flight[]> {
     return (await this.searchTraced(query)).flights;
   }

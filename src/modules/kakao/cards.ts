@@ -154,6 +154,21 @@ export function emptyText(meta: SearchMeta): t.Json {
   );
 }
 
+/**
+ * 검색을 **아예 할 수 없는 상태** (provider 에 키가 없다 등).
+ *
+ * ⚠️ "30초쯤 뒤에 다시 물어봐 주세요" 를 쓰면 안 된다. 결과가 영원히 안 오는데
+ *    기다리게 하는 것이고, 사용자는 그 사이 같은 질문을 반복한다. 운영자에게는
+ *    /health 의 openai 필드와 서버 로그가 신호다.
+ */
+export function unavailableText(meta: SearchMeta): t.Json {
+  return t.simpleText(
+    `지금은 ${subject(meta)} 검색이 안 되고 있어요 🙏
+` + '고쳐두는 대로 다시 알려드릴게요.',
+    placeQuickReplies(meta.kind, meta.placeName),
+  );
+}
+
 /** 검색 자체가 실패했을 때 (모델 오류·타임아웃). */
 export function failedText(meta: SearchMeta): t.Json {
   return t.simpleText(

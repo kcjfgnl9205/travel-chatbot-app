@@ -101,6 +101,16 @@ export class SearchService {
     // 누군가 이미 같은 걸 찾고 있다. AI 를 한 번 더 부르지 않는다.
     if (row && this.store.isBusy(row)) return cards.busyText(meta);
 
+    // ⚠️ 검색을 할 수 없는 상태면 **여기서 끊는다.** 선점도, 대기 응답도 만들지 않는다.
+    //    "30초쯤 뒤에 다시 물어봐 주세요" 는 결과가 영원히 안 오는데 기다리게 하는
+    //    거짓말이고, 실패 행을 남기면 키를 꽂은 뒤에도 TTL 동안 안 찾는다.
+    if (!this.domainOf(kind).ready) {
+      this.logger.error(
+        `${kind} 검색 불가 — provider 에 키가 없다. /health 의 openai 필드를 확인하라.`,
+      );
+      return cards.unavailableText(meta);
+    }
+
     // 방금 실패했거나 빈손이었다. 짧은 TTL 이 지나면 다시 찾아본다.
     if (row?.status === 'failed' && !isExpired(row)) return cards.emptyText(meta);
 

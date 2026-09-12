@@ -99,6 +99,14 @@ export interface RenderContext {
  */
 export interface SearchDomain<T = unknown> {
   readonly kind: SearchKind;
+  /**
+   * 지금 검색할 수 있는 상태인가 (provider 에 키가 있는가).
+   *
+   * false 면 라우터는 **대기 응답을 만들지 않는다.** 못 지킬 약속을 하는 대신
+   * 지금은 안 된다고 말한다 — 30초를 기다린 사용자가 또 물어보고 또 기다리는
+   * 게 가장 나쁘다.
+   */
+  readonly ready: boolean;
   /** ⚠️ 느리다(AI 검색 7~30초). 라우터는 이걸 백그라운드에서만 부른다. */
   search(ctx: SearchContext): Promise<T[]>;
   /** 캐시에서 살려낸 값이 이 도메인의 모양인가. 배포로 필드가 바뀌면 미스로 떨어진다. */

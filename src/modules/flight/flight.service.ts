@@ -89,6 +89,11 @@ export class FlightService implements SearchDomain<Flight> {
     return this.provider.name;
   }
 
+  /** 지금 검색할 수 있는가. 키가 없으면 false — 라우터가 헛된 대기를 안 만든다. */
+  get ready(): boolean {
+    return this.provider.enabled !== false;
+  }
+
   /** ⚠️ 느리다(7~30초). 백그라운드에서만 부른다. */
   async search(ctx: SearchContext): Promise<Flight[]> {
     const flights = await this.provider.search(this.queryOf(ctx));
