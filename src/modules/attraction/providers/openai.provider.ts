@@ -241,6 +241,7 @@ const RANK_INSTRUCTIONS = [
   // 이걸 안 시키면 신사 다섯 곳, 전망대 다섯 곳이 나온다.
   '**카테고리를 반드시 섞어라.** 같은 성격의 장소를 연달아 고르지 않는다.',
   '처음 가는 사람 기준으로, 그 도시에 갔으면 봐야 할 곳을 앞에 둔다.',
+  '**요청한 개수를 반드시 채워라.** 후보가 그만큼 없으면 있는 것을 전부 낸다 — 임의로 줄이지 마라.',
 ].join(' ');
 
 /**
@@ -297,6 +298,11 @@ export class OpenAiAttractionProvider implements AttractionProvider {
     @Inject(CONFIG) private readonly config: AppConfig,
     private readonly openai: OpenAiService,
   ) {}
+
+  /** 키가 없으면 검색을 시도조차 하지 않는다. 호출부가 미리 알아야 한다. */
+  get enabled(): boolean {
+    return this.openai.enabled;
+  }
 
   async search(query: AttractionQuery): Promise<Attraction[]> {
     return (await this.searchTraced(query)).attractions;

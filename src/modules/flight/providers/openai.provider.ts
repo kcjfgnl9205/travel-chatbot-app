@@ -3,8 +3,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { allowedHost, merchantFrom, toKoreanUrl } from '../../../common/booking-url';
 import { AppConfig, CONFIG } from '../../../config/app.config';
 import { OpenAiService, parseJsonLoose } from '../../openai/openai.service';
-import { isoDate } from '../../nlu/flight-nlu.service';
-import { Flight, FlightProvider, FlightQuery } from '../flight.types';
+import { Flight, FlightProvider, FlightQuery, isoDate } from '../flight.types';
 
 /**
  * gpt-5-mini + 웹 검색으로 항공권을 찾는 provider.
@@ -195,6 +194,7 @@ const RANK_INSTRUCTIONS = [
   '후보에 적히지 않은 편명·시각·가격은 null 로 둔다. 추측해서 채우지 않는다.',
   '후보의 URL 을 그대로 옮긴다. 임의로 도메인이나 경로를 바꾸지 않는다.',
   '가격만 보지 말고 직항 여부와 출발 시각을 섞어서 고른다.',
+  '**요청한 개수를 반드시 채워라.** 후보가 그만큼 없으면 있는 것을 전부 낸다 — 임의로 줄이지 마라.',
 ].join(' ');
 
 /**
@@ -253,6 +253,11 @@ export class OpenAiFlightProvider implements FlightProvider {
     @Inject(CONFIG) private readonly config: AppConfig,
     private readonly openai: OpenAiService,
   ) {}
+
+  /** 키가 없으면 검색을 시도조차 하지 않는다. 호출부가 미리 알아야 한다. */
+  get enabled(): boolean {
+    return this.openai.enabled;
+  }
 
   async search(query: FlightQuery): Promise<Flight[]> {
     return (await this.searchTraced(query)).flights;
@@ -418,17 +423,17 @@ export class OpenAiFlightProvider implements FlightProvider {
         originName: query.originName,
         destCode,
         destName: query.destName,
-        departDate: isoDate(pick.depart_date) ?? query.departDate,
+        departDate: isoDate(pick.depart_date),
         departTime: hhmm(pick.depart_time),
         arriveTime: hhmm(pick.arrive_time),
-        returnDate: query.tripType === 'round' ? (returnDate ?? query.returnDate) : null,
+        returnDate: query.tripType === 'round' ? returnDate : null,
         returnDepartTime: query.tripType === 'round' ? hhmm(pick.return_depart_time) : null,
         returnArriveTime: query.tripType === 'round' ? hhmm(pick.return_arrive_time) : null,
         durationMinutes: positiveInt(pick.duration_minutes),
         stops: stops(pick.stops),
         via: text(pick.via),
         tripType: query.tripType,
-        cabin: text(pick.cabin) ?? query.cabin,
+        cabin: text(pick.cabin),
         priceFrom: positiveInt(pick.price_from),
         currency: 'KRW',
         // 한국어 페이지로 돌린다. 프롬프트가 안 먹었을 때의 마지막 방어선.
@@ -453,19 +458,20 @@ export function routeText(query: FlightQuery): string {
   return `${from} → ${to}`;
 }
 
-/** 날짜·인원·좌석등급을 문장으로. 없는 조건은 문장에서 빠진다. */
+/**
+ * 검색 조건을 문장으로.
+ *
+ * ⚠️ **날짜가 없다.** 캐시를 노선·왕복여부로만 가르기로 했기 때문이다
+ *    ([search.service.ts](../../search/search.service.ts) cacheKeyOf). 날짜를 안 주면
+ *    모델은 되묻거나 임의의 날짜를 지어내므로, **"일반적인 요금대를 조사하라"** 고
+ *    명시적으로 못 박는다. 카드에는 "AI 가 정리한 참고 정보" 안내가 항상 붙는다.
+ */
 export function conditionsText(query: FlightQuery): string {
-  const bits: string[] = [];
-  bits.push(query.tripType === 'round' ? '왕복이다.' : '편도다.');
-  if (query.departDate) bits.push(`가는 날은 ${query.departDate} 이다.`);
-  if (query.returnDate) bits.push(`오는 날은 ${query.returnDate} 이다.`);
-  if (!query.departDate) {
-    // 날짜가 없으면 모델이 되묻거나 임의의 날짜를 만들어낸다. 둘 다 막는다.
-    bits.push('날짜가 정해지지 않았으니 최근 기준 일반적인 요금대를 조사한다.');
-  }
-  if (query.passengers) bits.push(`탑승 인원은 ${query.passengers}명이다.`);
-  if (query.cabin) bits.push(`좌석 등급은 ${query.cabin} 이다.`);
-  return bits.join(' ');
+  return [
+    query.tripType === 'round' ? '왕복이다.' : '편도다.',
+    '특정 날짜가 정해지지 않았으니 최근 한 달 기준의 일반적인 요금대를 조사한다.',
+    '날짜를 지어내지 말고, 확인된 날짜가 없으면 날짜 필드는 null 로 둔다.',
+  ].join(' ');
 }
 
 // ------------------------------------------------------------------ 헬퍼

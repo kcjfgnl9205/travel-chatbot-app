@@ -6,7 +6,21 @@
 
 > **전제**: 실시간 운임 API 가 없다. gpt-5-mini 가 웹을 검색해 "그 노선이 대략 얼마인가"를 찾아오고, 애드픽 API 가 예약 링크를 커미션 링크로 바꾼다. 사용자에게는 우리 리다이렉트만 노출된다.
 
-호텔 쪽 흐름은 [README](../README.md#호텔은-어떻게-찾는가), DB 는 [DB.md](DB.md).
+호텔 쪽 흐름은 [README](../README.md#무엇을-어떻게-찾는가), DB 는 [DB.md](DB.md).
+
+> ## ⚠️ 이 문서는 라우터 재설계 이전에 쓰였다
+>
+> 아직 맞는 것: 2단 프롬프트 · 허용 호스트 · 애드픽 변환 · 링크 추적 · "예상가" 라는 성격.
+> **바뀐 것 넷:**
+> 1. 진입점이 `POST /api/v1/kakao/router` 하나다 (`flights/search` 는 없앴다)
+> 2. 카드가 `itemCard` 캐러셀이 아니라 **`listCard`** 다 — 그룹챗봇이 itemCard 를 못 그린다
+> 3. **날짜·인원을 검색에 넘기지 않는다.** 캐시 키가 `flight:{from}>{to}:{rt|ow}` 라서다.
+>    대신 카드 아래 고지에 "반영되지 않았어요" 가 붙는다
+> 4. 발화 파서(`FlightNluService`)가 없어졌다 — 의도·지역은 [IntentService](../src/modules/intent/intent.service.ts) 와
+>    [PlacesService](../src/modules/places/places.service.ts) 가 세 도메인 공용으로 처리한다
+>
+> 현재 구조는 **[ROUTER.md](ROUTER.md)**.
+
 
 ---
 

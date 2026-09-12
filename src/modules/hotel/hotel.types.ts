@@ -1,5 +1,3 @@
-import { CacheKeyPart } from '../search-cache/search-cache.service';
-
 /** provider 가 돌려주는 호텔 1건. 어떤 provider(AI/크롤링/고정)든 이 형태로 맞춘다. */
 export interface Hotel {
   name: string;
@@ -28,26 +26,13 @@ export interface Hotel {
 export interface HotelQuery {
   citySlug: string;
   cityName: string;
-  checkIn?: string | null;
-  checkOut?: string | null;
+  /**
+   * 투숙 인원. **라우터는 항상 null 을 준다** — 캐시를 지역으로만 가르기 때문이다.
+   * provider 프롬프트가 이 값을 optional 로 다루므로 필드는 남겨둔다
+   * (진단 엔드포인트에서 인원을 넣어 비교해 볼 수 있다).
+   */
   guests?: number | null;
   limit: number;
-}
-
-/**
- * 캐시 키에 들어가는 조건들.
- *
- * ⚠️ **결과를 갈라야 하는 조건은 여기 다 있어야 한다.** 빠뜨리면 다른 조건으로 물은
- *    사람에게 남의 검색 결과가 나간다.
- */
-export function hotelCacheKey(query: HotelQuery): CacheKeyPart[] {
-  return [
-    query.citySlug,
-    query.guests,
-    query.checkIn,
-    query.checkOut,
-    query.limit,
-  ];
 }
 
 /** 캐시에서 살려낸 값이 호텔 모양인가. 배포로 필드가 바뀌면 미스로 떨어뜨린다. */
@@ -86,6 +71,13 @@ export function listDescription(h: Hotel): string {
 
 export interface HotelProvider {
   readonly name: string;
+  /**
+   * 지금 검색을 할 수 있는 상태인가 (API 키 등). 안 주면 할 수 있는 것으로 본다.
+   *
+   * ⚠️ 이게 없으면 키가 빠진 서버가 **지키지 못할 약속**을 한다 —
+   *    "30초쯤 뒤에 다시 물어봐 주세요" 라고 해놓고 영원히 결과가 없다.
+   */
+  readonly enabled?: boolean;
   /**
    * ⚠️ 느릴 수 있다(AI provider 는 7~30초). 호출부는 반드시 백그라운드에서만 부른다.
    * 카카오 5초 예산 안에서 도는 건 캐시 조회뿐이다.

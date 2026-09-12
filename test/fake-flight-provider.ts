@@ -50,26 +50,26 @@ const AIRLINES: [string, string][] = [
   ['에어부산', 'BX'],
 ];
 
-/** 캐러셀 제한을 넘겨서 자르기까지 검증되도록 6편을 준다. */
+/** 페이지 넘김(5줄씩)까지 검증되도록 항공사를 두 바퀴 돌려 12편을 준다. */
 export function defaultFlights(query: FlightQuery): Flight[] {
-  return AIRLINES.map(([airline, code], i) => ({
+  return [...AIRLINES, ...AIRLINES].map(([airline, code], i) => ({
     airline,
     flightNo: `${code}${700 + i}`,
     originCode: query.originCode ?? 'ICN',
     originName: query.originName,
     destCode: query.destCode ?? 'KIX',
     destName: query.destName,
-    departDate: query.departDate,
+    departDate: null,
     departTime: `0${8 + i}:20`.slice(-5),
     arriveTime: `${10 + i}:00`,
-    returnDate: query.returnDate,
+    returnDate: null,
     returnDepartTime: query.tripType === 'round' ? '12:30' : null,
     returnArriveTime: query.tripType === 'round' ? '14:20' : null,
     durationMinutes: 100 + i * 10,
     stops: i % 2,
     via: i % 2 ? '홍콩' : null,
     tripType: query.tripType,
-    cabin: query.cabin,
+    cabin: null,
     priceFrom: 148000 + i * 20000,
     currency: 'KRW',
     sourceUrl: `https://kr.trip.com/flights/${query.destSlug}-${i + 1}`,

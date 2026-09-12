@@ -1,5 +1,3 @@
-import { CacheKeyPart } from '../search-cache/search-cache.service';
-
 /**
  * provider 가 돌려주는 관광지 1건.
  *
@@ -70,11 +68,6 @@ export interface AttractionQuery {
   citySlug: string;
   cityName: string;
   limit: number;
-}
-
-/** 캐시 키에 들어가는 조건들. 관광지는 도시 하나가 전부다. */
-export function attractionCacheKey(query: AttractionQuery): CacheKeyPart[] {
-  return [query.citySlug, query.limit];
 }
 
 /** 캐시에서 살려낸 값이 관광지 모양인가. 배포로 필드가 바뀌면 미스로 떨어뜨린다. */
@@ -167,6 +160,13 @@ export function listDescription(a: Attraction): string {
 
 export interface AttractionProvider {
   readonly name: string;
+  /**
+   * 지금 검색을 할 수 있는 상태인가 (API 키 등). 안 주면 할 수 있는 것으로 본다.
+   *
+   * ⚠️ 이게 없으면 키가 빠진 서버가 **지키지 못할 약속**을 한다 —
+   *    "30초쯤 뒤에 다시 물어봐 주세요" 라고 해놓고 영원히 결과가 없다.
+   */
+  readonly enabled?: boolean;
   /**
    * ⚠️ 느릴 수 있다(AI provider 는 7~30초). 호출부는 반드시 백그라운드에서만 부른다.
    * 카카오 5초 예산 안에서 도는 건 캐시 조회뿐이다.

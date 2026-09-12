@@ -61,38 +61,32 @@ async function bootstrap(): Promise<void> {
 /**
  * **설정이 기능을 조용히 꺼버리는 자리를 짚어준다.**
  *
- * *_RESULT_LIMIT 가 한 페이지(5) 이하면 넘길 게 없어서 "더 보기" 버튼이 아예 안
- * 달린다. 오류가 아니라 정상 동작이라 로그도 예외도 안 남는데, 보는 사람에게는
- * 버튼이 사라진 것처럼 보인다. 실제로 .env 에 예전 값(HOTEL_RESULT_LIMIT=5)이
- * 남아 있어서 호텔만 버튼이 안 나온 적이 있다.
+ * RESULT_MAX_ITEMS 가 한 페이지(5) 이하면 넘길 게 없어서 "더 보기" 버튼이 아예 안
+ * 달린다. 오류가 아니라 정상 동작이라 로그도 예외도 안 남는데, 보는 사람에게는 버튼이
+ * 사라진 것처럼 보인다. 실제로 .env 에 예전 값(HOTEL_RESULT_LIMIT=5)이 남아 있어서
+ * 호텔만 버튼이 안 나온 적이 있다.
  *
- * ⚠️ 배포해도 서버의 .env 는 그대로 남는다(deploy/remote.sh). 코드 기본값을
- *    올려도 서버에 옛 값이 있으면 그게 이긴다 — 그래서 **실효값**을 찍는다.
+ * ⚠️ 배포해도 서버의 .env 는 그대로 남는다(deploy/remote.sh). 코드 기본값을 올려도
+ *    서버에 옛 값이 있으면 그게 이긴다 — 그래서 **실효값**을 찍는다.
  */
 function warnAboutPaging(config: AppConfig, logger: Logger): void {
-  const limits: [string, number][] = [
-    ['HOTEL_RESULT_LIMIT', config.hotelResultLimit],
-    ['FLIGHT_RESULT_LIMIT', config.flightResultLimit],
-    ['ATTRACTION_RESULT_LIMIT', config.attractionResultLimit],
-  ];
-
   logger.log(
-    `result limits — ${limits.map(([name, n]) => `${name.split('_')[0].toLowerCase()}=${n}`).join(' ')} ` +
-      `(page=${PAGE_SIZE}, candidates=${config.openaiCandidateCount})`,
+    `result max=${config.resultMaxItems} page=${PAGE_SIZE} ` +
+      `(candidates=${config.openaiCandidateCount}) ` +
+      `ttl(min) hotel=${config.hotelCacheTtlMinutes} flight=${config.flightCacheTtlMinutes} ` +
+      `attraction=${config.attractionCacheTtlMinutes}`,
   );
 
-  for (const [name, limit] of limits) {
-    if (limit <= PAGE_SIZE) {
-      logger.warn(
-        `${name}=${limit} 이라 한 페이지(${PAGE_SIZE})를 못 넘는다 — "더 보기" 버튼이 안 달린다. ` +
-          `페이지를 넘기려면 ${PAGE_SIZE + 1} 이상으로 올려라.`,
-      );
-    }
+  if (config.resultMaxItems <= PAGE_SIZE) {
+    logger.warn(
+      `RESULT_MAX_ITEMS=${config.resultMaxItems} 이라 한 페이지(${PAGE_SIZE})를 못 넘는다 — ` +
+        `"더 보기" 버튼이 안 달린다. 페이지를 넘기려면 ${PAGE_SIZE + 1} 이상으로 올려라.`,
+    );
   }
 
-  if (config.openaiCandidateCount <= Math.max(...limits.map(([, n]) => n))) {
+  if (config.openaiCandidateCount <= config.resultMaxItems) {
     logger.warn(
-      `OPENAI_CANDIDATE_COUNT=${config.openaiCandidateCount} 가 RESULT_LIMIT 보다 크지 않다 — ` +
+      `OPENAI_CANDIDATE_COUNT=${config.openaiCandidateCount} 가 RESULT_MAX_ITEMS 보다 크지 않다 — ` +
         `2차 호출이 후보를 전부 써야 해서 선별(카테고리 섞기·순위)이 사실상 안 돈다.`,
     );
   }

@@ -227,6 +227,7 @@ const RANK_INSTRUCTIONS = [
   '주어진 후보 목록 안에서만 고른다. 목록에 없는 호텔을 새로 만들지 않는다.',
   '후보에 적히지 않은 URL·가격·평점은 null 로 둔다. 추측해서 채우지 않는다.',
   '후보의 URL 을 그대로 옮긴다. 임의로 도메인이나 경로를 바꾸지 않는다.',
+  '**요청한 개수를 반드시 채워라.** 후보가 그만큼 없으면 있는 것을 전부 낸다 — 임의로 줄이지 마라.',
 ].join(' ');
 
 @Injectable()
@@ -238,6 +239,11 @@ export class OpenAiHotelProvider implements HotelProvider {
     @Inject(CONFIG) private readonly config: AppConfig,
     private readonly openai: OpenAiService,
   ) {}
+
+  /** 키가 없으면 검색을 시도조차 하지 않는다. 호출부가 미리 알아야 한다. */
+  get enabled(): boolean {
+    return this.openai.enabled;
+  }
 
   async search(query: HotelQuery): Promise<Hotel[]> {
     return (await this.searchTraced(query)).hotels;

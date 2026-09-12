@@ -2,8 +2,11 @@ import { Controller, Get, Inject, Logger, Res } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 
-import { AppConfig, CONFIG, adpickApiEnabled, dbEnabled } from '../../config/app.config';
-import { EXPECTED_TABLES } from '../../config/database.config';
+import { AppConfig, CONFIG, adpickApiEnabled, dbEnabled, openaiEnabled } from '../../config/app.config';
+import { AttractionService } from '../attraction/attraction.service';
+import { FlightService } from '../flight/flight.service';
+import { HotelService } from '../hotel/hotel.service';
+import { EXPECTED_TABLES, TABLES_BY_MIGRATION } from '../../config/database.config';
 import { SupabaseService } from '../database/supabase.service';
 
 /**
@@ -26,6 +29,9 @@ export class HealthController {
   constructor(
     @Inject(CONFIG) private readonly config: AppConfig,
     private readonly supabase: SupabaseService,
+    private readonly hotels: HotelService,
+    private readonly flights: FlightService,
+    private readonly attractions: AttractionService,
   ) {}
 
   /** 앱 생존 확인. DB 는 건드리지 않는다. */
@@ -39,7 +45,15 @@ export class HealthController {
       status: 'ok',
       env: this.config.appEnv,
       db: dbEnabled(this.config) ? 'supabase' : 'disabled(no-op)',
-      provider: this.config.hotelProvider,
+      // ⚠️ 설정값이 아니라 **실제로 주입된 provider** 를 찍는다. 예전에는
+      //    HOTEL_PROVIDER 를 그대로 보여줬는데, 그 값은 아무도 읽지 않아서
+      //    .env 에 static 이라고 적어두면 OpenAI 를 부르면서 static 이라고 보고했다.
+      providers: {
+        hotel: this.hotels.providerName,
+        flight: this.flights.providerName,
+        attraction: this.attractions.providerName,
+      },
+      openai: openaiEnabled(this.config) ? this.config.openaiModel : 'disabled(no key)',
       adpick: adpickApiEnabled(this.config) ? 'api' : 'fallback(no key)',
     };
   }
@@ -135,7 +149,14 @@ export function hintFor(tables: Record<string, ProbeResult>): string {
   const everything = failed.length === Object.keys(tables).length;
 
   if (blob.includes('not exist') || blob.includes('schema cache') || blob.includes('pgrst205')) {
-    return '테이블이 없습니다. SQL Editor 에서 0001_init.sql 을 실행하세요.';
+    // 어느 마이그레이션을 안 돌렸는지까지 짚어준다. "테이블이 없다" 만으로는
+    // 네 개 파일 중 무엇을 실행해야 하는지 알 수 없다.
+    const missing = new Set(failed.map(([name]) => name));
+    const files = Object.entries(TABLES_BY_MIGRATION)
+      .filter(([, tables]) => tables.some((t) => missing.has(t)))
+      .map(([file]) => file);
+    const which = files.length ? files.join(' → ') : '0001_init.sql';
+    return `테이블이 없습니다. SQL Editor 에서 ${which} 을 실행하세요.`;
   }
 
   if (

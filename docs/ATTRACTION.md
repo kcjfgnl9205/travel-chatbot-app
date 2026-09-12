@@ -8,7 +8,19 @@
 > 그래서 이 도메인은 호텔·항공권에서 가장 복잡했던 부분(애드픽 변환, 허용 호스트,
 > 죽은 링크 처리)이 통째로 빠진다. 대신 링크는 우리가 직접 만든다.
 
-호텔은 [README](../README.md#호텔은-어떻게-찾는가), 항공권은 [FLIGHT.md](FLIGHT.md), DB 는 [DB.md](DB.md).
+호텔은 [README](../README.md#무엇을-어떻게-찾는가), 항공권은 [FLIGHT.md](FLIGHT.md), DB 는 [DB.md](DB.md).
+
+> ## ⚠️ 이 문서는 라우터 재설계 이전에 쓰였다
+>
+> 아직 맞는 것: 지도 링크를 우리가 만든다 · 위키백과 사진 · 입장료를 환산하지 않는다 · 2단 프롬프트.
+> **바뀐 것 셋:**
+> 1. 진입점이 `POST /api/v1/kakao/router` 하나다 (`attractions/recommend` 는 없앴다)
+> 2. 캐시 키가 `attraction:{place_id}` 이고 TTL 이 30일이다 (도시 슬러그가 아니라 지역 id)
+> 3. 발화 파싱이 [IntentService](../src/modules/intent/intent.service.ts) + [PlacesService](../src/modules/places/places.service.ts) 로 바뀌었다 —
+>    그 덕에 "도톤보리 맛집" 처럼 **도시가 아닌 지역**도 자기 캐시를 갖는다
+>
+> 현재 구조는 **[ROUTER.md](ROUTER.md)**.
+
 
 ---
 
