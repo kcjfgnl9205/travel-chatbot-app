@@ -169,6 +169,31 @@ describe('카카오 관광지 스킬', () => {
       expect(labels).toContain('사진 출처: 위키미디어');
     });
 
+    it('⚠️ 버튼은 2개가 한계다 — 더 보기 > 사진 출처 > 다른 도시 보기 순으로 남는다', async () => {
+      // 도시 바로가기는 quickReplies 가 이미 하고 있어서 버튼 자리를 쓸 이유가 가장 적다.
+      const card = await attractionsUntilCard(app, '오사카 관광지 추천해줘');
+      const labels = card.buttons.map((b: any) => b.label);
+
+      expect(labels).toHaveLength(2);
+      expect(labels[0]).toBe('더 보기');
+      expect(labels[1]).toBe('사진 출처: 위키미디어');
+    });
+
+    it('"더 보기" 를 누르면 다음 관광지가 나온다', async () => {
+      const first = await attractionsUntilCard(app, '오사카 관광지 추천해줘');
+      const more = first.buttons.find((b: any) => b.label === '더 보기');
+      expect(more.extra).toEqual({ city: '오사카', offset: 5 });
+
+      const payload = kakaoPayload(more.messageText) as any;
+      payload.action.clientExtra = more.extra;
+      const res = await post(payload).expect(201);
+      const card = listCardOf(res.body);
+
+      expect(card.header.title).toContain('6~');
+      const firstNames = first.items.map((i: any) => i.title);
+      for (const row of card.items) expect(firstNames).not.toContain(row.title);
+    });
+
     it('사진이 하나도 없으면 출처 버튼도 없다 — 쓰지 않은 것의 출처를 밝힐 이유가 없다', async () => {
       provider.reply = (query) =>
         defaultAttractions(query).map((a) => ({ ...a, imageUrl: null }));

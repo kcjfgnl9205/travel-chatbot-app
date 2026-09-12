@@ -200,6 +200,26 @@ describe('카카오 항공권 스킬', () => {
       expect(round[0].description).toContain('↔');
     });
 
+    it('"더 보기" 를 누르면 다음 항공편이 나온다', async () => {
+      const first = await searchUntilRows(app, '오사카 항공권 찾아줘');
+      const res = await post(kakaoPayload('오사카 항공권 찾아줘')).expect(201);
+      const more = res.body.template.outputs[1].listCard.buttons.find(
+        (b: any) => b.label === '더 보기',
+      );
+      expect(more.extra).toEqual({ city: '오사카', offset: 5 });
+
+      const payload = kakaoPayload(more.messageText) as any;
+      payload.action.clientExtra = more.extra;
+      const second = await post(payload).expect(201);
+      const card = second.body.template.outputs[1].listCard;
+
+      expect(card.header.title).toContain('6~');
+      const firstTitles = first.map((r: any) => r.title);
+      for (const row of card.items) expect(firstTitles).not.toContain(row.title);
+      // 마지막 페이지라 "더 보기" 가 없어야 한다.
+      expect(card.buttons.map((b: any) => b.label)).not.toContain('더 보기');
+    });
+
     it('같은 편이 두 번 오면 하나만 나간다 — 주소가 아니라 편명으로 판정한다', async () => {
       // 항공권은 여러 편이 같은 노선 검색 페이지를 가리킨다. 주소로 중복을 지우면
       // 줄이 하나만 남는다.

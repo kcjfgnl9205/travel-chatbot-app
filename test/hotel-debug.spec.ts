@@ -271,7 +271,8 @@ describe('진단 응답 = 스킬이 내보내는 카드', () => {
     expect(card.header.title).toBe('오사카 호텔 추천 5곳');
     // provider 는 6곳을 주지만 listCard 는 5줄이 한계다
     expect(card.items).toHaveLength(5);
-    expect(card.buttons[0].label).toBe('다른 도시 보기');
+    // 6곳을 주므로 2페이지가 있다 → "더 보기" 가 먼저 온다.
+    expect(card.buttons.map((b: any) => b.label)).toEqual(['더 보기', '다른 도시 보기']);
     expect(res.body.template.quickReplies.length).toBeGreaterThan(0);
   });
 

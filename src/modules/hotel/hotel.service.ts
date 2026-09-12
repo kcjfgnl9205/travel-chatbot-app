@@ -13,6 +13,14 @@ import {
 import { UsersRepository } from '../database/repositories/users.repository';
 import * as t from '../kakao/templates';
 import {
+  PAGE_SIZE,
+  cityFromExtra,
+  hasNextPage,
+  moreButton,
+  offsetOf,
+  pageOf,
+} from '../kakao/paging';
+import {
   KakaoSkillPayload,
   actionParamsOf,
   blockNameOf,
@@ -97,6 +105,8 @@ interface RequestContext {
   messageId: string | null;
   guests: number | null;
   started: number;
+  /** 이번 카드가 보여줄 시작 위치. "더 보기" 로 들어오면 5, 첫 요청이면 0. */
+  offset?: number;
 }
 
 @Injectable()
@@ -136,7 +146,12 @@ export class HotelService {
     const started = Date.now();
     const utterance = utteranceOf(payload);
     // 모델 호출이 들어간다(캐시 미스일 때만). 5초 예산의 첫 지출이라 타임아웃이 짧다.
-    const parsed = await this.nlu.resolve(utterance, paramOf(payload, ...CITY_PARAMS));
+    // "호텔 더 보기" 처럼 발화에 도시가 없는 경우가 있다. 그때는 버튼이 실어 보낸
+    // clientExtra.city 가 유일한 단서다 — 엔티티 파라미터와 같은 자격으로 본다.
+    const parsed = await this.nlu.resolve(
+      utterance,
+      paramOf(payload, ...CITY_PARAMS) ?? cityFromExtra(payload),
+    );
 
     const user = await this.users.getOrCreate(userKeyOf(payload));
     const userId = (user?.id as string) ?? null;
@@ -160,7 +175,13 @@ export class HotelService {
       guests: parsed.guests,
       limit: this.config.hotelResultLimit,
     };
-    const ctx: RequestContext = { userId, messageId, guests: parsed.guests, started };
+    const ctx: RequestContext = {
+      userId,
+      messageId,
+      guests: parsed.guests,
+      started,
+      offset: offsetOf(payload),
+    };
 
     // 5초 예산 안에서 할 수 있는 건 캐시 조회까지다.
     const cached = await this.searchCache.peek(
@@ -342,6 +363,7 @@ export class HotelService {
       guests: number | null;
       started: number;
       cacheHit: boolean;
+      offset?: number;
       /**
        * 통계(recommendations·recommendation_items)를 남길지. 기본 true.
        * 진단 경로만 false 로 둔다 — 진단 호출이 섞이면 전환율 집계가 틀어진다.
@@ -357,10 +379,12 @@ export class HotelService {
       links?: Map<string, ResolvedLink>;
     },
   ): Promise<t.Json> {
-    // 중복 제거 → 자르기 순서가 중요하다. 반대로 하면 중복이 5줄 자리를 먹는다.
-    // listCard 는 최대 5줄이고, 자르기 전에 애드픽 변환을 돌리면
-    // 보여주지도 못할 호텔 때문에 rate limit 을 헛되이 쓴다.
-    const hotels = dedupe(input, this.logger).slice(0, t.MAX_LIST_ITEMS);
+    // 중복 제거 → 페이지 자르기 순서가 중요하다. 반대로 하면 중복이 줄 자리를 먹고,
+    // 2페이지에서 1페이지에 이미 나온 호텔이 다시 보인다.
+    // 자르기 전에 애드픽 변환을 돌리지 않는 이유도 같다 — 이번 페이지에 안 나갈
+    // 호텔 때문에 rate limit 을 헛되이 쓴다.
+    const all = dedupe(input, this.logger);
+    const { page: hotels, start } = pageOf(all, ctx.offset ?? 0);
 
     // 원본 주소 → 애드픽 커미션 링크. 캐시에 있으면 API 를 안 탄다.
     // affiliate_links 행이 곧 호텔의 신원이기도 하다 — 별도 호텔 마스터를 두지 않는다.
@@ -454,9 +478,12 @@ export class HotelService {
     if (recommendationId) await this.items.createMany(rows);
 
     return t.listCard({
-      headerTitle: `${query.cityName} 호텔 추천 ${listItems.length}곳`,
+      // 2페이지부터는 몇 번째인지 알려준다. 안 그러면 같은 카드가 또 온 것처럼 보인다.
+      headerTitle: start
+        ? `${query.cityName} 호텔 ${start + 1}~${start + listItems.length}번째`
+        : `${query.cityName} 호텔 추천 ${listItems.length}곳`,
       items: listItems,
-      buttons: [t.messageButton('다른 도시 보기', '호텔 추천해줘')],
+      buttons: this.buttonsFor(query, all.length, start),
       quickReplies: this.cityQuickReplies(query.citySlug),
     });
   }
@@ -487,6 +514,28 @@ export class HotelService {
       `${cityName} 호텔을 찾고 있어요 🔍\n30초쯤 뒤에 다시 물어봐 주세요!`,
       this.cityQuickReplies(),
     );
+  }
+
+  /**
+   * 카드 하단 버튼. listCard 는 2개가 한계다.
+   * "더 보기" 는 **다음 페이지가 남아 있을 때만** 단다 — 없는데 달면 눌러도 같은
+   * 5곳이 다시 나오고, 사용자는 그걸 고장으로 읽는다.
+   */
+  private buttonsFor(query: HotelQuery, total: number, start: number): t.Json[] {
+    const buttons: t.Json[] = [];
+    if (hasNextPage(total, start)) {
+      buttons.push(
+        moreButton({
+          style: this.config.moreButtonStyle,
+          blockId: this.config.hotelBlockId,
+          messageText: `${query.cityName} 호텔 더 보기`,
+          cityName: query.cityName,
+          nextOffset: start + PAGE_SIZE,
+        }),
+      );
+    }
+    buttons.push(t.messageButton('다른 도시 보기', '호텔 추천해줘'));
+    return buttons.slice(0, t.MAX_LIST_BUTTONS);
   }
 
   cityQuickReplies(exclude?: string | null): t.Json[] {

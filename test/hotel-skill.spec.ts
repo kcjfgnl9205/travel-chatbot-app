@@ -238,12 +238,57 @@ describe('카카오 호텔 스킬', () => {
     expect(provider.calls.map((c) => c.cityName)).toContain('파리');
   });
 
-  it('카드 버튼의 messageText 가 실제로 되묻기 응답을 만든다', async () => {
+  it('"다른 도시 보기" 의 messageText 가 실제로 되묻기 응답을 만든다', async () => {
     const card = await recommendUntilCard(app, '오사카 호텔');
-    const messageText = card.buttons[0].messageText;
+    const button = card.buttons.find((b: any) => b.label === '다른 도시 보기');
 
-    const second = await post(kakaoPayload(messageText)).expect(201);
+    const second = await post(kakaoPayload(button.messageText)).expect(201);
     expect(textOf(second.body)).toContain('어느 도시');
+  });
+
+  // ------------------------------------------------------------ 더 보기
+  describe('"더 보기" — listCard 5줄 뒤가 있다', () => {
+    it('다음 페이지가 있으면 버튼을 달고, 누르면 다음 5곳이 나온다', async () => {
+      const first = await recommendUntilCard(app, '오사카 호텔 추천해줘');
+      expect(first.items).toHaveLength(5);
+
+      const more = first.buttons.find((b: any) => b.label === '더 보기');
+      expect(more.extra).toEqual({ city: '오사카', offset: 5 });
+      expect(more.blockId).toBeTruthy();
+
+      // 카카오는 extra 를 action.clientExtra 로 돌려준다.
+      const payload = kakaoPayload(more.messageText) as any;
+      payload.action.clientExtra = more.extra;
+      const second = await post(payload).expect(201);
+      const card = listCardOf(second.body);
+
+      expect(card.header.title).toContain('6~');
+      // 1페이지에 나온 곳이 2페이지에 또 나오면 안 된다.
+      const firstNames = first.items.map((i: any) => i.title);
+      for (const row of card.items) expect(firstNames).not.toContain(row.title);
+    });
+
+    it('마지막 페이지에는 "더 보기" 가 없다 — 눌러도 같은 게 나오면 고장으로 보인다', async () => {
+      const payload = kakaoPayload('오사카 호텔 추천해줘') as any;
+      payload.action.clientExtra = { city: '오사카', offset: 5 };
+      await recommendUntilCard(app, '오사카 호텔 추천해줘');
+
+      const res = await post(payload).expect(201);
+      const labels = listCardOf(res.body).buttons.map((b: any) => b.label);
+      expect(labels).not.toContain('더 보기');
+    });
+
+    it('발화만으로도 넘어간다 — 그룹챗방에서 action:block 이 안 될 때의 우회', async () => {
+      await recommendUntilCard(app, '오사카 호텔 추천해줘');
+
+      const res = await post(kakaoPayload('오사카 호텔 더 보기')).expect(201);
+      expect(listCardOf(res.body).header.title).toContain('6~');
+    });
+
+    it('도시가 없는 "호텔 더 보기" 는 되묻는다', async () => {
+      const res = await post(kakaoPayload('호텔 더 보기')).expect(201);
+      expect(textOf(res.body)).toContain('어느 도시');
+    });
   });
 
   // ---------------------------------------------------------- 리다이렉트
