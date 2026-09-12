@@ -307,6 +307,8 @@ export class OpenAiFlightProvider implements FlightProvider {
     const result = await this.openai.respond({
       instructions: SEARCH_INSTRUCTIONS,
       tools: [this.openai.webSearchToolSpec],
+      // ⚠️ 검색을 **반드시** 돌린다. auto 로 두면 모델이 건너뛰고 빈 결과를 낸다.
+      toolChoice: 'required',
       effort: this.config.openaiSearchEffort,
       format: FLIGHT_CANDIDATE_SCHEMA,
       input: [

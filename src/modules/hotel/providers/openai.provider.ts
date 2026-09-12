@@ -301,6 +301,8 @@ export class OpenAiHotelProvider implements HotelProvider {
     const result = await this.openai.respond({
       instructions: SEARCH_INSTRUCTIONS,
       tools: [this.openai.webSearchToolSpec],
+      // ⚠️ 검색을 **반드시** 돌린다. auto 로 두면 모델이 건너뛰고 빈 결과를 낸다.
+      toolChoice: 'required',
       effort: this.config.openaiSearchEffort,
       format: CANDIDATE_SCHEMA,
       input: [
@@ -390,6 +392,12 @@ export class OpenAiHotelProvider implements HotelProvider {
       const sourceUrl = text(pick.source_url);
       if (!name || !sourceUrl) {
         trace.droppedUntrusted += 1;
+        // ⚠️ **조용히 버리면 안 된다.** 스키마상 필수인 값이라 빠질 리 없다고 생각했지만,
+        //    effort 를 내리면 모델이 빈 문자열이나 "정보 없음" 을 채워 보낸다. 그러면
+        //    picks=10 인데 결과는 0건이 되고, 로그에 아무 흔적이 없어 원인을 못 찾는다.
+        this.logger.warn(
+          `dropped hotel with empty field name=${name ?? '-'} url=${sourceUrl ?? '-'}`,
+        );
         continue;
       }
 

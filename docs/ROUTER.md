@@ -8,7 +8,8 @@
 > Header: X-Skill-Token: <KAKAO_SKILL_TOKEN>
 > ```
 
-이 문서는 그 하나의 경로가 무엇을 하는지 적는다. 도메인별 상세는
+이 문서는 그 하나의 경로가 무엇을 하는지 적는다. 오픈빌더 쪽 설정은
+[KAKAO-SETUP.md](KAKAO-SETUP.md). 도메인별 상세는
 [FLIGHT.md](FLIGHT.md) · [ATTRACTION.md](ATTRACTION.md), DB 는 [DB.md](DB.md).
 
 ---
