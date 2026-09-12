@@ -42,8 +42,15 @@ export class SearchResultsRepository extends BaseRepository {
     return row ? toRow(row) : null;
   }
 
-  /** 새 행을 pending 으로 꽂는다. **돌려받으면 내가 검색할 차례다.** */
-  async claim(input: ClaimInput): Promise<boolean> {
+  /**
+   * 새 행을 pending 으로 꽂는다. **돌려받으면 내가 검색할 차례다.**
+   *
+   * @returns true 선점 성공 · false 남이 먼저 꽂았다 · **null 은 DB 를 못 믿는다**
+   *          (테이블이 없거나 Supabase 가 흔들림). 셋을 구분해야 하는 이유는
+   *          null 을 false 로 뭉개면 **아무도 검색을 못 하게 되기** 때문이다 —
+   *          0004 마이그레이션을 안 돌린 서버가 "먼저 찾고 있어요" 만 반복한다.
+   */
+  async claim(input: ClaimInput): Promise<boolean | null> {
     const rows = await this.run(
       (t) =>
         t
@@ -64,7 +71,8 @@ export class SearchResultsRepository extends BaseRepository {
           .select('cache_key'),
       'claim search result',
     );
-    return Boolean(rows?.length);
+    // run() 은 실패하면 null, 충돌로 아무것도 안 꽂혔으면 빈 배열을 준다. 둘은 다르다.
+    return rows === null ? null : rows.length > 0;
   }
 
   /**
@@ -73,7 +81,7 @@ export class SearchResultsRepository extends BaseRepository {
    * `updated_at` 이 내가 본 값 그대로일 때만 성공한다 — 두 요청이 같은 만료 행을
    * 동시에 보면 한쪽만 이겨야 AI 호출이 한 번으로 끝난다.
    */
-  async reclaim(cacheKey: string, seenUpdatedAt: string | null): Promise<boolean> {
+  async reclaim(cacheKey: string, seenUpdatedAt: string | null): Promise<boolean | null> {
     if (!seenUpdatedAt) return false;
     const rows = await this.run(
       (t) =>
@@ -84,7 +92,7 @@ export class SearchResultsRepository extends BaseRepository {
           .select('cache_key'),
       'reclaim search result',
     );
-    return Boolean(rows?.length);
+    return rows === null ? null : rows.length > 0;
   }
 
   async complete(

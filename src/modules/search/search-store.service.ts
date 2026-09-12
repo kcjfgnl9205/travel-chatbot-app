@@ -65,9 +65,19 @@ export class SearchStoreService {
 
     if (!this.repo.enabled) return true;
 
-    const claimed = seen?.updatedAt
-      ? (await this.repo.reclaim(input.cacheKey, seen.updatedAt)) || (await this.repo.claim(input))
-      : (await this.repo.claim(input)) || (await this.reclaimExisting(input));
+    const claimed = await this.claimInDb(input, seen);
+
+    // ⚠️ **DB 를 못 믿는 상황(null)은 "남이 선점했다(false)" 와 다르다.**
+    //    뭉개면 아무도 검색을 못 한다 — 0004 마이그레이션을 안 돌린 서버가
+    //    영원히 "먼저 찾고 있어요" 만 뱉는다. 그때는 메모리 선점만으로 진행한다.
+    //    (서버가 여러 대면 중복 검색이 날 수 있지만, 아예 안 되는 것보다 낫다)
+    if (claimed === null) {
+      this.logger.warn(
+        `search_results 를 쓸 수 없다 — 메모리 단으로만 선점하고 진행한다. ` +
+          `0004_router.sql 을 실행했는지 확인하라. key=${input.cacheKey}`,
+      );
+      return true;
+    }
 
     if (!claimed) {
       // 다른 서버가 먼저 잡았다. 메모리 선점을 되돌려야 우리가 그 행을 영영 pending 으로 들고 있지 않는다.
@@ -133,10 +143,27 @@ export class SearchStoreService {
   }
 
   // ---------------------------------------------------------------- 내부
+  /** DB 판정. true 내가 선점 · false 남이 선점 · null DB 를 못 믿는다. */
+  private async claimInDb(input: ClaimInput, seen: SearchRow | null): Promise<boolean | null> {
+    if (seen?.updatedAt) {
+      // 내가 본 그 상태 그대로일 때만 되찾아온다. 두 요청이 같은 만료 행을 동시에
+      // 보면 한쪽만 이겨야 AI 호출이 한 번으로 끝난다.
+      const reclaimed = await this.repo.reclaim(input.cacheKey, seen.updatedAt);
+      if (reclaimed === null) return null;
+      if (reclaimed) return true;
+      // 그새 누가 바꿨거나 행이 사라졌다. 새로 꽂아본다.
+    }
+
+    const inserted = await this.repo.claim(input);
+    if (inserted !== false) return inserted; // true 또는 null(DB 오류)
+    return this.reclaimExisting(input);
+  }
+
   /** 이미 있는 행을 되찾아온다 — 만료됐거나, 실패했거나, pending 인 채 버려졌을 때만. */
-  private async reclaimExisting(input: ClaimInput): Promise<boolean> {
+  private async reclaimExisting(input: ClaimInput): Promise<boolean | null> {
     const row = await this.repo.get(input.cacheKey);
-    if (!row) return false;
+    // 방금 "충돌" 이라고 했는데 읽지도 못한다 = DB 를 못 믿는다.
+    if (!row) return null;
     if (this.isBusy(row)) return false;
     if (row.status === 'ready' && !isExpired(row)) return false;
     if (row.status === 'failed' && !isExpired(row)) return false;
