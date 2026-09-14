@@ -71,16 +71,23 @@ describe('POST /api/v1/kakao/router', () => {
     expect(ctx.provider.calls).toHaveLength(1);
   });
 
-  it('카드 아래에는 항상 고지가 붙고, 무시한 조건을 이름과 함께 알려준다', async () => {
+  it('무시한 조건이 있으면 이름과 함께 알려준다', async () => {
     const body = await askUntilCard(ctx.app, '오사카 호텔 4명 9월 22일 추천해줘');
     const notice = noticeOf(body);
 
-    expect(notice).toContain('AI가 정리한 참고 정보예요');
     // ⚠️ 이 고지가 이 설계의 전제 조건이다. 날짜를 반영하지 않은 결과를 말없이 주면
     //    사용자는 속았다고 느낀다.
     expect(notice).toContain('반영되지 않았어요');
     expect(notice).toContain('4명');
     expect(notice).toMatch(/날짜|인원/);
+  });
+
+  it('할 말이 없으면 고지 말풍선을 아예 안 붙인다', async () => {
+    const body = await askUntilCard(ctx.app, '오사카 호텔 추천해줘');
+
+    // 매 카드마다 같은 문장을 반복하지 않는다 — 말풍선이 두 개씩 쌓인다.
+    expect(body.template.outputs).toHaveLength(1);
+    expect(noticeOf(body)).toBe('');
   });
 
   it('같은 지역을 다시 물으면 저장된 결과가 나간다 — AI 는 한 번만 돈다', async () => {
@@ -267,7 +274,6 @@ describe('POST /api/v1/kakao/router', () => {
 
       const pushed = await receiver.received;
       expect(listCardOf(pushed).items).toHaveLength(5);
-      expect(noticeOf(pushed)).toContain('AI가 정리한 참고 정보예요');
     } finally {
       await receiver.close();
     }

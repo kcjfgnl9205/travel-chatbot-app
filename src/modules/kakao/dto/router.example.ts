@@ -89,13 +89,9 @@ export const CARD_RESPONSE_EXAMPLE = {
           ],
         },
       },
-      {
-        simpleText: {
-          text:
-            'AI가 정리한 참고 정보예요. 가격은 실제와 다를 수 있어요.\n' +
-            '날짜·인원(4명, 9월 22~24일)은 반영되지 않았어요.',
-        },
-      },
+      // 고지 말풍선은 **할 말이 있을 때만** 붙는다. 날짜·인원을 말하지 않은 질문이면
+      // 이 말풍선 없이 카드 하나만 나간다.
+      { simpleText: { text: '날짜·인원(4명, 9월 22~24일)은 반영되지 않았어요.' } },
     ],
     quickReplies: [
       { label: '도쿄 호텔', action: 'message', messageText: '도쿄 호텔 추천해줘' },
