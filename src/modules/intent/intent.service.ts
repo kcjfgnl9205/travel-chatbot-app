@@ -9,6 +9,7 @@ import { SearchKind, TripType } from '../search/search.types';
 import {
   ParsedIntent,
   UNKNOWN_INTENT,
+  fromCommand,
   ignoredConditions,
   intentFromKeywords,
   mergeIgnored,
@@ -106,6 +107,14 @@ export class IntentService {
     const hash = hashOf(text);
     const cached = this.fromMemory(hash) ?? (await this.fromStore(hash));
     if (cached) return cached;
+
+    // 대표 명령어("여행지 오사카")는 의도가 확정이고 뒤가 곧 지명이다. 사전에 없는
+    // 지명이어도 모델을 안 부른다 — 대표 명령어를 쓰는 사용자는 늘 0원이 된다.
+    const command = fromCommand(text);
+    if (command) {
+      this.logger.log(`intent (command) "${clip(text)}" → ${command.intent}/${command.place}`);
+      return this.remember(hash, command);
+    }
 
     const fast = fromKeywords(text);
     if (fast) {

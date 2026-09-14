@@ -9,6 +9,21 @@
 import * as t from './templates';
 import { SearchKind, SearchMeta } from '../search/search.types';
 
+/**
+ * 목적격 조사를 붙인다. `관광지` → `관광지를`, `호텔` → `호텔을`.
+ *
+ * ⚠️ 문구를 `${...}을` 로 박아두면 **"관광지을 찾으세요?"** 가 나간다. 실제로 나갔다.
+ *    한글 음절은 (코드 - 0xAC00) % 28 이 0 이 아니면 받침이 있다. 한글이 아니면
+ *    (영문·숫자로 끝나는 지명) 받침이 없는 것으로 본다 — "오사카 Hotel를" 보다는 낫다.
+ */
+export function withObjectParticle(word: string): string {
+  const last = word.trim().slice(-1);
+  const code = last.charCodeAt(0);
+  const isHangulSyllable = code >= 0xac00 && code <= 0xd7a3;
+  const hasFinalConsonant = isHangulSyllable && (code - 0xac00) % 28 !== 0;
+  return `${word}${hasFinalConsonant ? '을' : '를'}`;
+}
+
 export const KIND_LABEL: Record<SearchKind, string> = {
   hotel: '호텔',
   flight: '항공권',
@@ -63,26 +78,23 @@ export function helpCard(): t.Json {
 export function askPlaceCard(kind: SearchKind): t.Json {
   const label = KIND_LABEL[kind];
   return t.simpleText(
-    `어느 지역 ${label}을 찾으세요?\n예) ${exampleUtterance('오사카', kind)}`,
+    `어느 지역 ${withObjectParticle(label)} 찾으세요?\n예) ${exampleUtterance('오사카', kind)}`,
     placeQuickReplies(kind),
   );
 }
 
 /**
- * 항상 붙는 고지.
+ * 카드 아래 안내 말풍선. **필요할 때만 붙는다.**
  *
- * ⚠️ **이 줄을 빼면 안 된다.** 우리가 보여주는 건 실시간 재고·운임이 아니라 AI 가
- *    웹에서 정리한 값이다. 그 사실을 안 적으면 사용자는 카드 가격을 믿고 눌렀다가
- *    다른 금액을 본다.
- */
-export const AI_NOTICE = 'AI가 정리한 참고 정보예요. 가격은 실제와 다를 수 있어요.';
-
-/**
- * 카드 아래 안내 말풍선.
+ * 예전에는 "AI가 정리한 참고 정보예요. 가격은 실제와 다를 수 있어요." 를 항상 달았는데,
+ * 매 카드마다 같은 문장이 반복돼 말풍선이 두 개씩 쌓였다. 뺐다.
  *
- * ⚠️ **`ignored` 고지는 이 설계의 전제 조건이다.** 캐시를 지역으로만 가르기 때문에
- *    "9월 22~24일 4명" 을 말한 사람도 지역 기준 결과를 받는다. 그 날짜에 예약 불가한
- *    호텔과 다른 가격이 섞일 수밖에 없는데, 고지가 없으면 사용자는 속았다고 느낀다.
+ * ⚠️ **`ignored` 고지는 남긴다. 이건 취향이 아니라 이 설계의 전제 조건이다.**
+ *    캐시를 지역으로만 가르기 때문에 "9월 22~24일 4명" 을 말한 사람도 지역 기준 결과를
+ *    받는다. 그 날짜에 예약 불가한 호텔과 다른 가격이 섞일 수밖에 없는데, 말없이 주면
+ *    사용자는 속았다고 느낀다. 출발지 추정·예전 정보도 같은 이유로 남긴다.
+ *
+ * 남길 게 하나도 없으면 **빈 문자열**을 주고, 그러면 말풍선 자체가 안 나간다.
  */
 export function noticeText(opts: {
   ignored?: string[];
@@ -90,7 +102,7 @@ export function noticeText(opts: {
   stale?: boolean;
   meta?: SearchMeta;
 }): string {
-  const lines = [AI_NOTICE];
+  const lines: string[] = [];
 
   const ignored = (opts.ignored ?? []).filter(Boolean);
   if (ignored.length) {
@@ -122,7 +134,7 @@ function conditionLabel(ignored: string[]): string {
 /** 다른 사람이 먼저 같은 걸 물어 검색이 돌고 있는 경우. */
 export function busyText(meta: SearchMeta): t.Json {
   return t.simpleText(
-    `${subject(meta)}을 먼저 찾고 있어요 🔍\n잠시 뒤 다시 물어봐 주세요!`,
+    `${withObjectParticle(subject(meta))} 먼저 찾고 있어요 🔍\n잠시 뒤 다시 물어봐 주세요!`,
     placeQuickReplies(meta.kind, meta.placeName),
   );
 }
@@ -135,7 +147,7 @@ export function busyText(meta: SearchMeta): t.Json {
  */
 export function searchStartedText(meta: SearchMeta): t.Json {
   return t.simpleText(
-    `${subject(meta)}을 찾고 있어요 🔍\n30초쯤 뒤에 다시 물어봐 주세요!`,
+    `${withObjectParticle(subject(meta))} 찾고 있어요 🔍\n30초쯤 뒤에 다시 물어봐 주세요!`,
     placeQuickReplies(meta.kind, meta.placeName),
   );
 }
@@ -172,7 +184,7 @@ export function unavailableText(meta: SearchMeta): t.Json {
 /** 검색 자체가 실패했을 때 (모델 오류·타임아웃). */
 export function failedText(meta: SearchMeta): t.Json {
   return t.simpleText(
-    `${subject(meta)}을 불러오지 못했어요 🙏\n잠시 뒤 다시 시도해 주세요.`,
+    `${withObjectParticle(subject(meta))} 불러오지 못했어요 🙏\n잠시 뒤 다시 시도해 주세요.`,
     placeQuickReplies(meta.kind, meta.placeName),
   );
 }

@@ -50,8 +50,9 @@ describe('스웨거 예시 = 실제 응답', () => {
     expect(res.body.version).toBe('2.0');
   });
 
-  it('카드 — 카드 뒤에 고지 말풍선이 온다', async () => {
-    const body = await askUntilCard(ctx.app, '오사카 호텔 추천해줘');
+  it('카드 — 고지가 있을 때 카드 뒤에 말풍선이 온다', async () => {
+    // 날짜·인원을 말해야 고지가 붙는다 (예시와 같은 모양이 되려면 필요하다).
+    const body = await askUntilCard(ctx.app, '오사카 호텔 4명 9월 22~24일 추천해줘');
 
     // ⚠️ 순서가 중요하다. 고지가 위에 오면 결과를 가린다.
     expect(shapeOf(CARD_RESPONSE_EXAMPLE)).toEqual(['listCard', 'simpleText']);
