@@ -92,16 +92,14 @@ export function askPlaceCard(kind: SearchKind): t.Json {
  * ⚠️ **`ignored` 고지는 남긴다. 이건 취향이 아니라 이 설계의 전제 조건이다.**
  *    캐시를 지역으로만 가르기 때문에 "9월 22~24일 4명" 을 말한 사람도 지역 기준 결과를
  *    받는다. 그 날짜에 예약 불가한 호텔과 다른 가격이 섞일 수밖에 없는데, 말없이 주면
- *    사용자는 속았다고 느낀다. 출발지 추정·예전 정보도 같은 이유로 남긴다.
+ *    사용자는 속았다고 느낀다. 출발지 추정도 같은 이유로 남긴다(고쳐 말할 단서다).
+ *
+ * "예전에 찾아둔 정보예요" 도 뺐다. 만료된 결과는 그대로 보여주고 **뒤에서 조용히
+ * 새로 찾는다** — 사용자가 할 수 있는 일이 없는 사정을 알릴 이유가 없다.
  *
  * 남길 게 하나도 없으면 **빈 문자열**을 주고, 그러면 말풍선 자체가 안 나간다.
  */
-export function noticeText(opts: {
-  ignored?: string[];
-  /** 캐시가 만료됐는데 새로 못 찾아 예전 결과를 보여주는 경우. */
-  stale?: boolean;
-  meta?: SearchMeta;
-}): string {
+export function noticeText(opts: { ignored?: string[]; meta?: SearchMeta }): string {
   const lines: string[] = [];
 
   const ignored = (opts.ignored ?? []).filter(Boolean);
@@ -113,8 +111,6 @@ export function noticeText(opts: {
   if (opts.meta?.originAssumed && opts.meta.fromName) {
     lines.push(`${opts.meta.fromName} 출발 기준이에요. 다른 곳이면 "부산에서 출발" 처럼 알려주세요.`);
   }
-
-  if (opts.stale) lines.push('예전에 찾아둔 정보예요. 새로 찾는 중이니 잠시 뒤 다시 물어봐 주세요.');
 
   return lines.join('\n');
 }

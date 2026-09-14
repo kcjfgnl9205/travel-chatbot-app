@@ -85,14 +85,15 @@ export class SearchService {
 
     const row = await this.store.get(cacheKey);
 
-    // 저장된 결과가 있다 — 만료됐어도 보여준다. 빈손보다 낫다.
+    // 저장된 결과가 있다 — 만료됐어도 그대로 보여주고 **뒤에서 조용히 새로 찾는다.**
+    // 사용자에게 "예전 정보" 라고 알리지 않는다: 할 수 있는 일이 없는 사정이고,
+    // 다음 질문에는 새 결과가 나간다.
     if (row && row.items.length && row.status !== 'pending') {
       const stale = isExpired(row);
       if (stale) void this.refresh(parsed, place, parent, from, meta, cacheKey, row, req);
       this.logger.log(`cache ${stale ? 'stale' : 'hit'} key=${cacheKey} items=${row.items.length}`);
       return this.respond(row.items, meta, 0, cacheKey, req, {
         ignored: parsed.ignored,
-        stale,
         messageId,
         cacheHit: true,
       });
@@ -158,7 +159,6 @@ export class SearchService {
     }
     return this.respond(row.items, row.meta, offset, cacheKey, req, {
       ignored: [],
-      stale: isExpired(row),
       messageId: null,
       cacheHit: true,
     });
@@ -212,7 +212,6 @@ export class SearchService {
 
       const response = await this.respond(items, meta, 0, cacheKey, req, {
         ignored: opts.ignored,
-        stale: false,
         messageId: opts.messageId,
         cacheHit: false,
       });
@@ -273,7 +272,6 @@ export class SearchService {
     req: RouterRequest,
     opts: {
       ignored: string[];
-      stale: boolean;
       messageId: string | null;
       cacheHit: boolean;
     },
@@ -318,7 +316,7 @@ export class SearchService {
         items: rows,
         buttons,
       },
-      cards.noticeText({ ignored: opts.ignored, stale: opts.stale, meta }),
+      cards.noticeText({ ignored: opts.ignored, meta }),
       domain.quickReplies(meta),
     );
   }
