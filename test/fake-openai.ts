@@ -156,6 +156,8 @@ export function lookupPlace(raw: string): Record<string, unknown> {
       kind: 'country',
       iata: null,
       parent_name: null,
+      // 진짜 스키마와 같다 — 나라를 해석할 때 도시 목록을 같이 준다.
+      cities: COUNTRY_CITIES[country] ?? [],
     };
   }
 
@@ -168,6 +170,7 @@ export function lookupPlace(raw: string): Record<string, unknown> {
       kind: 'area',
       iata: null,
       parent_name: area[3],
+      cities: [],
     };
   }
 
@@ -180,6 +183,7 @@ export function lookupPlace(raw: string): Record<string, unknown> {
       kind: 'city',
       iata: AIRPORTS[city[2]] ?? null,
       parent_name: null,
+      cities: [],
     };
   }
 
@@ -190,6 +194,7 @@ export function lookupPlace(raw: string): Record<string, unknown> {
     kind: 'city',
     iata: null,
     parent_name: null,
+    cities: [],
   };
 }
 

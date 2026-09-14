@@ -157,11 +157,7 @@ export class RouterController {
     //      나라 단위 검색은 다낭·하노이가 섞인 목록이 되어 아무에게도 쓸모가 없다.
     if (place.kind === 'country') {
       const cities = await this.places.citiesOf(place);
-      return cards.askCityInCountry(
-        parsed.intent as SearchKind,
-        place.canonicalName,
-        cities.map((city) => city.canonicalName),
-      );
+      return cards.askCityInCountry(parsed.intent as SearchKind, place.canonicalName, cities);
     }
 
     // 5. 캐시 → 응답.

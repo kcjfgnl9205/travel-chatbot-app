@@ -7,6 +7,7 @@ import {
 } from '../database/repositories/places.repository';
 import { OpenAiService, parseJsonLoose } from '../openai/openai.service';
 import { CityEntry, lookupCity } from './city-table';
+import { CountryEntry, lookupCountry } from './country-table';
 import { Place, PlaceDraft, PlaceKind, aliasKey, slugOf } from './places.types';
 
 /**
@@ -38,6 +39,8 @@ const INSTRUCTIONS = [
   'area/landmark 면 그것이 속한 도시를 parent_name 에 한국어로 적는다 (도톤보리 → 오사카).',
   '도시에 대표 공항이 있으면 IATA 3자를 적는다 (오사카 → KIX). 없으면 null.',
   '지명이 아니면 canonical_name 을 null 로 둔다.',
+  'kind=country 면 그 나라에서 한국인 여행자가 많이 가는 도시를 인기순으로 6곳까지 cities 에 담는다.',
+  'cities 는 한국어 표준 표기만 쓴다. 나라가 아니면 빈 배열이다.',
 ].join(' ');
 
 const SCHEMA = {
@@ -47,7 +50,7 @@ const SCHEMA = {
   schema: {
     type: 'object',
     additionalProperties: false,
-    required: ['canonical_name', 'slug', 'country_code', 'kind', 'iata', 'parent_name'],
+    required: ['canonical_name', 'slug', 'country_code', 'kind', 'iata', 'parent_name', 'cities'],
     properties: {
       canonical_name: {
         type: ['string', 'null'],
@@ -61,6 +64,11 @@ const SCHEMA = {
         type: ['string', 'null'],
         description: 'area/landmark 가 속한 도시의 한국어명. 도시·나라면 null',
       },
+      cities: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'kind=country 일 때만. 대표 도시 6곳(한국어). 아니면 빈 배열',
+      },
     },
   },
 };
@@ -72,6 +80,7 @@ interface RawPlace {
   kind?: unknown;
   iata?: unknown;
   parent_name?: unknown;
+  cities?: unknown;
 }
 
 const CITIES_INSTRUCTIONS = [
@@ -120,7 +129,7 @@ export class PlacesService {
   private readonly aliases = new Map<string, Place>();
   private readonly byId = new Map<number, Place>();
   /** 나라 id → 되묻기에 쓸 도시들. 나라의 대표 도시는 변하지 않아 TTL 이 없다. */
-  private readonly cities = new Map<number, Place[]>();
+  private readonly cities = new Map<number, string[]>();
   /** DB 가 없을 때 쓰는 번호표. 프로세스 안에서만 유효하다. */
   private nextLocalId = 1;
 
@@ -146,45 +155,68 @@ export class PlacesService {
     const stored = await this.fromStore(key);
     if (stored) return this.remember(key, stored);
 
-    const draft =
-      draftFromTable(lookupCity(raw)) ?? (await this.askModel(raw ?? '')) ?? fallbackDraft(raw ?? '');
+    // 나라 → 도시 사전 → 모델 순. 앞의 둘은 0ms·0원이고 **판정이 매번 같다.**
+    const known = draftFromCountry(lookupCountry(raw)) ?? draftFromTable(lookupCity(raw));
+    const fromModel = known ? null : await this.askModel(raw ?? '');
+    const draft = known ?? fromModel?.draft ?? fallbackDraft(raw ?? '');
     const place = await this.register(draft);
+
+    // 나라를 해석하면서 도시 목록도 같이 받아둔다 — 되묻기에 모델을 한 번 더 부르지 않는다.
+    if (place.kind === 'country' && fromModel?.cities?.length) {
+      const names = usableCityNames(fromModel.cities);
+      if (names.length) this.cities.set(place.id, names);
+    }
     return this.remember(key, place);
   }
 
   /**
-   * 나라에 매달린 도시들. **되묻기용이다.**
+   * 나라에서 되물을 도시 **이름**들.
+   *
+   * ⚠️ **이름만 돌려준다. 요청 경로에서 place 로 등록하지 않는다.**
+   *    되묻기에 필요한 건 퀵리플라이 라벨뿐인데, 도시 6곳을 그 자리에서 resolve 하면
+   *    사전에 없는 도시마다 모델이 한 번씩 나간다. 실측으로 **첫 질문이 25초**가 걸려
+   *    카카오 5초 예산을 훌쩍 넘겼고, 사용자는 아무 말풍선도 못 받았다.
+   *    등록은 백그라운드로 미룬다 — 다음 사람이 그 혜택을 본다.
    *
    * 순서가 셋이다. 위에서 걸리면 아래는 안 본다.
-   *   1. 메모리 — 같은 나라를 연달아 물었을 때
+   *   1. 메모리 — 나라를 해석할 때 모델이 같이 준 목록이 여기 들어온다
    *   2. places 의 자식 — 전에 누가 물어봐서 이미 매달려 있다
-   *   3. 모델 — 대표 도시 6곳을 받아 **각각 place 로 등록하고 나라에 매단다**
-   *
-   * 3번이 한 번 돌고 나면 그 나라는 영영 2번으로 끝난다. 나라의 대표 도시는
-   * 시간이 지나도 거의 안 변하므로 TTL 을 두지 않는다.
+   *   3. 모델 — 그래도 없으면 한 번 더 묻는다 (폴백)
    */
-  async citiesOf(country: Place): Promise<Place[]> {
+  async citiesOf(country: Place): Promise<string[]> {
     const cached = this.cities.get(country.id);
-    if (cached) return cached;
+    if (cached?.length) return cached;
 
     const stored = this.places.enabled
-      ? await this.places.childrenOf(country.id, 'city')
-      : [...this.byId.values()].filter((p) => p.parentId === country.id && p.kind === 'city');
-    if (stored.length) {
-      this.cities.set(country.id, stored);
-      return stored;
-    }
+      ? (await this.places.childrenOf(country.id, 'city')).map((c) => c.canonicalName)
+      : [...this.byId.values()]
+          .filter((p) => p.parentId === country.id && p.kind === 'city')
+          .map((c) => c.canonicalName);
 
-    const names = await this.askCities(country.canonicalName);
-    const cities: Place[] = [];
-    for (const name of names.slice(0, CITIES_PER_COUNTRY)) {
-      const city = await this.resolve(name);
-      // 나라를 모르는 채로 먼저 등록된 도시(사전 경로)에 이제 부모를 붙인다.
-      if (city && city.kind === 'city') cities.push(await this.attachTo(city, country));
-    }
+    const names = usableCityNames(stored.length ? stored : await this.askCities(country.canonicalName));
+    if (!names.length) return [];
 
-    if (cities.length) this.cities.set(country.id, cities);
-    return cities;
+    this.cities.set(country.id, names);
+    // 등록은 나중에. 이번 응답은 이름만으로 충분하다.
+    if (!stored.length) void this.linkCities(country, names);
+    return names;
+  }
+
+  /**
+   * 도시들을 나라 아래에 매단다. **백그라운드 전용이다.**
+   *
+   * 사전에 없는 도시는 여기서 모델을 타지만, 응답은 이미 나갔으므로 5초 예산과
+   * 무관하다. 한 번 돌고 나면 그 나라는 DB 조회만으로 끝난다.
+   */
+  private async linkCities(country: Place, names: string[]): Promise<void> {
+    for (const name of names) {
+      try {
+        const city = await this.resolve(name);
+        if (city && city.kind === 'city') await this.attachTo(city, country);
+      } catch (err) {
+        this.logger.warn(`city link failed country=${country.canonicalName} city=${name} err=${err}`);
+      }
+    }
   }
 
   /** 세부 지역의 부모 도시. 없으면 null. 카드 문구("도톤보리(오사카)")에 쓴다. */
@@ -309,7 +341,7 @@ export class PlacesService {
    * ⚠️ 이건 카카오 5초 예산 안에서 돈다. 짧게 끊고(OPENAI_PARSE_TIMEOUT_SECONDS),
    *    실패하면 원문 그대로 등록한다 — 되묻는 것보다 검색해 보는 게 낫다.
    */
-  private async askModel(raw: string): Promise<PlaceDraft | null> {
+  private async askModel(raw: string): Promise<{ draft: PlaceDraft; cities: string[] } | null> {
     if (!this.openai.enabled) return null;
 
     try {
@@ -324,7 +356,12 @@ export class PlacesService {
 
       const parsed = parseJsonLoose<RawPlace>(result.text);
       const name = text(parsed?.canonical_name);
-      if (!parsed || !name) return null;
+      if (!parsed || !name) {
+        // ⚠️ 조용히 null 을 주면 원문 그대로 등록되고(kind=area) 나라가 지역으로 검색된다.
+        //    로그가 없으면 "왜 되묻지 않지?" 를 영영 못 찾는다 — 실제로 그랬다.
+        this.logger.warn(`place lookup returned no name raw=${raw} text=${clip(result.text)}`);
+        return null;
+      }
 
       const kind = KINDS.has(String(parsed.kind)) ? (parsed.kind as PlaceKind) : 'city';
       const parent = kind === 'city' ? null : await this.resolveParent(text(parsed.parent_name));
@@ -333,12 +370,15 @@ export class PlacesService {
         `place resolved by model "${raw}" → ${name}/${kind} parent=${parent?.canonicalName ?? '-'} ms=${result.ms}`,
       );
       return {
-        canonicalName: name,
-        slug: slugOf(text(parsed.slug) ?? name),
-        countryCode: upper(parsed.country_code, 2) ?? parent?.countryCode ?? null,
-        kind,
-        iata: upper(parsed.iata, 3) ?? null,
-        parentId: parent?.id ?? null,
+        draft: {
+          canonicalName: name,
+          slug: slugOf(text(parsed.slug) ?? name),
+          countryCode: upper(parsed.country_code, 2) ?? parent?.countryCode ?? null,
+          kind,
+          iata: upper(parsed.iata, 3) ?? null,
+          parentId: parent?.id ?? null,
+        },
+        cities: Array.isArray(parsed.cities) ? parsed.cities.map((c) => String(c).trim()) : [],
       };
     } catch (err) {
       this.logger.warn(`place lookup failed raw=${raw} err=${err}`);
@@ -363,6 +403,24 @@ export class PlacesService {
 }
 
 const KINDS = new Set<string>(['country', 'city', 'area', 'landmark']);
+
+/**
+ * 사전에서 온 나라.
+ *
+ * ⚠️ 모델에 맡기면 같은 "독일" 을 어떤 때는 country 로, 어떤 때는 도시처럼 봤다.
+ *    그러면 나라가 지역 하나로 검색돼 뭉개진 결과가 나간다. 표가 이 흔들림을 없앤다.
+ */
+function draftFromCountry(country: CountryEntry | null): PlaceDraft | null {
+  if (!country) return null;
+  return {
+    canonicalName: country.nameKo,
+    slug: country.code.toLowerCase(),
+    countryCode: country.code,
+    kind: 'country',
+    iata: null,
+    parentId: null,
+  };
+}
 
 /** 사전에서 온 도시. 공항 코드가 딸려 오는 게 모델 경로와의 차이다. */
 function draftFromTable(city: CityEntry | null): PlaceDraft | null {
@@ -395,6 +453,31 @@ function fallbackDraft(raw: string): PlaceDraft {
     iata: null,
     parentId: null,
   };
+}
+
+/**
+ * 되묻기 버튼에 쓸 수 있는 도시 이름만 남긴다.
+ *
+ * ⚠️ 모델이 가끔 원어를 그대로 준다 — 실제로 `Santiago de Compostela` 가 왔고,
+ *    퀵리플라이 라벨이 14자라 **"Santiago de C…"** 로 잘려 나갔다. 잘린 영문 라벨은
+ *    누를 마음이 안 든다. 한글이 아니거나 라벨이 잘릴 이름은 버린다 — 6곳 중 4곳만
+ *    보여줘도 되묻기는 제 일을 한다.
+ */
+export function usableCityNames(names: string[]): string[] {
+  const seen = new Set<string>();
+  return names
+    .map((name) => name.trim())
+    .filter((name) => {
+      if (!name || !/^[가-힣]/.test(name) || name.length > 8) return false;
+      if (seen.has(name)) return false;
+      seen.add(name);
+      return true;
+    })
+    .slice(0, CITIES_PER_COUNTRY);
+}
+
+function clip(text: string): string {
+  return text.slice(0, 120);
 }
 
 function text(value: unknown): string | null {

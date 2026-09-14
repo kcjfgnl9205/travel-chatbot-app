@@ -5,6 +5,7 @@ import { AppConfig, CONFIG } from '../../config/app.config';
 import { IntentCacheRepository } from '../database/repositories/intent-cache.repository';
 import { OpenAiService, parseJsonLoose } from '../openai/openai.service';
 import { findCityInText } from '../places/city-table';
+import { findCountryInText } from '../places/country-table';
 import { SearchKind, TripType } from '../search/search.types';
 import {
   ParsedIntent,
@@ -251,12 +252,14 @@ export function fromKeywords(utterance: string): ParsedIntent | null {
   if (intent === 'unknown') return null;
   if (/에서|출발/.test(utterance)) return null;
 
-  const city = findCityInText(utterance);
-  if (!city) return null;
+  // 도시가 먼저다. "일본 오사카 호텔" 은 오사카를 찾아야지 일본을 되물으면 안 된다.
+  // 나라는 그다음 — 그러면 "일본 호텔 추천해줘" 도 모델 없이 되묻기까지 간다.
+  const place = findCityInText(utterance)?.nameKo ?? findCountryInText(utterance)?.nameKo ?? null;
+  if (!place) return null;
 
   return {
     intent,
-    place: city.nameKo,
+    place,
     from: null,
     tripType: tripTypeOf(utterance),
     ignored: ignoredConditions(utterance),

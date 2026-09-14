@@ -5,6 +5,7 @@ import { DatabaseModule } from '../src/modules/database/database.module';
 import { OpenAiService } from '../src/modules/openai/openai.service';
 import { PlacesModule } from '../src/modules/places/places.module';
 import { PlacesService } from '../src/modules/places/places.service';
+import { usableCityNames } from '../src/modules/places/places.service';
 import { aliasKey, slugOf } from '../src/modules/places/places.types';
 import { FakeOpenAiService } from './fake-openai';
 
@@ -87,5 +88,22 @@ describe('PlacesService', () => {
 
   it('빈 문자열은 지역이 아니다', async () => {
     expect(await places.resolve('  ')).toBeNull();
+  });
+});
+
+describe('나라 되묻기용 도시 이름', () => {
+  it('한글이 아니거나 라벨이 잘릴 이름은 버린다', () => {
+    // ⚠️ 실제로 "Santiago de C…" 로 잘린 퀵리플라이가 나갔다. 누를 마음이 안 든다.
+    expect(usableCityNames(['바르셀로나', 'Santiago de Compostela', '마드리드'])).toEqual([
+      '바르셀로나',
+      '마드리드',
+    ]);
+    expect(usableCityNames(['산티아고데콤포스텔라'])).toEqual([]);
+  });
+
+  it('중복을 지우고 6곳까지만 남긴다', () => {
+    const names = usableCityNames(['다낭', '다낭', '하노이', '호치민', '나트랑', '하롱', '후에', '사파']);
+    expect(names).toHaveLength(6);
+    expect(names[0]).toBe('다낭');
   });
 });

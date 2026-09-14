@@ -234,7 +234,7 @@ describe('POST /api/v1/kakao/router', () => {
     expect(listCardOf(body).header.title).toContain('다낭');
   });
 
-  it('같은 나라를 다시 물으면 도시 목록을 다시 묻지 않는다', async () => {
+  it('도시 목록은 나라당 한 번만 묻는다', async () => {
     const cityLookups = () =>
       ctx.openai.calls.filter(
         (c) => (c.format as { name?: string } | undefined)?.name === 'country_cities',
@@ -245,8 +245,29 @@ describe('POST /api/v1/kakao/router', () => {
 
     await post(ctx.app, kakaoPayload('베트남 관광지 알려줘'));
 
-    // 도시는 나라에 매달려 있다. 나라의 대표 도시는 변하지 않으므로 다시 물을 이유가 없다.
+    // ⚠️ 첫 질문이 5초 예산을 넘기면 사용자는 아무것도 못 받는다. 실측으로 25초가 걸린 적 있다 —
+    //    그때는 도시 6곳을 요청 경로에서 하나씩 등록하고 있었다. 지금은 이름만 쓰고 등록은 뒤로 미룬다.
     expect(cityLookups()).toBe(1);
+  });
+
+  it('사전에 있는 나라는 의도도 지역도 모델 없이 판정한다', async () => {
+    const res = await post(ctx.app, kakaoPayload('일본 호텔 추천해줘'));
+
+    expect(textOf(res.body)).toContain('일본 어디로 가세요?');
+    // ⚠️ 모델에 맡겼더니 같은 "독일" 을 어떤 때는 나라로, 어떤 때는 도시로 봤다.
+    //    그때마다 나라가 지역 하나로 검색돼 뭉개진 결과가 나갔다. 사전이 그 흔들림을 없앤다.
+    const parsing = ctx.openai.calls.filter((c) =>
+      ['parsed_intent', 'place_lookup'].includes(
+        (c.format as { name?: string } | undefined)?.name ?? '',
+      ),
+    );
+    expect(parsing).toHaveLength(0);
+  });
+
+  it('나라 안에 도시가 있으면 도시가 이긴다 — "일본 오사카 호텔" 은 되묻지 않는다', async () => {
+    const body = await askUntilCard(ctx.app, '일본 오사카 호텔 추천해줘');
+
+    expect(listCardOf(body).header.title).toContain('오사카');
   });
 
   // ---------------------------------------------------------- 실패 경로
