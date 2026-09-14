@@ -6,11 +6,13 @@ import { IntentModule } from '../src/modules/intent/intent.module';
 import { IntentService, fromKeywords } from '../src/modules/intent/intent.service';
 import {
   TRAVEL_HINT,
+  fromCommand,
   ignoredConditions,
   intentFromKeywords,
   mergeIgnored,
   tripTypeOf,
 } from '../src/modules/intent/intent.types';
+import { withObjectParticle } from '../src/modules/kakao/cards';
 import { OpenAiService } from '../src/modules/openai/openai.service';
 import { FakeOpenAiService } from './fake-openai';
 
@@ -61,6 +63,48 @@ describe('키워드 해석', () => {
   it('사전에 없는 지명도 모델에 넘긴다', () => {
     expect(fromKeywords('도톤보리 호텔')).toBeNull();
   });
+
+  it('리조트도 숙소로 본다', () => {
+    expect(intentFromKeywords('오사카 리조트')).toBe('hotel');
+    expect(TRAVEL_HINT.test('오사카 리조트 추천')).toBe(true);
+  });
+});
+
+describe('대표 명령어 (/호텔 · /항공권 · /여행지)', () => {
+  it('명령어 뒤의 한 단어는 지명이다 — 사전에 없어도 모델을 안 부른다', () => {
+    expect(fromCommand('여행지 도톤보리')).toMatchObject({
+      intent: 'attraction',
+      place: '도톤보리',
+    });
+    expect(fromCommand('호텔 오사카')).toMatchObject({ intent: 'hotel', place: '오사카' });
+    expect(fromCommand('항공권 후쿠오카')).toMatchObject({ intent: 'flight', place: '후쿠오카' });
+  });
+
+  it('슬래시를 붙여 쳐도 같다 — 메뉴에서 고르면 슬래시가 없지만 직접 치기도 한다', () => {
+    expect(fromCommand('/여행지 오사카')).toMatchObject({ intent: 'attraction', place: '오사카' });
+    expect(fromCommand('/호텔 오사카')).toMatchObject({ intent: 'hotel', place: '오사카' });
+    expect(fromCommand('/항공권 오사카')).toMatchObject({ intent: 'flight', place: '오사카' });
+    expect(fromCommand('/여행지 도톤보리')).toMatchObject({
+      intent: 'attraction',
+      place: '도톤보리',
+    });
+  });
+
+  it('⚠️ 서술어를 지명으로 등록하지 않는다', () => {
+    // 이걸 통과시키면 places 테이블에 "추천해줘" 가 지역으로 박힌다.
+    expect(fromCommand('호텔 추천해줘')).toBeNull();
+    expect(fromCommand('항공권 알려줘')).toBeNull();
+    expect(fromCommand('여행지 어디')).toBeNull();
+  });
+
+  it('여러 단어면 모델에 넘긴다 — 지명인지 문장인지 여기선 못 가린다', () => {
+    expect(fromCommand('호텔 예약 어떻게 해?')).toBeNull();
+    expect(fromCommand('여행지 오사카 추천해줘')).toBeNull();
+  });
+
+  it('명령어만 보내면 지명이 없다 → 되묻기로 간다', () => {
+    expect(fromCommand('여행지')).toBeNull();
+  });
 });
 
 describe('무시한 조건 추출', () => {
@@ -101,6 +145,13 @@ describe('IntentService', () => {
     const parsed = await service.extract('오사카 호텔 추천해줘');
 
     expect(parsed).toMatchObject({ intent: 'hotel', place: '오사카' });
+    expect(openai.calls).toHaveLength(0);
+  });
+
+  it('대표 명령어는 사전에 없는 지명도 모델 없이 끝낸다', async () => {
+    const parsed = await service.extract('여행지 도톤보리');
+
+    expect(parsed).toMatchObject({ intent: 'attraction', place: '도톤보리' });
     expect(openai.calls).toHaveLength(0);
   });
 
@@ -149,5 +200,18 @@ describe('IntentService', () => {
     const parsed = await service.extract('부산에서 오사카 항공권 3박4일');
 
     expect(parsed.ignored).toContain('3박4일'.match(/\d+\s*박(?:\s*\d+\s*일)?/)![0]);
+  });
+});
+
+describe('조사', () => {
+  it('받침에 따라 을/를 을 고른다', () => {
+    // ⚠️ "관광지을 찾으세요?" 가 실제로 나갔다. 문구에 조사를 박아두면 안 된다.
+    expect(withObjectParticle('관광지')).toBe('관광지를');
+    expect(withObjectParticle('호텔')).toBe('호텔을');
+    expect(withObjectParticle('항공권')).toBe('항공권을');
+    expect(withObjectParticle('오사카 호텔')).toBe('오사카 호텔을');
+    expect(withObjectParticle('도톤보리 관광지')).toBe('도톤보리 관광지를');
+    // 한글이 아니면 받침 없는 것으로 본다
+    expect(withObjectParticle('Osaka Hotel')).toBe('Osaka Hotel를');
   });
 });

@@ -44,9 +44,9 @@ export const UNKNOWN_INTENT: ParsedIntent = {
  * 단톡방에는 봇을 멘션한 잡담이 섞인다. 인사말까지 모델에 보내면 그게 그대로 요금이다.
  */
 export const TRAVEL_HINT =
-  /호텔|숙소|묵을|잘곳|잘 곳|숙박|항공|비행기|비행편|티켓|여행|관광|명소|가볼|볼거리|놀거리|맛집|구경/;
+  /호텔|숙소|묵을|잘곳|잘 곳|숙박|리조트|항공|비행기|비행편|티켓|여행|관광|명소|가볼|볼거리|놀거리|맛집|구경/;
 
-const HOTEL_HINT = /호텔|숙소|묵을|잘곳|잘 곳|숙박|호스텔|료칸/;
+const HOTEL_HINT = /호텔|숙소|묵을|잘곳|잘 곳|숙박|리조트|호스텔|료칸/;
 const FLIGHT_HINT = /항공|비행기|비행편|티켓|왕복|편도/;
 const ATTRACTION_HINT = /관광|명소|가볼|볼거리|놀거리|맛집|구경|여행지/;
 
@@ -65,6 +65,54 @@ export function intentFromKeywords(utterance: string): SearchKind | 'unknown' {
   if (ATTRACTION_HINT.test(utterance)) return 'attraction';
   return 'unknown';
 }
+
+/**
+ * 대표 명령어(`/호텔`·`/항공권`·`/여행지`)로 들어온 발화.
+ *
+ * 카카오의 대표 명령어는 **라우팅이 아니다.** 고르면 `"여행지"` 라는 텍스트가 평범한
+ * 발화로 전송될 뿐이고, 사용자는 보통 뒤에 지명을 이어 붙인다("여행지 오사카").
+ * 그 모양은 의도가 이미 확정이라 모델을 부를 이유가 없다.
+ *
+ * ⚠️ **슬래시가 붙어 올 수 있다.** 메뉴에서 고르면 슬래시 없이 오지만 사용자가
+ *    `/호텔 오사카` 처럼 직접 치기도 한다. 앞의 `/` 를 빼고 보지 않으면 이 경로를
+ *    통째로 놓치고, 사전에 없는 지명(`/여행지 도톤보리`)이 모델로 새어 나간다.
+ *
+ * ⚠️ **한 단어일 때만 지명으로 본다.** `호텔 예약 어떻게 해?` 같은 문장에서
+ *    "예약 어떻게 해?" 를 지명으로 등록하면 places 테이블이 쓰레기로 찬다.
+ *    사전에 없는 지명("호텔 도톤보리")을 모델 없이 살리는 게 목적이고, 그건 한 단어다.
+ */
+const COMMAND = /^\s*\/?\s*(호텔|항공권|여행지|관광지|맛집)\s+(\S+)\s*$/;
+
+const COMMAND_INTENT: Record<string, SearchKind> = {
+  호텔: 'hotel',
+  항공권: 'flight',
+  여행지: 'attraction',
+  관광지: 'attraction',
+  맛집: 'attraction',
+};
+
+/** 지명 뒤에 붙는 서술어. "여행지 오사카 추천해줘" 는 COMMAND 에 안 걸리므로 여기선 안 쓴다. */
+export function fromCommand(utterance: string): ParsedIntent | null {
+  const matched = COMMAND.exec(utterance);
+  if (!matched) return null;
+
+  const intent = COMMAND_INTENT[matched[1]];
+  const place = matched[2].trim();
+  // 서술어 한 단어가 지명 자리에 온 경우를 막는다 ("호텔 추천해줘").
+  if (!intent || !place || NOT_A_PLACE.test(place)) return null;
+
+  return {
+    intent,
+    place,
+    from: null,
+    tripType: tripTypeOf(utterance),
+    ignored: ignoredConditions(utterance),
+  };
+}
+
+/** 지명이 아닌 게 뻔한 한 단어. 이 목록에 없어도 검색이 비면 드러난다. */
+const NOT_A_PLACE =
+  /^(추천|추천해줘|추천해주세요|찾아줘|찾아주세요|알려줘|알려주세요|검색|보여줘|예약|어디|어디야|뭐야|가격|얼마|좀|해줘|주세요)$/;
 
 export function tripTypeOf(utterance: string): TripType {
   return ONEWAY_HINT.test(utterance) ? 'ow' : 'rt';
