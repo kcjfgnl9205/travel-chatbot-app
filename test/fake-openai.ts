@@ -43,6 +43,14 @@ export class FakeOpenAiService {
         ms: 1,
       };
     }
+    if (format?.name === 'country_cities') {
+      return {
+        text: JSON.stringify({ cities: COUNTRY_CITIES[req.input.trim()] ?? [] }),
+        searchCalls: 0,
+        status: 'completed',
+        ms: 1,
+      };
+    }
     if (format?.name === 'place_lookup') {
       return {
         text: JSON.stringify(lookupPlace(req.input)),
@@ -102,12 +110,12 @@ export function parseIntent(utterance: string): Record<string, unknown> {
     ? 'hotel'
     : /항공|비행기|티켓/.test(utterance)
       ? 'flight'
-      : /관광|명소|맛집|볼거리|가볼/.test(utterance)
+      : /관광|명소|맛집|볼거리|가볼|여행지/.test(utterance)
         ? 'attraction'
         : 'unknown';
 
   // "부산에서 오사카" 처럼 두 지명이 나오면 앞이 출발지, 뒤가 목적지다.
-  const hits = [...CITIES, ...AREAS]
+  const hits = [...CITIES, ...COUNTRIES, ...AREAS]
     .map((entry) => ({ entry, at: lowered.indexOf(entry[0].toLowerCase()) }))
     .filter((h) => h.at >= 0)
     .sort((a, b) => a.at - b.at);
@@ -131,8 +139,26 @@ export function parseIntent(utterance: string): Record<string, unknown> {
   };
 }
 
+/** 나라 → 대표 도시. 진짜 모델은 더 많이 알지만 테스트에는 이걸로 충분하다. */
+const COUNTRY_CITIES: Record<string, string[]> = {
+  베트남: ['다낭', '하노이', '호치민', '나트랑'],
+  일본: ['도쿄', '오사카', '후쿠오카'],
+};
+
 /** 사전에 없는 지명을 모델이 정리해주는 상황. */
 export function lookupPlace(raw: string): Record<string, unknown> {
+  const country = Object.keys(COUNTRY_CITIES).find((c) => raw.includes(c));
+  if (country) {
+    return {
+      canonical_name: country,
+      slug: country === '베트남' ? 'vietnam' : 'japan',
+      country_code: country === '베트남' ? 'VN' : 'JP',
+      kind: 'country',
+      iata: null,
+      parent_name: null,
+    };
+  }
+
   const area = AREAS.find((a) => raw.includes(a[0]));
   if (area) {
     return {
@@ -166,6 +192,12 @@ export function lookupPlace(raw: string): Record<string, unknown> {
     parent_name: null,
   };
 }
+
+/** 나라. 발화에서 지명으로 잡혀야 하므로 도시 표와 같은 모양으로 둔다. */
+const COUNTRIES: [string, string, string][] = [
+  ['베트남', '베트남', 'vietnam'],
+  ['일본', '일본', 'japan'],
+];
 
 /** 사전(city-table)에 없는 세부 지역. [발화 표기, 표준명, 슬러그, 부모 도시] */
 const AREAS: [string, string, string, string][] = [

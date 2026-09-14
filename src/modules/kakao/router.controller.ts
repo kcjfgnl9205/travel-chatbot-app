@@ -153,6 +153,17 @@ export class RouterController {
     const place = await this.places.resolve(parsed.place);
     if (!place) return cards.askPlaceCard(parsed.intent as SearchKind);
 
+    // 4-b. 나라를 말했으면 검색하지 않고 **그 나라의 도시**로 되묻는다.
+    //      나라 단위 검색은 다낭·하노이가 섞인 목록이 되어 아무에게도 쓸모가 없다.
+    if (place.kind === 'country') {
+      const cities = await this.places.citiesOf(place);
+      return cards.askCityInCountry(
+        parsed.intent as SearchKind,
+        place.canonicalName,
+        cities.map((city) => city.canonicalName),
+      );
+    }
+
     // 5. 캐시 → 응답.
     return this.search.serve(parsed, place, req);
   }

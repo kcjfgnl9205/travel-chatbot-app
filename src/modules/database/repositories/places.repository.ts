@@ -27,6 +27,23 @@ export class PlacesRepository extends BaseRepository {
     return row ? toPlace(row) : null;
   }
 
+  /** 이 지역에 매달린 하위 지역. 나라의 도시 목록이 여기서 나온다. */
+  async childrenOf(parentId: number, kind: PlaceKind): Promise<Place[]> {
+    const rows = await this.run(
+      (t) => t.select(COLUMNS).eq('parent_id', parentId).eq('kind', kind).order('id'),
+      'select child places',
+    );
+    return (rows ?? []).map(toPlace);
+  }
+
+  /** 부모를 나중에 붙인다. 사전에서 온 도시는 나라를 모르는 채로 먼저 등록된다. */
+  async setParent(placeId: number, parentId: number): Promise<void> {
+    await this.run(
+      (t) => t.update({ parent_id: parentId }).eq('id', placeId).is('parent_id', null).select('id'),
+      'set place parent',
+    );
+  }
+
   /** (slug, kind) 가 같으면 같은 지역으로 본다. 있으면 그 행을, 없으면 새 행을 준다. */
   async upsert(draft: PlaceDraft): Promise<Place | null> {
     const row = await this.runOne(

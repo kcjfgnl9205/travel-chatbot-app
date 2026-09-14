@@ -40,7 +40,7 @@ const INSTRUCTIONS = [
   '세 가지 중 어느 것도 아니면 intent 는 unknown 이다.',
   'place 는 도시가 아니어도 된다 — "도톤보리", "해운대" 처럼 세부 지역도 그대로 적는다.',
   '지명 오타는 교정하고 표준 한국어 표기로 통일한다 ("동경"→도쿄, "오오사카"→오사카).',
-  '나라 이름만 있으면(예: "일본 호텔") 지역이 아니므로 place 는 null 이다.',
+  '나라 이름만 있어도(예: "베트남 여행지") place 에 그대로 넣는다 — 서버가 도시를 되묻는다.',
   'from 은 항공권의 출발지다. 말하지 않았으면 null 로 둔다. 서울이라고 추측하지 마라.',
   '"편도" 의미가 있으면 trip_type 은 ow, 아니면 rt 다.',
   'ignored 에는 날짜·인원·예산처럼 검색에 반영할 수 없는 조건을 사용자가 말한 그대로 담는다.',
@@ -125,7 +125,7 @@ export class IntentService {
     const parsed = await this.askModel(text);
     // unknown 은 캐싱하지 않는다. 모델이 한 번 헛돈 것을 일주일씩 굳히면
     // 멀쩡한 질문이 그동안 계속 도움말로 떨어진다.
-    if (parsed.intent === 'unknown') return this.degrade(text);
+    if (parsed.intent === 'unknown') return this.degrade(text, parsed.place);
     return this.remember(hash, parsed);
   }
 
@@ -142,13 +142,17 @@ export class IntentService {
    * 지역만 되물으면 사용자는 한 마디로 답할 수 있다.
    *
    * 캐싱하지 않는다. 다음 번엔 모델이 제대로 뽑을 수 있다.
+   *
+   * ⚠️ **모델이 지명은 뽑아줬을 수 있다.** 의도만 못 잡은 경우가 그렇다
+   *    ("베트남 여행지 추천해줘"). 그걸 버리고 null 로 만들면 지역을 말한 사람에게
+   *    "어느 지역이세요?" 를 되묻는 꼴이 된다.
    */
-  private degrade(utterance: string): ParsedIntent {
+  private degrade(utterance: string, place: string | null = null): ParsedIntent {
     const intent = intentFromKeywords(utterance);
     if (intent === 'unknown') return UNKNOWN_INTENT;
     return {
       intent,
-      place: null,
+      place,
       from: null,
       tripType: tripTypeOf(utterance),
       ignored: ignoredConditions(utterance),

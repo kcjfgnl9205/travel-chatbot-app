@@ -8,7 +8,13 @@
  * 없으면 모델에게 표준명을 물어 등록한다. **쓰면서 자란다.**
  */
 
-export type PlaceKind = 'city' | 'area' | 'landmark';
+/**
+ * 지역의 종류.
+ *
+ * `country` 는 **검색 대상이 아니다.** "베트남 호텔" 은 검색하지 않고 "베트남 어디로
+ * 가세요?" 로 도시를 되묻는 자리다 — 나라 단위 검색은 결과가 뭉개져서 쓸모가 없다.
+ */
+export type PlaceKind = 'country' | 'city' | 'area' | 'landmark';
 
 export interface Place {
   /** DB 의 bigint. DB 가 없으면 프로세스 안에서만 유효한 번호다. */

@@ -74,6 +74,30 @@ export function helpCard(): t.Json {
   });
 }
 
+/**
+ * 나라를 말했을 때. **그 나라의 도시로 되묻는다.**
+ *
+ * ⚠️ 나라 단위로 검색하면 결과가 뭉개진다 — "베트남 호텔" 의 답은 다낭·하노이·호치민이
+ *    섞인 목록이고, 그건 아무에게도 쓸모가 없다. 대신 한 번 더 물어보는 게 맞다.
+ *
+ * ⚠️ **예시 도시를 보여주면 안 된다.** 예전에는 베트남을 물어도 오사카·도쿄·후쿠오카를
+ *    권했다. 물어본 나라와 무관한 답은 되묻기가 아니라 딴소리다.
+ */
+export function askCityInCountry(
+  kind: SearchKind,
+  country: string,
+  cities: string[],
+): t.Json {
+  // 도시를 못 구했으면(모델 실패) 일반 되묻기로 떨어진다 — 예시라도 주는 게 낫다.
+  if (!cities.length) return askPlaceCard(kind);
+
+  const label = KIND_LABEL[kind];
+  return t.simpleText(
+    `${country} 어디로 가세요?\n도시를 고르면 ${withObjectParticle(label)} 찾아드릴게요.`,
+    cities.map((city) => t.quickReply(`${city} ${label}`, exampleUtterance(city, kind))),
+  );
+}
+
 /** 무엇을 묻는지는 알겠는데 지역이 없다. 되묻되 예시로 답을 쉽게 만든다. */
 export function askPlaceCard(kind: SearchKind): t.Json {
   const label = KIND_LABEL[kind];

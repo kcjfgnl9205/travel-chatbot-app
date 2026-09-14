@@ -34,7 +34,7 @@ import { Place, PlaceDraft, PlaceKind, aliasKey, slugOf } from './places.types';
 const INSTRUCTIONS = [
   '너는 여행 챗봇의 지역 정규화기다.',
   '사용자가 말한 지명을 표준 표기로 정리해 JSON 으로만 답한다.',
-  '도시면 kind=city, 도시 안의 구역·번화가면 kind=area, 단일 명소면 kind=landmark 다.',
+  '나라면 kind=country, 도시면 kind=city, 도시 안의 구역·번화가면 kind=area, 단일 명소면 kind=landmark 다.',
   'area/landmark 면 그것이 속한 도시를 parent_name 에 한국어로 적는다 (도톤보리 → 오사카).',
   '도시에 대표 공항이 있으면 IATA 3자를 적는다 (오사카 → KIX). 없으면 null.',
   '지명이 아니면 canonical_name 을 null 로 둔다.',
@@ -55,11 +55,11 @@ const SCHEMA = {
       },
       slug: { type: ['string', 'null'], description: '영문 소문자 슬러그. osaka, dotonbori' },
       country_code: { type: ['string', 'null'], description: 'ISO 3166-1 alpha-2. JP, KR' },
-      kind: { type: 'string', enum: ['city', 'area', 'landmark'] },
+      kind: { type: 'string', enum: ['country', 'city', 'area', 'landmark'] },
       iata: { type: ['string', 'null'], description: '대표 공항 IATA 3자. 없으면 null' },
       parent_name: {
         type: ['string', 'null'],
-        description: 'area/landmark 가 속한 도시의 한국어명. 도시면 null',
+        description: 'area/landmark 가 속한 도시의 한국어명. 도시·나라면 null',
       },
     },
   },
@@ -73,6 +73,34 @@ interface RawPlace {
   iata?: unknown;
   parent_name?: unknown;
 }
+
+const CITIES_INSTRUCTIONS = [
+  '너는 여행 챗봇의 도시 추천기다.',
+  '주어진 나라에서 한국인 여행자가 가장 많이 가는 도시를 인기순으로 6곳 뽑아 JSON 으로만 답한다.',
+  '도시 이름만 한국어 표준 표기로 적는다. 설명·수식어를 붙이지 않는다.',
+  '나라가 아니거나 모르면 빈 배열을 준다.',
+].join(' ');
+
+const CITIES_SCHEMA = {
+  type: 'json_schema' as const,
+  name: 'country_cities',
+  strict: true,
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['cities'],
+    properties: {
+      cities: {
+        type: 'array',
+        items: { type: 'string' },
+        description: '한국어 도시명 6개. 인기순',
+      },
+    },
+  },
+};
+
+/** 나라 하나당 되묻기에 보여줄 도시 수. 퀵리플라이가 10개 한계라 넉넉하지 않다. */
+const CITIES_PER_COUNTRY = 6;
 
 /**
  * 메모리 별칭 캐시 상한. 지역 수만큼만 쌓이므로 가볍다.
@@ -91,6 +119,8 @@ export class PlacesService {
   /** 별칭 → 지역. DB 가 있어도 여기서 먼저 막아야 조회가 5초 예산을 먹지 않는다. */
   private readonly aliases = new Map<string, Place>();
   private readonly byId = new Map<number, Place>();
+  /** 나라 id → 되묻기에 쓸 도시들. 나라의 대표 도시는 변하지 않아 TTL 이 없다. */
+  private readonly cities = new Map<number, Place[]>();
   /** DB 가 없을 때 쓰는 번호표. 프로세스 안에서만 유효하다. */
   private nextLocalId = 1;
 
@@ -122,6 +152,41 @@ export class PlacesService {
     return this.remember(key, place);
   }
 
+  /**
+   * 나라에 매달린 도시들. **되묻기용이다.**
+   *
+   * 순서가 셋이다. 위에서 걸리면 아래는 안 본다.
+   *   1. 메모리 — 같은 나라를 연달아 물었을 때
+   *   2. places 의 자식 — 전에 누가 물어봐서 이미 매달려 있다
+   *   3. 모델 — 대표 도시 6곳을 받아 **각각 place 로 등록하고 나라에 매단다**
+   *
+   * 3번이 한 번 돌고 나면 그 나라는 영영 2번으로 끝난다. 나라의 대표 도시는
+   * 시간이 지나도 거의 안 변하므로 TTL 을 두지 않는다.
+   */
+  async citiesOf(country: Place): Promise<Place[]> {
+    const cached = this.cities.get(country.id);
+    if (cached) return cached;
+
+    const stored = this.places.enabled
+      ? await this.places.childrenOf(country.id, 'city')
+      : [...this.byId.values()].filter((p) => p.parentId === country.id && p.kind === 'city');
+    if (stored.length) {
+      this.cities.set(country.id, stored);
+      return stored;
+    }
+
+    const names = await this.askCities(country.canonicalName);
+    const cities: Place[] = [];
+    for (const name of names.slice(0, CITIES_PER_COUNTRY)) {
+      const city = await this.resolve(name);
+      // 나라를 모르는 채로 먼저 등록된 도시(사전 경로)에 이제 부모를 붙인다.
+      if (city && city.kind === 'city') cities.push(await this.attachTo(city, country));
+    }
+
+    if (cities.length) this.cities.set(country.id, cities);
+    return cities;
+  }
+
   /** 세부 지역의 부모 도시. 없으면 null. 카드 문구("도톤보리(오사카)")에 쓴다. */
   async parentOf(place: Place): Promise<Place | null> {
     if (place.parentId == null) return null;
@@ -137,6 +202,46 @@ export class PlacesService {
   clearMemory(): void {
     this.aliases.clear();
     this.byId.clear();
+    this.cities.clear();
+  }
+
+  /** 도시를 나라 아래에 매단다. 이미 부모가 있으면 건드리지 않는다. */
+  private async attachTo(city: Place, country: Place): Promise<Place> {
+    if (city.parentId != null) return city;
+
+    if (this.places.enabled) {
+      await this.places.setParent(city.id, country.id).catch(() => undefined);
+    }
+    const linked: Place = { ...city, parentId: country.id };
+    this.byId.set(linked.id, linked);
+    for (const [alias, cached] of this.aliases) {
+      if (cached.id === linked.id) this.aliases.set(alias, linked);
+    }
+    return linked;
+  }
+
+  /** 나라의 대표 도시 이름들. 실패하면 빈 배열 — 되묻기가 예시 도시로 떨어진다. */
+  private async askCities(country: string): Promise<string[]> {
+    if (!this.openai.enabled) return [];
+
+    try {
+      const result = await this.openai.respond({
+        instructions: CITIES_INSTRUCTIONS,
+        input: country,
+        model: this.config.openaiParseModel,
+        effort: this.config.openaiParseEffort,
+        format: CITIES_SCHEMA,
+        timeoutMs: this.config.openaiParseTimeoutMs,
+      });
+
+      const parsed = parseJsonLoose<{ cities?: unknown }>(result.text);
+      const cities = Array.isArray(parsed?.cities) ? parsed.cities : [];
+      this.logger.log(`cities of ${country} → ${cities.join(', ') || '-'} ms=${result.ms}`);
+      return cities.map((c) => String(c).trim()).filter(Boolean);
+    } catch (err) {
+      this.logger.warn(`country cities lookup failed country=${country} err=${err}`);
+      return [];
+    }
   }
 
   // ---------------------------------------------------------------- 내부
@@ -257,7 +362,7 @@ export class PlacesService {
   }
 }
 
-const KINDS = new Set<string>(['city', 'area', 'landmark']);
+const KINDS = new Set<string>(['country', 'city', 'area', 'landmark']);
 
 /** 사전에서 온 도시. 공항 코드가 딸려 오는 게 모델 경로와의 차이다. */
 function draftFromTable(city: CityEntry | null): PlaceDraft | null {

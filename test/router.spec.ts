@@ -209,6 +209,46 @@ describe('POST /api/v1/kakao/router', () => {
     });
   });
 
+  // ---------------------------------------------------------- 나라
+  it('나라를 말하면 그 나라의 도시로 되묻는다', async () => {
+    const res = await post(ctx.app, kakaoPayload('베트남 여행지 추천해줘'));
+
+    expect(textOf(res.body)).toContain('베트남 어디로 가세요?');
+    const labels = res.body.template.quickReplies.map((q: any) => q.label);
+    // ⚠️ 예전에는 베트남을 물어도 오사카·도쿄·후쿠오카를 권했다. 딴소리였다.
+    expect(labels).toEqual(
+      expect.arrayContaining(['다낭 관광지', '하노이 관광지', '호치민 관광지']),
+    );
+    expect(labels.join()).not.toContain('오사카');
+    // 검색은 돌지 않는다 — 나라 단위 결과는 도시가 섞여 쓸모가 없다.
+    expect(ctx.attractionProvider.calls).toHaveLength(0);
+  });
+
+  it('되묻기 버튼을 누르면 그대로 그 도시 검색이 된다', async () => {
+    await post(ctx.app, kakaoPayload('베트남 호텔 추천해줘'));
+    const res = await post(ctx.app, kakaoPayload('베트남 호텔 추천해줘'));
+    const first = res.body.template.quickReplies[0];
+
+    const body = await askUntilCard(ctx.app, String(first.messageText));
+
+    expect(listCardOf(body).header.title).toContain('다낭');
+  });
+
+  it('같은 나라를 다시 물으면 도시 목록을 다시 묻지 않는다', async () => {
+    const cityLookups = () =>
+      ctx.openai.calls.filter(
+        (c) => (c.format as { name?: string } | undefined)?.name === 'country_cities',
+      ).length;
+
+    await post(ctx.app, kakaoPayload('베트남 여행지 추천해줘'));
+    expect(cityLookups()).toBe(1);
+
+    await post(ctx.app, kakaoPayload('베트남 관광지 알려줘'));
+
+    // 도시는 나라에 매달려 있다. 나라의 대표 도시는 변하지 않으므로 다시 물을 이유가 없다.
+    expect(cityLookups()).toBe(1);
+  });
+
   // ---------------------------------------------------------- 실패 경로
   it('결과가 비어도 "도시 이름을 확인하라" 고 하지 않는다', async () => {
     ctx.provider.reply = () => [];
