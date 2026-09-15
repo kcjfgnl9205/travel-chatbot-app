@@ -87,6 +87,7 @@ export function askCityInCountry(
   kind: SearchKind,
   country: string,
   cities: string[],
+  botName: string | null,
 ): t.Json {
   // 도시를 못 구했으면(모델 실패) 일반 되묻기로 떨어진다 — 예시라도 주는 게 낫다.
   if (!cities.length) return askPlaceCard(kind);
@@ -97,28 +98,37 @@ export function askCityInCountry(
   //    단톡방에서는 봇을 멘션한 메시지만 서버로 온다 — 사용자가 "오사카" 라고 직접
   //    타이핑하면 멘션이 빠져서 **봇이 아예 듣지 못한다.** 실제로 그 상태로 대화가
   //    끊겼다. 누를 수 있는 길을 주는 게 안내 문구보다 확실하다.
-  //
-  //    퀵리플라이도 같이 단다. 줄 탭(`action: "message"`)이 그룹챗방에서 되는지
-  //    확인되지 않았고, 안 될 때 남는 길이 하나는 있어야 한다.
-  return t.listCardWithNotice(
-    {
-      headerTitle: `${country} 어디로 가세요?`,
+  const card: t.Json = {
+    listCard: {
+      header: { title: t.cut(`${country} 어디로 가세요?`, t.MAX_LIST_HEADER_TITLE) },
       // 제목은 도시 이름만. 어느 도시인지가 고르는 기준이고, 무엇을 찾는지는
       // 머리글과 설명에 이미 있다.
-      items: cities.map((city) =>
+      items: cities.slice(0, t.MAX_LIST_ITEMS).map((city) =>
         t.listItem({
           title: city,
           description: `${label} 보기`,
           messageText: exampleUtterance(city, kind),
         }),
       ),
-      buttons: [t.messageButton('다른 도시', `${label} 다른 도시`)],
     },
-    '',
-    [
-      ...cities.map((city) => t.quickReply(`${city} ${label}`, exampleUtterance(city, kind))),
-      t.quickReply('다른 도시', `${label} 다른 도시`),
-    ],
+  };
+
+  // 목록에 없는 도시를 가려는 사람의 영역. **카드 안 버튼이 아니라 따로 세운다** —
+  // 5줄과 나란히 두면 여섯 번째 선택지처럼 보이는데, 이건 선택지가 아니라 다른 길이다.
+  //
+  // ⚠️ 카카오 버튼은 입력창을 미리 채우지 못한다(액션이 webLink·message·block·phone·
+  //    share·operator 뿐이다). 그래서 **멘션을 포함한 예문**을 보여주는 게 최선이다.
+  const example = `${botName ? `@${botName} ` : ''}${exampleUtterance('다낭', kind)}`;
+  const guide = t.textCard({
+    title: '다른 도시를 찾고 있나요?',
+    description: `아래 버튼을 누른 뒤 도시 이름을 보내주세요.\n예) ${example}`,
+    buttons: [t.messageButton('다른 도시 말하기', `${label} 다른 도시`)],
+  });
+
+  return t.skillResponse(
+    [card, guide],
+    // 줄 탭(action:"message")이 그룹챗방에서 되는지 확인되지 않았다. 안 될 때 남는 길이다.
+    cities.map((city) => t.quickReply(`${city} ${label}`, exampleUtterance(city, kind))),
   );
 }
 

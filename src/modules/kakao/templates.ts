@@ -160,6 +160,31 @@ export function listCardWithNotice(
   return skillResponse(outputs, quickReplies ?? input.quickReplies);
 }
 
+// ------------------------------------------------------------------- textCard
+export const MAX_TEXT_CARD_TITLE = 50;
+export const MAX_TEXT_CARD_DESC = 400;
+export const MAX_TEXT_CARD_BUTTONS = 3;
+
+export interface TextCardInput {
+  title?: string | null;
+  description: string;
+  buttons?: Json[];
+}
+
+/**
+ * 제목 + 설명 + 버튼 말풍선. **카드 뒤에 붙이는 안내 영역**으로 쓴다.
+ *
+ * listCard 의 버튼(2개)과 달리 여기는 설명을 길게 쓸 수 있어서, "이럴 땐 이렇게
+ * 하세요" 같은 안내가 들어간다. 말풍선이 하나 더 늘지만 카드 안에 우겨넣는 것보다
+ * 읽힌다 — listCard 의 줄 설명은 40자에서 잘린다.
+ */
+export function textCard(input: TextCardInput): Json {
+  const card: Json = { description: cut(input.description, MAX_TEXT_CARD_DESC) };
+  if (input.title) card.title = cut(input.title, MAX_TEXT_CARD_TITLE);
+  if (input.buttons?.length) card.buttons = input.buttons.slice(0, MAX_TEXT_CARD_BUTTONS);
+  return { textCard: card };
+}
+
 /**
  * 블록을 부르는 버튼. **extra 가 서버로 그대로 돌아온다** (`action.clientExtra`).
  *

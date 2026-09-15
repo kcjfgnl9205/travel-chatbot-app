@@ -199,7 +199,12 @@ export class RouterController {
         kind: parsed.intent as SearchKind,
         country: place.canonicalName,
       });
-      return cards.askCityInCountry(parsed.intent as SearchKind, place.canonicalName, cities);
+      return cards.askCityInCountry(
+        parsed.intent as SearchKind,
+        place.canonicalName,
+        cities,
+        req.botName,
+      );
     }
 
     // 6. 캐시 → 응답.
