@@ -94,8 +94,29 @@ export function askCityInCountry(
   const label = KIND_LABEL[kind];
   return t.simpleText(
     `${country} 어디로 가세요?\n도시를 고르면 ${withObjectParticle(label)} 찾아드릴게요.`,
-    cities.map((city) => t.quickReply(`${city} ${label}`, exampleUtterance(city, kind))),
+    [
+      ...cities.map((city) => t.quickReply(`${city} ${label}`, exampleUtterance(city, kind))),
+      // 목록에 없는 도시를 가려는 사람의 출구. 이게 없으면 5개 중에 고르거나 포기다.
+      t.quickReply('다른 도시', `${label} 다른 도시`),
+    ],
   );
+}
+
+/**
+ * "다른 도시" 를 누른 사람에게. **다음 발화를 지명으로 받겠다는 약속이다.**
+ *
+ * ⚠️ 카카오에는 입력창을 미리 채우는 버튼이 없다. 버튼은 누르면 그 문장이 그대로
+ *    전송될 뿐이라 `/호텔 ` 을 넣어줄 수 없다. 그래서 봇이 한 번 되묻고, 서버가
+ *    **그 사람의 다음 발화**를 지명으로 해석한다 ([pending.ts](./pending.ts)).
+ */
+export function askPlaceNameOnly(kind: SearchKind, country: string | null): t.Json {
+  const label = KIND_LABEL[kind];
+  const text = country
+    ? `${country} 어디로 가세요?\n목록에 없으면 도시 이름만 보내주세요.`
+    : `어느 도시 ${withObjectParticle(label)} 찾으세요?\n도시 이름만 보내주세요. 예) 다낭`;
+
+  // 퀵리플라이는 예시로 남겨둔다 — 되묻는 말만 있고 누를 게 없으면 대화가 끊긴다.
+  return t.simpleText(text, placeQuickReplies(kind));
 }
 
 /** 무엇을 묻는지는 알겠는데 지역이 없다. 되묻되 예시로 답을 쉽게 만든다. */

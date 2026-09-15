@@ -39,7 +39,7 @@ const INSTRUCTIONS = [
   'area/landmark 면 그것이 속한 도시를 parent_name 에 한국어로 적는다 (도톤보리 → 오사카).',
   '도시에 대표 공항이 있으면 IATA 3자를 적는다 (오사카 → KIX). 없으면 null.',
   '지명이 아니면 canonical_name 을 null 로 둔다.',
-  'kind=country 면 그 나라에서 한국인 여행자가 많이 가는 도시를 인기순으로 6곳까지 cities 에 담는다.',
+  'kind=country 면 그 나라에서 한국인 여행자가 많이 가는 도시를 인기순으로 5곳까지 cities 에 담는다.',
   'cities 는 한국어 표준 표기만 쓴다. 나라가 아니면 빈 배열이다.',
 ].join(' ');
 
@@ -67,7 +67,7 @@ const SCHEMA = {
       cities: {
         type: 'array',
         items: { type: 'string' },
-        description: 'kind=country 일 때만. 대표 도시 6곳(한국어). 아니면 빈 배열',
+        description: 'kind=country 일 때만. 대표 도시 5곳(한국어). 아니면 빈 배열',
       },
     },
   },
@@ -85,7 +85,7 @@ interface RawPlace {
 
 const CITIES_INSTRUCTIONS = [
   '너는 여행 챗봇의 도시 추천기다.',
-  '주어진 나라에서 한국인 여행자가 가장 많이 가는 도시를 인기순으로 6곳 뽑아 JSON 으로만 답한다.',
+  '주어진 나라에서 한국인 여행자가 가장 많이 가는 도시를 인기순으로 5곳 뽑아 JSON 으로만 답한다.',
   '도시 이름만 한국어 표준 표기로 적는다. 설명·수식어를 붙이지 않는다.',
   '나라가 아니거나 모르면 빈 배열을 준다.',
 ].join(' ');
@@ -102,14 +102,19 @@ const CITIES_SCHEMA = {
       cities: {
         type: 'array',
         items: { type: 'string' },
-        description: '한국어 도시명 6개. 인기순',
+        description: '한국어 도시명 5개. 인기순',
       },
     },
   },
 };
 
-/** 나라 하나당 되묻기에 보여줄 도시 수. 퀵리플라이가 10개 한계라 넉넉하지 않다. */
-const CITIES_PER_COUNTRY = 6;
+/**
+ * 나라 하나당 되묻기에 보여줄 도시 수.
+ *
+ * 5개다. 퀵리플라이는 10개까지 들어가지만, 고르라고 늘어놓는 선택지가 그보다 많으면
+ * 고르는 게 아니라 훑는 게 된다. 남은 자리는 "다른 도시" 가 쓴다.
+ */
+const CITIES_PER_COUNTRY = 5;
 
 /**
  * 메모리 별칭 캐시 상한. 지역 수만큼만 쌓이므로 가볍다.

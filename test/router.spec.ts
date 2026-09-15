@@ -270,6 +270,44 @@ describe('POST /api/v1/kakao/router', () => {
     expect(listCardOf(body).header.title).toContain('오사카');
   });
 
+  it('되묻기에는 도시 5개와 "다른 도시" 가 함께 온다', async () => {
+    const res = await post(ctx.app, kakaoPayload('베트남 여행지 추천해줘'));
+    const labels = res.body.template.quickReplies.map((q: any) => q.label);
+
+    // 고르라고 늘어놓는 선택지가 많으면 고르는 게 아니라 훑는 게 된다.
+    expect(labels.filter((l: string) => l !== '다른 도시').length).toBeLessThanOrEqual(5);
+    expect(labels).toContain('다른 도시');
+  });
+
+  it('"다른 도시" 를 누르면 도시 이름만 받아서 이어 검색한다', async () => {
+    // ⚠️ 카카오에는 입력창을 미리 채우는 버튼이 없다. 그래서 한 번 되묻고 다음 발화를 받는다.
+    const asked = await post(ctx.app, kakaoPayload('호텔 다른 도시'));
+    expect(textOf(asked.body)).toContain('도시 이름만 보내주세요');
+
+    // 사용자가 도시 이름만 보낸다. "다낭" 에는 여행 신호가 없어서 원래는 도움말로 떨어진다.
+    const body = await askUntilCard(ctx.app, '다낭');
+
+    expect(listCardOf(body).header.title).toContain('다낭');
+  });
+
+  it('되묻기는 사람마다 따로다 — 남의 대답을 가로채지 않는다', async () => {
+    await post(ctx.app, kakaoPayload('호텔 다른 도시', { userKey: 'a' }));
+
+    const stranger = await post(ctx.app, kakaoPayload('다낭', { userKey: 'b' }));
+
+    // B 는 되묻기를 받은 적이 없다. 그냥 도움말이 나가야 한다.
+    expect(listCardOf(stranger.body)?.header?.title).toContain('여행메이트');
+  });
+
+  it('되묻기 상태여도 지명 같지 않은 말은 받지 않는다', async () => {
+    await post(ctx.app, kakaoPayload('관광지 다른 도시'));
+
+    const res = await post(ctx.app, kakaoPayload('ㅋㅋㅋ 거기 어디였지?'));
+
+    // 아무 말이나 지명으로 등록하면 places 가 쓰레기로 찬다.
+    expect(listCardOf(res.body)?.header?.title).toContain('여행메이트');
+  });
+
   // ---------------------------------------------------------- 실패 경로
   it('결과가 비어도 "도시 이름을 확인하라" 고 하지 않는다', async () => {
     ctx.provider.reply = () => [];

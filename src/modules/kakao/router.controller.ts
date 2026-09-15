@@ -4,13 +4,14 @@ import { ApiBody, ApiHeader, ApiOperation, ApiResponse, ApiTags } from '@nestjs/
 import { SkillTokenGuard } from '../../common/guards/skill-token.guard';
 import { UsersRepository } from '../database/repositories/users.repository';
 import { IntentService } from '../intent/intent.service';
-import { TRAVEL_HINT } from '../intent/intent.types';
+import { TRAVEL_HINT, intentFromKeywords } from '../intent/intent.types';
 import { PlacesService } from '../places/places.service';
 import { SearchService } from '../search/search.service';
 import { RouterRequest, SearchKind } from '../search/search.types';
 import * as cards from './cards';
 import * as t from './templates';
 import { cacheKeyOf, needsCursorFallback, offsetOf } from './paging';
+import { PendingAskMemory, isAnotherPlaceRequest, looksLikePlaceName } from './pending';
 import {
   KakaoSkillPayload,
   blockIdOf,
@@ -56,6 +57,8 @@ import {
 @UseGuards(SkillTokenGuard)
 export class RouterController {
   private readonly logger = new Logger(RouterController.name);
+  /** "도시 이름만 보내주세요" 라고 해놓고 기다리는 사람들. 발화자별로 5분. */
+  private readonly pending = new PendingAskMemory();
 
   constructor(
     private readonly intent: IntentService,
@@ -141,26 +144,64 @@ export class RouterController {
       if (cursor) return this.search.servePage(cursor.cacheKey, cursor.offset, req);
     }
 
-    // 2. 1차 필터 — 여행과 무관하면 AI 를 아예 부르지 않는다.
+    // 2. "다른 도시" — 목록에 없는 도시를 가려는 사람의 출구.
+    //    카카오에는 입력창을 미리 채우는 버튼이 없으므로, 한 번 되묻고 다음 발화를 받는다.
+    if (isAnotherPlaceRequest(req.utterance)) {
+      const kind = intentFromKeywords(req.utterance);
+      if (kind !== 'unknown') {
+        // 어느 나라를 고르다 왔는지 이어받는다 — "베트남 어디로 가세요?" 가
+        // "어느 도시 호텔을 찾으세요?" 보다 맥락이 산다.
+        const country = this.pending.take(req.userKey)?.country ?? null;
+        this.pending.remember(req.userKey, { kind, country });
+        return cards.askPlaceNameOnly(kind, country);
+      }
+    }
+
+    // 2-b. 되묻기에 대한 대답. **"다낭" 한 마디에는 여행 신호가 없으므로 1차 필터보다 먼저 본다.**
+    const waiting = looksLikePlaceName(req.utterance) ? this.pending.take(req.userKey) : null;
+    if (waiting) {
+      const place = await this.places.resolve(req.utterance.trim());
+      if (place && place.kind !== 'country') {
+        this.logger.log(`pending answer "${req.utterance}" → ${waiting.kind}/${place.canonicalName}`);
+        // 대기 상태를 되살린다. 콜백이 꺼져 있으면 사용자는 같은 말("다낭")을 한 번 더
+        // 보내게 되는데, 그때 도움말이 나가면 대화가 끊긴다.
+        this.pending.remember(req.userKey, waiting);
+        return this.search.serve(
+          { intent: waiting.kind, place: place.canonicalName, from: null, tripType: 'rt', ignored: [] },
+          place,
+          req,
+        );
+      }
+      // 나라를 또 말했거나 못 알아들었다 — 다시 되묻는다(대기 상태를 되살린다).
+      this.pending.remember(req.userKey, waiting);
+      return cards.askPlaceNameOnly(waiting.kind, place?.canonicalName ?? null);
+    }
+
+    // 3. 1차 필터 — 여행과 무관하면 AI 를 아예 부르지 않는다.
     if (!TRAVEL_HINT.test(req.utterance)) return cards.helpCard();
 
-    // 3. 의도 + 지역.
+    // 4. 의도 + 지역.
     const parsed = await this.intent.extract(req.utterance);
     if (parsed.intent === 'unknown') return cards.helpCard();
     if (!parsed.place) return cards.askPlaceCard(parsed.intent as SearchKind);
 
-    // 4. 지역 정규화. 모르는 지명도 등록해서 검색까지는 가본다.
+    // 5. 지역 정규화. 모르는 지명도 등록해서 검색까지는 가본다.
     const place = await this.places.resolve(parsed.place);
     if (!place) return cards.askPlaceCard(parsed.intent as SearchKind);
 
-    // 4-b. 나라를 말했으면 검색하지 않고 **그 나라의 도시**로 되묻는다.
+    // 5-b. 나라를 말했으면 검색하지 않고 **그 나라의 도시**로 되묻는다.
     //      나라 단위 검색은 다낭·하노이가 섞인 목록이 되어 아무에게도 쓸모가 없다.
     if (place.kind === 'country') {
       const cities = await this.places.citiesOf(place);
+      // "다른 도시" 를 누를 수 있게, 그 사람의 다음 발화를 지명으로 받을 준비를 해둔다.
+      this.pending.remember(req.userKey, {
+        kind: parsed.intent as SearchKind,
+        country: place.canonicalName,
+      });
       return cards.askCityInCountry(parsed.intent as SearchKind, place.canonicalName, cities);
     }
 
-    // 5. 캐시 → 응답.
+    // 6. 캐시 → 응답.
     return this.search.serve(parsed, place, req);
   }
 
