@@ -118,11 +118,10 @@ export function askCityInCountry(
   //
   // ⚠️ 카카오 버튼은 입력창을 미리 채우지 못한다(액션이 webLink·message·block·phone·
   //    share·operator 뿐이다). 그래서 **멘션을 포함한 예문**을 보여주는 게 최선이다.
-  const example = `${botName ? `@${botName} ` : ''}${exampleUtterance('다낭', kind)}`;
   const guide = t.textCard({
     title: '다른 도시를 찾고 있나요?',
-    description: `아래 버튼을 누른 뒤 도시 이름을 보내주세요.\n예) ${example}`,
-    buttons: [t.messageButton('다른 도시 말하기', `${label} 다른 도시`)],
+    description: '아래 버튼을 누른 뒤 도시 이름을 이어서 입력해 주세요.',
+    buttons: [mentionButton(botName, label)],
   });
 
   return t.skillResponse(
@@ -130,6 +129,34 @@ export function askCityInCountry(
     // 줄 탭(action:"message")이 그룹챗방에서 되는지 확인되지 않았다. 안 될 때 남는 길이다.
     cities.map((city) => t.quickReply(`${city} ${label}`, exampleUtterance(city, kind))),
   );
+}
+
+/**
+ * 봇을 멘션한 채로 입력창을 열어주려는 버튼.
+ *
+ * `messageText` 가 **봇 멘션 + 공백**이다. 카카오톡 그룹챗방에서 이런 버튼을 누르면
+ * 전송되지 않고 입력창에 멘션이 채워진다고 알려져 있다(대표 명령어 툴바와 같은 동작).
+ * 공식 스킬 문서에는 없는 동작이라 **팀톡방에서 확인해야 한다.**
+ *
+ * ⚠️ 안 되면 `@여행메이트 ` 한 줄이 그대로 전송된다. 그때도 대화가 끊기지 않도록
+ *    서버는 **멘션만 있는 빈 발화**를 되묻기로 받는다 (router.controller.ts).
+ *    그래서 이 버튼은 실패해도 손해가 없다.
+ *
+ * 봇 이름을 모르면(요청에 bot.name 이 없으면) 평범한 메시지 버튼으로 떨어진다.
+ */
+export function mentionButton(botName: string | null, label: string): t.Json {
+  if (!botName) return t.messageButton('다른 도시 말하기', `${label} 다른 도시`);
+
+  // ⚠️ **버튼 라벨은 14자다.** "@여행메이트 TST에게 말하기" 는 17자라 "@여행메이트 TS…"
+  //    로 잘린다. 잘린 라벨은 무슨 버튼인지 알 수 없으므로, 들어가는 것 중 가장 긴 걸
+  //    고른다. 마지막 폴백은 이름을 아예 빼서 어떤 봇 이름에도 안 잘리게 한다.
+  const full = `@${botName}에게 말하기`;
+  const short = `@${botName}`;
+  const label14 =
+    full.length <= t.MAX_BUTTON_LABEL ? full : short.length <= t.MAX_BUTTON_LABEL ? short : '봇에게 말하기';
+
+  // 멘션 뒤 공백이 핵심이다 — 입력창에 채워졌을 때 바로 이어 칠 수 있어야 한다.
+  return t.messageButton(label14, `@${botName} `);
 }
 
 /**
