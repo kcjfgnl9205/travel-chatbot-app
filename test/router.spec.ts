@@ -213,7 +213,12 @@ describe('POST /api/v1/kakao/router', () => {
   it('나라를 말하면 그 나라의 도시로 되묻는다', async () => {
     const res = await post(ctx.app, kakaoPayload('베트남 여행지 추천해줘'));
 
-    expect(textOf(res.body)).toContain('베트남 어디로 가세요?');
+    // ⚠️ 카드로 보여준다. 단톡방에서는 봇을 멘션한 메시지만 서버로 오므로,
+    //    사용자가 도시 이름을 직접 치면 멘션이 빠져 봇이 아예 못 듣는다 — 눌러야 한다.
+    const card = listCardOf(res.body);
+    expect(card.header.title).toBe('베트남 어디로 가세요?');
+    expect(card.items[0]).toMatchObject({ action: 'message' });
+    expect(String(card.items[0].messageText)).toContain('관광지');
     const labels = res.body.template.quickReplies.map((q: any) => q.label);
     // ⚠️ 예전에는 베트남을 물어도 오사카·도쿄·후쿠오카를 권했다. 딴소리였다.
     expect(labels).toEqual(
@@ -253,7 +258,7 @@ describe('POST /api/v1/kakao/router', () => {
   it('사전에 있는 나라는 의도도 지역도 모델 없이 판정한다', async () => {
     const res = await post(ctx.app, kakaoPayload('일본 호텔 추천해줘'));
 
-    expect(textOf(res.body)).toContain('일본 어디로 가세요?');
+    expect(listCardOf(res.body).header.title).toBe('일본 어디로 가세요?');
     // ⚠️ 모델에 맡겼더니 같은 "독일" 을 어떤 때는 나라로, 어떤 때는 도시로 봤다.
     //    그때마다 나라가 지역 하나로 검색돼 뭉개진 결과가 나갔다. 사전이 그 흔들림을 없앤다.
     const parsing = ctx.openai.calls.filter((c) =>
@@ -272,9 +277,13 @@ describe('POST /api/v1/kakao/router', () => {
 
   it('되묻기에는 도시 5개와 "다른 도시" 가 함께 온다', async () => {
     const res = await post(ctx.app, kakaoPayload('베트남 여행지 추천해줘'));
+    const card = listCardOf(res.body);
     const labels = res.body.template.quickReplies.map((q: any) => q.label);
 
     // 고르라고 늘어놓는 선택지가 많으면 고르는 게 아니라 훑는 게 된다.
+    expect(card.items.length).toBeLessThanOrEqual(5);
+    expect(card.buttons[0].label).toBe('다른 도시');
+    // 줄 탭이 그룹챗방에서 되는지 확인되지 않았다. 퀵리플라이가 남는 길이다.
     expect(labels.filter((l: string) => l !== '다른 도시').length).toBeLessThanOrEqual(5);
     expect(labels).toContain('다른 도시');
   });
@@ -282,7 +291,8 @@ describe('POST /api/v1/kakao/router', () => {
   it('"다른 도시" 를 누르면 도시 이름만 받아서 이어 검색한다', async () => {
     // ⚠️ 카카오에는 입력창을 미리 채우는 버튼이 없다. 그래서 한 번 되묻고 다음 발화를 받는다.
     const asked = await post(ctx.app, kakaoPayload('호텔 다른 도시'));
-    expect(textOf(asked.body)).toContain('도시 이름만 보내주세요');
+    // ⚠️ 멘션을 빼먹으면 봇이 못 듣는다. 안내에 그 방법이 들어가야 한다.
+    expect(textOf(asked.body)).toMatch(/도시 이름을 보내주세요|멘션/);
 
     // 사용자가 도시 이름만 보낸다. "다낭" 에는 여행 신호가 없어서 원래는 도움말로 떨어진다.
     const body = await askUntilCard(ctx.app, '다낭');

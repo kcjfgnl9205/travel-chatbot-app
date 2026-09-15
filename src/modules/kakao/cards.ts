@@ -92,11 +92,31 @@ export function askCityInCountry(
   if (!cities.length) return askPlaceCard(kind);
 
   const label = KIND_LABEL[kind];
-  return t.simpleText(
-    `${country} 어디로 가세요?\n도시를 고르면 ${withObjectParticle(label)} 찾아드릴게요.`,
+
+  // ⚠️ **카드로 보여주고, 누르면 그 문장이 전송되게 한다.**
+  //    단톡방에서는 봇을 멘션한 메시지만 서버로 온다 — 사용자가 "오사카" 라고 직접
+  //    타이핑하면 멘션이 빠져서 **봇이 아예 듣지 못한다.** 실제로 그 상태로 대화가
+  //    끊겼다. 누를 수 있는 길을 주는 게 안내 문구보다 확실하다.
+  //
+  //    퀵리플라이도 같이 단다. 줄 탭(`action: "message"`)이 그룹챗방에서 되는지
+  //    확인되지 않았고, 안 될 때 남는 길이 하나는 있어야 한다.
+  return t.listCardWithNotice(
+    {
+      headerTitle: `${country} 어디로 가세요?`,
+      // 제목은 도시 이름만. 어느 도시인지가 고르는 기준이고, 무엇을 찾는지는
+      // 머리글과 설명에 이미 있다.
+      items: cities.map((city) =>
+        t.listItem({
+          title: city,
+          description: `${label} 보기`,
+          messageText: exampleUtterance(city, kind),
+        }),
+      ),
+      buttons: [t.messageButton('다른 도시', `${label} 다른 도시`)],
+    },
+    '',
     [
       ...cities.map((city) => t.quickReply(`${city} ${label}`, exampleUtterance(city, kind))),
-      // 목록에 없는 도시를 가려는 사람의 출구. 이게 없으면 5개 중에 고르거나 포기다.
       t.quickReply('다른 도시', `${label} 다른 도시`),
     ],
   );
@@ -109,14 +129,23 @@ export function askCityInCountry(
  *    전송될 뿐이라 `/호텔 ` 을 넣어줄 수 없다. 그래서 봇이 한 번 되묻고, 서버가
  *    **그 사람의 다음 발화**를 지명으로 해석한다 ([pending.ts](./pending.ts)).
  */
-export function askPlaceNameOnly(kind: SearchKind, country: string | null): t.Json {
+export function askPlaceNameOnly(
+  kind: SearchKind,
+  country: string | null,
+  botName: string | null,
+): t.Json {
   const label = KIND_LABEL[kind];
-  const text = country
-    ? `${country} 어디로 가세요?\n목록에 없으면 도시 이름만 보내주세요.`
-    : `어느 도시 ${withObjectParticle(label)} 찾으세요?\n도시 이름만 보내주세요. 예) 다낭`;
+  const where = country ? `${country} 어디로 가세요?` : `어느 도시 ${withObjectParticle(label)} 찾으세요?`;
+
+  // ⚠️ **멘션을 빼먹으면 봇이 아예 못 듣는다.** 단톡방에서는 봇을 멘션한 메시지만
+  //    서버로 온다. "도시 이름만 보내주세요" 라고만 하면 사용자는 "오사카" 라고 치고,
+  //    아무 일도 일어나지 않는 화면을 보게 된다 — 실제로 그렇게 대화가 끊겼다.
+  const how = botName
+    ? `@${botName} 다낭 처럼 도시 이름을 보내주세요.`
+    : '봇을 멘션하고 도시 이름을 보내주세요. 예) 다낭';
 
   // 퀵리플라이는 예시로 남겨둔다 — 되묻는 말만 있고 누를 게 없으면 대화가 끊긴다.
-  return t.simpleText(text, placeQuickReplies(kind));
+  return t.simpleText(`${where}\n${how}`, placeQuickReplies(kind));
 }
 
 /** 무엇을 묻는지는 알겠는데 지역이 없다. 되묻되 예시로 답을 쉽게 만든다. */

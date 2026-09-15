@@ -15,6 +15,7 @@ import { PendingAskMemory, isAnotherPlaceRequest, looksLikePlaceName } from './p
 import {
   KakaoSkillPayload,
   blockIdOf,
+  botNameOf,
   callbackUrlOf,
   userKeyOf,
   utteranceOf,
@@ -153,7 +154,7 @@ export class RouterController {
         // "어느 도시 호텔을 찾으세요?" 보다 맥락이 산다.
         const country = this.pending.take(req.userKey)?.country ?? null;
         this.pending.remember(req.userKey, { kind, country });
-        return cards.askPlaceNameOnly(kind, country);
+        return cards.askPlaceNameOnly(kind, country, req.botName);
       }
     }
 
@@ -174,7 +175,7 @@ export class RouterController {
       }
       // 나라를 또 말했거나 못 알아들었다 — 다시 되묻는다(대기 상태를 되살린다).
       this.pending.remember(req.userKey, waiting);
-      return cards.askPlaceNameOnly(waiting.kind, place?.canonicalName ?? null);
+      return cards.askPlaceNameOnly(waiting.kind, place?.canonicalName ?? null, req.botName);
     }
 
     // 3. 1차 필터 — 여행과 무관하면 AI 를 아예 부르지 않는다.
@@ -216,6 +217,7 @@ export class RouterController {
       callbackUrl: callbackUrlOf(payload),
       blockId: blockIdOf(payload),
       started: Date.now(),
+      botName: botNameOf(payload),
     };
   }
 }

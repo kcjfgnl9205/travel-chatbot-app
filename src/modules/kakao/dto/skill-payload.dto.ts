@@ -54,6 +54,12 @@ export function userKeyOf(p: KakaoSkillPayload): string {
   );
 }
 
+/** 봇 이름. 단톡방에서 "@여행메이트 다낭" 처럼 멘션을 안내할 때 쓴다. */
+export function botNameOf(p: KakaoSkillPayload): string | null {
+  const name = p.bot?.name;
+  return typeof name === 'string' && name.trim() ? name.trim() : null;
+}
+
 export function blockNameOf(p: KakaoSkillPayload): string | null {
   return p.userRequest?.block?.name ?? null;
 }
