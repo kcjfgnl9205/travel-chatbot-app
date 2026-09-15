@@ -145,7 +145,17 @@ export class RouterController {
       if (cursor) return this.search.servePage(cursor.cacheKey, cursor.offset, req);
     }
 
-    // 2. "다른 도시" — 목록에 없는 도시를 가려는 사람의 출구.
+    // 2. 멘션만 있는 빈 발화 — "@여행메이트에게 말하기" 버튼이 (프리필 대신) 전송된 경우다.
+    //    되묻던 중이었으면 그 흐름을 이어준다. 아니면 아래 1차 필터가 도움말을 준다.
+    if (!req.utterance) {
+      const waitingForCity = this.pending.take(req.userKey);
+      if (waitingForCity) {
+        this.pending.remember(req.userKey, waitingForCity);
+        return cards.askPlaceNameOnly(waitingForCity.kind, waitingForCity.country, req.botName);
+      }
+    }
+
+    // 2-a. "다른 도시" — 목록에 없는 도시를 가려는 사람의 출구.
     //    카카오에는 입력창을 미리 채우는 버튼이 없으므로, 한 번 되묻고 다음 발화를 받는다.
     if (isAnotherPlaceRequest(req.utterance)) {
       const kind = intentFromKeywords(req.utterance);

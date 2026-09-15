@@ -286,9 +286,14 @@ describe('POST /api/v1/kakao/router', () => {
     //    보이는데, 이건 선택지가 아니라 다른 길이다.
     const guide = outputs.find((o: any) => o.textCard)?.textCard;
     expect(guide.title).toContain('다른 도시');
-    expect(guide.buttons[0]).toMatchObject({ action: 'message' });
-    // ⚠️ 카카오는 입력창을 미리 채우지 못한다. 멘션을 포함한 예문이 최선이다.
-    expect(guide.description).toContain('@여행메이트');
+    // 멘션 + 공백. 카카오톡이 이걸 전송 대신 입력창에 채워주는지는 팀톡방에서 확인한다.
+    expect(guide.buttons[0]).toMatchObject({
+      action: 'message',
+      messageText: '@여행메이트 TST ', // 멘션 + 공백 — 이어 칠 수 있어야 한다
+    });
+    // ⚠️ 라벨 14자. 잘린 라벨은 무슨 버튼인지 알 수 없다.
+    expect(String(guide.buttons[0].label).length).toBeLessThanOrEqual(14);
+    expect(guide.buttons[0].label).not.toContain('…');
   });
 
   it('"다른 도시" 를 누르면 도시 이름만 받아서 이어 검색한다', async () => {
@@ -301,6 +306,16 @@ describe('POST /api/v1/kakao/router', () => {
     const body = await askUntilCard(ctx.app, '다낭');
 
     expect(listCardOf(body).header.title).toContain('다낭');
+  });
+
+  it('멘션만 온 발화도 되묻기를 이어간다 — 버튼이 전송돼 버려도 대화가 안 끊긴다', async () => {
+    await post(ctx.app, kakaoPayload('베트남 호텔 추천해줘'));
+
+    // "@여행메이트 " 버튼이 프리필 대신 전송된 경우. 멘션을 떼면 빈 발화가 된다.
+    const res = await post(ctx.app, kakaoPayload('@여행메이트'));
+
+    expect(textOf(res.body)).toContain('베트남');
+    expect(textOf(res.body)).toMatch(/도시 이름|어디로/);
   });
 
   it('되묻기는 사람마다 따로다 — 남의 대답을 가로채지 않는다', async () => {
