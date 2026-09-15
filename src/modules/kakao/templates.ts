@@ -83,6 +83,16 @@ export interface ListItemInput {
   description?: string | null;
   imageUrl?: string | null;
   linkUrl?: string | null;
+  /**
+   * 줄을 누르면 이 문장이 사용자 발화로 전송된다 (`action: "message"`).
+   *
+   * 검색 결과 줄은 `linkUrl`(예약 페이지)을 쓰고, **고르라고 내놓는 목록**은 이걸 쓴다.
+   * 단톡방에서는 봇을 멘션한 메시지만 서버로 오기 때문에, 사용자가 직접 타이핑하게
+   * 두면 멘션을 빠뜨려 아무 일도 안 일어난다 — 눌러서 보내는 길이 있어야 한다.
+   *
+   * ⚠️ `linkUrl` 과 같이 주면 안 된다. 카카오는 하나만 처리한다.
+   */
+  messageText?: string | null;
 }
 
 /**
@@ -98,6 +108,10 @@ export function listItem(input: ListItemInput): Json {
   }
   if (input.imageUrl) item.imageUrl = input.imageUrl;
   if (input.linkUrl) item.link = { web: input.linkUrl };
+  else if (input.messageText) {
+    item.action = 'message';
+    item.messageText = input.messageText;
+  }
   return item;
 }
 
