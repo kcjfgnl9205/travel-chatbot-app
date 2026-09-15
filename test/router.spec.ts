@@ -275,17 +275,20 @@ describe('POST /api/v1/kakao/router', () => {
     expect(listCardOf(body).header.title).toContain('오사카');
   });
 
-  it('되묻기에는 도시 5개와 "다른 도시" 가 함께 온다', async () => {
+  it('도시 카드 아래에 "다른 도시" 안내 영역이 따로 선다', async () => {
     const res = await post(ctx.app, kakaoPayload('베트남 여행지 추천해줘'));
-    const card = listCardOf(res.body);
-    const labels = res.body.template.quickReplies.map((q: any) => q.label);
+    const outputs = res.body.template.outputs;
 
     // 고르라고 늘어놓는 선택지가 많으면 고르는 게 아니라 훑는 게 된다.
-    expect(card.items.length).toBeLessThanOrEqual(5);
-    expect(card.buttons[0].label).toBe('다른 도시');
-    // 줄 탭이 그룹챗방에서 되는지 확인되지 않았다. 퀵리플라이가 남는 길이다.
-    expect(labels.filter((l: string) => l !== '다른 도시').length).toBeLessThanOrEqual(5);
-    expect(labels).toContain('다른 도시');
+    expect(listCardOf(res.body).items.length).toBeLessThanOrEqual(5);
+
+    // ⚠️ 카드 안 버튼이 아니라 **따로 세운다.** 5줄과 나란히 두면 여섯 번째 선택지처럼
+    //    보이는데, 이건 선택지가 아니라 다른 길이다.
+    const guide = outputs.find((o: any) => o.textCard)?.textCard;
+    expect(guide.title).toContain('다른 도시');
+    expect(guide.buttons[0]).toMatchObject({ action: 'message' });
+    // ⚠️ 카카오는 입력창을 미리 채우지 못한다. 멘션을 포함한 예문이 최선이다.
+    expect(guide.description).toContain('@여행메이트');
   });
 
   it('"다른 도시" 를 누르면 도시 이름만 받아서 이어 검색한다', async () => {
