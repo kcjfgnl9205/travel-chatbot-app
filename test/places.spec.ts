@@ -101,9 +101,11 @@ describe('나라 되묻기용 도시 이름', () => {
     expect(usableCityNames(['산티아고데콤포스텔라'])).toEqual([]);
   });
 
-  it('중복을 지우고 5곳까지만 남긴다 — 나머지 한 자리는 "다른 도시" 가 쓴다', () => {
-    const names = usableCityNames(['다낭', '다낭', '하노이', '호치민', '나트랑', '하롱', '후에', '사파']);
-    expect(names).toHaveLength(5);
+  it('중복을 지우고 8곳까지만 남긴다 — 퀵리플라이 10칸에서 한 자리는 "다른 도시" 가 쓴다', () => {
+    const names = usableCityNames([
+      '다낭', '다낭', '하노이', '호치민', '나트랑', '하롱', '후에', '사파', '달랏', '푸꾸옥',
+    ]);
+    expect(names).toHaveLength(8);
     expect(names[0]).toBe('다낭');
   });
 });
