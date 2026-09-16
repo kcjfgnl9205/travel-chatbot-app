@@ -70,6 +70,20 @@ export class PlacesRepository extends BaseRepository {
     );
   }
 
+  /**
+   * 이미 매달린 도시의 순서·설명만 고친다.
+   *
+   * attachCity 는 부모가 없는 행만 건드린다(도톤보리를 나라 밑으로 끌어올리지 않으려고).
+   * 그래서 이미 나라에 붙어 있던 도시는 rank·blurb 가 영영 비어 있었고, 카드에 설명
+   * 없는 줄이 나갔다.
+   */
+  async updateCityMeta(placeId: number, rank: number, blurb: string | null): Promise<void> {
+    await this.run(
+      (t) => t.update({ rank, blurb }).eq('id', placeId).select('id'),
+      'update city meta',
+    );
+  }
+
   /** (slug, kind) 가 같으면 같은 지역으로 본다. 있으면 그 행을, 없으면 새 행을 준다. */
   async upsert(draft: PlaceDraft): Promise<Place | null> {
     const row = await this.runOne(

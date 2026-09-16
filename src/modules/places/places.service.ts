@@ -218,12 +218,17 @@ export class PlacesService {
             .sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99))
     ).map((c) => ({ name: c.canonicalName, blurb: c.blurb ?? null }));
 
-    const cities = usableCities(stored.length ? stored : await this.askCities(country.canonicalName));
-    if (!cities.length) return [];
+    // ⚠️ **모자라면 채운다.** 예전에는 저장된 게 하나라도 있으면 그대로 썼는데,
+    //    그 결과 "중국 어느 도시…" 카드에 **도시가 둘**만, 그것도 설명 없이 나갔다.
+    //    사전 경로로 먼저 등록된 도시는 순서(rank)도 설명(blurb)도 없이 들어온다.
+    const enough =
+      stored.length >= CITIES_PER_COUNTRY && stored.every((city) => Boolean(city.blurb));
+    const cities = usableCities(enough ? stored : await this.askCities(country.canonicalName));
+    if (!cities.length) return usableCities(stored);
 
     this.cities.set(country.id, cities);
-    // 등록은 나중에. 이번 응답은 이름만으로 충분하다.
-    if (!stored.length) void this.linkCities(country, cities);
+    // 등록·보정은 나중에. 이번 응답은 이름과 설명만으로 충분하다.
+    if (!enough) void this.linkCities(country, cities);
     return cities;
   }
 
@@ -239,6 +244,13 @@ export class PlacesService {
         const place = await this.resolve(city.name);
         if (place && place.kind === 'city') {
           await this.attachTo(place, country, index + 1, city.blurb);
+          // 이미 매달려 있던 도시는 attachTo 가 건드리지 않는다(부모를 지키려고).
+          // 순서와 설명은 그래도 최신으로 맞춘다 — 카드가 그걸로 그려진다.
+          if (this.places.enabled) {
+            await this.places
+              .updateCityMeta(place.id, index + 1, city.blurb)
+              .catch(() => undefined);
+          }
         }
       } catch (err) {
         this.logger.warn(

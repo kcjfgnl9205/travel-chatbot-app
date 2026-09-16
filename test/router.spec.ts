@@ -238,8 +238,10 @@ describe('POST /api/v1/kakao/router', () => {
     // 나라와 상관없는 도시를 예로 들면 안내가 아니라 딴소리다.
     expect(guide.description).toContain('하롱베이 호텔 추천해줘');
     // 단톡방에서는 멘션 없는 발화가 봇에게 오지 않는다. 멘션을 대신 찍어주는 버튼이다.
+    // ⚠️ action 은 문서에 있는 값이어야 한다. talk_mention 을 썼더니 단톡방에서
+    //    **말풍선이 하나도 안 나왔다** — 카카오는 응답을 통째로 검증하는 것으로 보인다.
     expect(guide.buttons[0]).toMatchObject({
-      action: 'talk_mention',
+      action: 'message',
       messageText: '@여행메이트 TST ',
     });
     expect(String(guide.buttons[0].label).length).toBeLessThanOrEqual(14);
@@ -258,6 +260,16 @@ describe('POST /api/v1/kakao/router', () => {
     const body = await askUntilCard(ctx.app, String(first.messageText));
 
     expect(listCardOf(body).header.title).toContain('다낭');
+  });
+
+  it('저장된 도시가 모자라면 모델로 채운다', async () => {
+    // ⚠️ 운영에서 "중국 어느 도시…" 카드에 **도시가 둘**만, 그것도 설명 없이 나갔다.
+    //    사전 경로로 먼저 등록된 도시는 순서도 설명도 없이 들어오기 때문이다.
+    const res = await post(ctx.app, kakaoPayload('베트남 호텔 추천해줘'));
+    const items = listCardOf(res.body).items;
+
+    expect(items.length).toBeGreaterThanOrEqual(4);
+    expect(items.every((i: any) => i.description)).toBe(true);
   });
 
   it('도시 목록은 나라당 한 번만 묻는다', async () => {

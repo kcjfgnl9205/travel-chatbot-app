@@ -155,9 +155,15 @@ function otherCityCard(
 /**
  * 봇을 멘션한 채로 입력창을 열어주려는 버튼.
  *
- * `talk_mention` 은 공식 문서에 없는 액션이다. 다만 배포해보니 **말풍선은 정상적으로
- * 그려졌다** — 카카오가 모르는 액션이라고 버리지는 않는다. 프리필까지 되는지는 팀톡방
- * 확인이 남았고, 안 되면 `messageText` 대로 전송된다.
+ * ⚠️ **`action` 은 반드시 문서에 있는 값이어야 한다.** `talk_mention` 을 써봤더니
+ *    단톡방에서 **말풍선이 하나도 안 나왔다** — 서버는 2초 만에 정상 카드를 응답했는데
+ *    화면에는 아무것도 없었다. 카카오는 응답을 말풍선 단위가 아니라 **통째로** 검증하는
+ *    것으로 보인다. 모르는 action 하나가 카드까지 같이 죽인다. itemCard 때와 같은
+ *    실패 방식이다(로그는 200, 화면은 빈칸).
+ *
+ *    그래서 `message` 로 돌린다. 이 모양은 실제로 렌더링되는 걸 확인했다.
+ *    프리필이 되는지는 `messageText` 가 멘션 + 공백이라는 점에 걸어둔다 — 안 되면
+ *    그 문장이 전송되고, 라우터가 빈 발화를 되묻기로 받는다.
  *
  * ⚠️ 버튼 라벨은 14자다. "@여행메이트 TST에게 말하기" 는 17자라 잘리고, 잘린 라벨은
  *    무슨 버튼인지 알 수 없다. 들어가는 것 중 가장 긴 걸 고른다.
@@ -168,13 +174,8 @@ export function mentionButton(botName: string): t.Json {
   const label =
     full.length <= t.MAX_BUTTON_LABEL ? full : short.length <= t.MAX_BUTTON_LABEL ? short : '봇에게 말하기';
 
-  return {
-    label: t.cut(label, t.MAX_BUTTON_LABEL),
-    action: 'talk_mention',
-    // 프리필이 안 되면 이 문장이 전송된다. 멘션 뒤 공백이 핵심이다.
-    messageText: `@${botName} `,
-    extra: { bot_name: botName },
-  };
+  // 멘션 뒤 공백이 핵심이다 — 입력창에 채워졌을 때 바로 이어 칠 수 있어야 한다.
+  return t.messageButton(label, `@${botName} `);
 }
 
 /**
