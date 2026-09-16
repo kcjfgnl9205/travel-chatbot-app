@@ -8,7 +8,7 @@ import {
 import { OpenAiService, parseJsonLoose } from '../openai/openai.service';
 import { CityEntry, lookupCity } from './city-table';
 import { CountryEntry, lookupCountry } from './country-table';
-import { Place, PlaceDraft, PlaceKind, aliasKey, slugOf } from './places.types';
+import { CityChoice, Place, PlaceDraft, PlaceKind, aliasKey, slugOf } from './places.types';
 
 /**
  * 지역 정규화.
@@ -39,8 +39,9 @@ const INSTRUCTIONS = [
   'area/landmark 면 그것이 속한 도시를 parent_name 에 한국어로 적는다 (도톤보리 → 오사카).',
   '도시에 대표 공항이 있으면 IATA 3자를 적는다 (오사카 → KIX). 없으면 null.',
   '지명이 아니면 canonical_name 을 null 로 둔다.',
-  'kind=country 면 그 나라에서 한국인 여행자가 많이 가는 도시를 인기순으로 8곳까지 cities 에 담는다.',
-  'cities 는 한국어 표준 표기만 쓴다. 나라가 아니면 빈 배열이다.',
+  'kind=country 면 그 나라에서 한국인 여행자가 많이 가는 도시를 인기순으로 4곳까지 cities 에 담는다.',
+  'cities 의 name 은 한국어 표준 도시명, blurb 는 대표 지역 두 곳(12자 이내)이다.',
+  '나라가 아니면 cities 는 빈 배열이다.',
 ].join(' ');
 
 const SCHEMA = {
@@ -66,8 +67,16 @@ const SCHEMA = {
       },
       cities: {
         type: 'array',
-        items: { type: 'string' },
-        description: 'kind=country 일 때만. 대표 도시 8곳(한국어). 아니면 빈 배열',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['name', 'blurb'],
+          properties: {
+            name: { type: 'string' },
+            blurb: { type: 'string' },
+          },
+        },
+        description: 'kind=country 일 때만. 대표 도시 4곳. 아니면 빈 배열',
       },
     },
   },
@@ -85,8 +94,9 @@ interface RawPlace {
 
 const CITIES_INSTRUCTIONS = [
   '너는 여행 챗봇의 도시 추천기다.',
-  '주어진 나라에서 한국인 여행자가 가장 많이 가는 도시를 인기순으로 8곳 뽑아 JSON 으로만 답한다.',
-  '도시 이름만 한국어 표준 표기로 적는다. 설명·수식어를 붙이지 않는다.',
+  '주어진 나라에서 한국인 여행자가 가장 많이 가는 도시를 인기순으로 4곳 뽑아 JSON 으로만 답한다.',
+  'name 은 한국어 표준 도시명만 적는다. 수식어를 붙이지 않는다.',
+  'blurb 는 그 도시의 대표 지역 두 곳을 " · " 로 이은 12자 이내 문자열이다 (예: "신주쿠 · 시부야").',
   '나라가 아니거나 모르면 빈 배열을 준다.',
 ].join(' ');
 
@@ -101,8 +111,16 @@ const CITIES_SCHEMA = {
     properties: {
       cities: {
         type: 'array',
-        items: { type: 'string' },
-        description: '한국어 도시명 8개. 인기순',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['name', 'blurb'],
+          properties: {
+            name: { type: 'string', description: '한국어 도시명' },
+            blurb: { type: 'string', description: '대표 지역 두 곳. 12자 이내' },
+          },
+        },
+        description: '인기순 4곳',
       },
     },
   },
@@ -111,11 +129,10 @@ const CITIES_SCHEMA = {
 /**
  * 나라 하나당 되묻기에 보여줄 도시 수.
  *
- * 퀵리플라이 한 줄로 내보내므로 카드(5줄)보다 여유가 있다. 카카오 한계가 10개이고
- * 마지막 한 자리는 "다른 도시" 가 쓰므로 9개까지 가능하지만, 8개로 둔다 —
- * 뒤로 갈수록 모델이 주는 도시의 인기도가 떨어져서 채우는 의미가 줄어든다.
+ * 4개다. listCard 는 5줄까지 들어가지만, 고르라고 내놓는 선택지는 적을수록 빨리
+ * 고른다. 목록에 없는 도시는 카드 뒤 안내 말풍선이 받는다.
  */
-const CITIES_PER_COUNTRY = 8;
+const CITIES_PER_COUNTRY = 4;
 
 /**
  * 메모리 별칭 캐시 상한. 지역 수만큼만 쌓이므로 가볍다.
@@ -135,7 +152,7 @@ export class PlacesService {
   private readonly aliases = new Map<string, Place>();
   private readonly byId = new Map<number, Place>();
   /** 나라 id → 되묻기에 쓸 도시들. 나라의 대표 도시는 변하지 않아 TTL 이 없다. */
-  private readonly cities = new Map<number, string[]>();
+  private readonly cities = new Map<number, CityChoice[]>();
   /** DB 가 없을 때 쓰는 번호표. 프로세스 안에서만 유효하다. */
   private nextLocalId = 1;
 
@@ -169,8 +186,8 @@ export class PlacesService {
 
     // 나라를 해석하면서 도시 목록도 같이 받아둔다 — 되묻기에 모델을 한 번 더 부르지 않는다.
     if (place.kind === 'country' && fromModel?.cities?.length) {
-      const names = usableCityNames(fromModel.cities);
-      if (names.length) this.cities.set(place.id, names);
+      const cities = usableCities(fromModel.cities);
+      if (cities.length) this.cities.set(place.id, cities);
     }
     return this.remember(key, place);
   }
@@ -189,23 +206,25 @@ export class PlacesService {
    *   2. places 의 자식 — 전에 누가 물어봐서 이미 매달려 있다
    *   3. 모델 — 그래도 없으면 한 번 더 묻는다 (폴백)
    */
-  async citiesOf(country: Place): Promise<string[]> {
+  async citiesOf(country: Place): Promise<CityChoice[]> {
     const cached = this.cities.get(country.id);
     if (cached?.length) return cached;
 
-    const stored = this.places.enabled
-      ? (await this.places.childrenOf(country.id, 'city')).map((c) => c.canonicalName)
-      : [...this.byId.values()]
-          .filter((p) => p.parentId === country.id && p.kind === 'city')
-          .map((c) => c.canonicalName);
+    const stored = (
+      this.places.enabled
+        ? await this.places.childrenOf(country.id, 'city')
+        : [...this.byId.values()]
+            .filter((p) => p.parentId === country.id && p.kind === 'city')
+            .sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99))
+    ).map((c) => ({ name: c.canonicalName, blurb: c.blurb ?? null }));
 
-    const names = usableCityNames(stored.length ? stored : await this.askCities(country.canonicalName));
-    if (!names.length) return [];
+    const cities = usableCities(stored.length ? stored : await this.askCities(country.canonicalName));
+    if (!cities.length) return [];
 
-    this.cities.set(country.id, names);
+    this.cities.set(country.id, cities);
     // 등록은 나중에. 이번 응답은 이름만으로 충분하다.
-    if (!stored.length) void this.linkCities(country, names);
-    return names;
+    if (!stored.length) void this.linkCities(country, cities);
+    return cities;
   }
 
   /**
@@ -214,13 +233,17 @@ export class PlacesService {
    * 사전에 없는 도시는 여기서 모델을 타지만, 응답은 이미 나갔으므로 5초 예산과
    * 무관하다. 한 번 돌고 나면 그 나라는 DB 조회만으로 끝난다.
    */
-  private async linkCities(country: Place, names: string[]): Promise<void> {
-    for (const name of names) {
+  private async linkCities(country: Place, cities: CityChoice[]): Promise<void> {
+    for (const [index, city] of cities.entries()) {
       try {
-        const city = await this.resolve(name);
-        if (city && city.kind === 'city') await this.attachTo(city, country);
+        const place = await this.resolve(city.name);
+        if (place && place.kind === 'city') {
+          await this.attachTo(place, country, index + 1, city.blurb);
+        }
       } catch (err) {
-        this.logger.warn(`city link failed country=${country.canonicalName} city=${name} err=${err}`);
+        this.logger.warn(
+          `city link failed country=${country.canonicalName} city=${city.name} err=${err}`,
+        );
       }
     }
   }
@@ -244,13 +267,18 @@ export class PlacesService {
   }
 
   /** 도시를 나라 아래에 매단다. 이미 부모가 있으면 건드리지 않는다. */
-  private async attachTo(city: Place, country: Place): Promise<Place> {
+  private async attachTo(
+    city: Place,
+    country: Place,
+    rank: number,
+    blurb: string | null,
+  ): Promise<Place> {
     if (city.parentId != null) return city;
 
     if (this.places.enabled) {
-      await this.places.setParent(city.id, country.id).catch(() => undefined);
+      await this.places.attachCity(city.id, country.id, rank, blurb).catch(() => undefined);
     }
-    const linked: Place = { ...city, parentId: country.id };
+    const linked: Place = { ...city, parentId: country.id, rank, blurb };
     this.byId.set(linked.id, linked);
     for (const [alias, cached] of this.aliases) {
       if (cached.id === linked.id) this.aliases.set(alias, linked);
@@ -259,7 +287,7 @@ export class PlacesService {
   }
 
   /** 나라의 대표 도시 이름들. 실패하면 빈 배열 — 되묻기가 예시 도시로 떨어진다. */
-  private async askCities(country: string): Promise<string[]> {
+  private async askCities(country: string): Promise<CityChoice[]> {
     if (!this.openai.enabled) return [];
 
     try {
@@ -273,9 +301,11 @@ export class PlacesService {
       });
 
       const parsed = parseJsonLoose<{ cities?: unknown }>(result.text);
-      const cities = Array.isArray(parsed?.cities) ? parsed.cities : [];
-      this.logger.log(`cities of ${country} → ${cities.join(', ') || '-'} ms=${result.ms}`);
-      return cities.map((c) => String(c).trim()).filter(Boolean);
+      const cities = toCityChoices(parsed?.cities);
+      this.logger.log(
+        `cities of ${country} → ${cities.map((c) => c.name).join(', ') || '-'} ms=${result.ms}`,
+      );
+      return cities;
     } catch (err) {
       this.logger.warn(`country cities lookup failed country=${country} err=${err}`);
       return [];
@@ -347,7 +377,7 @@ export class PlacesService {
    * ⚠️ 이건 카카오 5초 예산 안에서 돈다. 짧게 끊고(OPENAI_PARSE_TIMEOUT_SECONDS),
    *    실패하면 원문 그대로 등록한다 — 되묻는 것보다 검색해 보는 게 낫다.
    */
-  private async askModel(raw: string): Promise<{ draft: PlaceDraft; cities: string[] } | null> {
+  private async askModel(raw: string): Promise<{ draft: PlaceDraft; cities: CityChoice[] } | null> {
     if (!this.openai.enabled) return null;
 
     try {
@@ -384,7 +414,7 @@ export class PlacesService {
           iata: upper(parsed.iata, 3) ?? null,
           parentId: parent?.id ?? null,
         },
-        cities: Array.isArray(parsed.cities) ? parsed.cities.map((c) => String(c).trim()) : [],
+        cities: toCityChoices(parsed.cities),
       };
     } catch (err) {
       this.logger.warn(`place lookup failed raw=${raw} err=${err}`);
@@ -469,17 +499,29 @@ function fallbackDraft(raw: string): PlaceDraft {
  *    누를 마음이 안 든다. 한글이 아니거나 라벨이 잘릴 이름은 버린다 — 6곳 중 4곳만
  *    보여줘도 되묻기는 제 일을 한다.
  */
-export function usableCityNames(names: string[]): string[] {
+export function usableCities(cities: CityChoice[]): CityChoice[] {
   const seen = new Set<string>();
-  return names
-    .map((name) => name.trim())
-    .filter((name) => {
-      if (!name || !/^[가-힣]/.test(name) || name.length > 8) return false;
-      if (seen.has(name)) return false;
-      seen.add(name);
+  return cities
+    .map((city) => ({ name: city.name.trim(), blurb: city.blurb?.trim() || null }))
+    .filter((city) => {
+      if (!city.name || !/^[가-힣]/.test(city.name) || city.name.length > 8) return false;
+      if (seen.has(city.name)) return false;
+      seen.add(city.name);
       return true;
     })
     .slice(0, CITIES_PER_COUNTRY);
+}
+
+/** 모델이 준 배열을 CityChoice 로 다듬는다. 문자열만 온 경우도 받아준다. */
+function toCityChoices(raw: unknown): CityChoice[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      if (typeof item === 'string') return { name: item.trim(), blurb: null };
+      const city = item as { name?: unknown; blurb?: unknown };
+      return { name: String(city?.name ?? '').trim(), blurb: text(city?.blurb) };
+    })
+    .filter((city) => city.name);
 }
 
 function clip(text: string): string {

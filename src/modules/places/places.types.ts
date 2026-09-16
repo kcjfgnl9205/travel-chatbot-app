@@ -30,6 +30,24 @@ export interface Place {
   iata: string | null;
   /** 도톤보리 → 오사카. 세부 지역만 값이 있다. */
   parentId: number | null;
+  /**
+   * 나라 안에서의 인기 순서(1이 가장 인기). 도시 고르기 카드의 정렬 기준이다.
+   * null 이면 뒤로 간다 — 되묻기 목록에 올라온 적 없는 도시다.
+   */
+  rank?: number | null;
+  /** 카드 줄 설명. 대표 지역 두 곳("신주쿠 · 시부야"). */
+  blurb?: string | null;
+}
+
+/**
+ * 되묻기 카드에 내놓을 도시 하나.
+ *
+ * `blurb` 는 "그게 어디냐" 에 답한다 — 처음 가는 사람은 도시 이름만 보고 못 고른다.
+ * "신주쿠 · 시부야" 한 줄이면 고른다.
+ */
+export interface CityChoice {
+  name: string;
+  blurb: string | null;
 }
 
 /** 새로 등록할 지역. id 는 저장소가 붙인다. */

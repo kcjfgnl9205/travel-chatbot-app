@@ -7,6 +7,7 @@
  */
 
 import * as t from './templates';
+import { CityChoice } from '../places/places.types';
 import { SearchKind, SearchMeta } from '../search/search.types';
 
 /**
@@ -86,7 +87,8 @@ export function helpCard(): t.Json {
 export function askCityInCountry(
   kind: SearchKind,
   country: string,
-  cities: string[],
+  cities: CityChoice[],
+  origin: string,
   botName: string | null,
 ): t.Json {
   // 도시를 못 구했으면(모델 실패) 일반 되묻기로 떨어진다 — 예시라도 주는 게 낫다.
@@ -94,70 +96,122 @@ export function askCityInCountry(
 
   const label = KIND_LABEL[kind];
 
-  // ⚠️ **퀵리플라이로 낸다. 카드가 아니다.**
-  //    고르는 화면이지 읽는 화면이 아니다 — 도시 이름 하나면 고를 수 있고, 카드로
-  //    만들면 줄 설명("관광지 보기")이 다섯 번 반복되며 자리만 차지한다.
-  //    무엇보다 단톡방에서는 **눌러서 보내는 길**이 확실해야 한다. 사용자가 직접 치면
-  //    멘션을 빼먹고, 멘션 없는 발화는 봇에게 아예 오지 않는다.
+  // ⚠️ **줄을 누르면 완성된 문장이 그대로 전송된다.** message 버튼은 누르는 즉시
+  //    전송되는데, 이 자리에서는 그게 정확히 원하는 동작이다 — 도시와 의도를 모두
+  //    박아두면 그 발화가 라우터로 돌아와 평소 경로를 탄다.
   //
-  // 카카오 한계는 10개다. 마지막 한 자리는 "다른 도시" 가 쓴다.
-  const ask: t.Json = {
-    simpleText: {
-      text: `${country} 어디로 가세요?\n도시를 고르면 ${withObjectParticle(label)} 찾아드릴게요.`,
+  //    단톡방에서는 봇을 멘션한 메시지만 서버로 온다. 사용자가 도시 이름을 직접 치면
+  //    멘션이 빠져 **봇이 아예 듣지 못한다** — 눌러서 보내는 길이 있어야 하는 이유다.
+  const card: t.Json = {
+    listCard: {
+      header: { title: t.cut(`${country} 어느 도시의 ${withObjectParticle(label)} 찾을까요?`, t.MAX_LIST_HEADER_TITLE) },
+      items: cities.slice(0, t.MAX_LIST_ITEMS).map((city) => ({
+        title: t.cut(city.name, t.MAX_LIST_ITEM_TITLE),
+        // 처음 가는 사람은 도시 이름만 보고 못 고른다. "신주쿠 · 시부야" 한 줄이면 고른다.
+        ...(city.blurb ? { description: t.cut(city.blurb, t.MAX_LIST_ITEM_DESC) } : {}),
+        action: 'message',
+        messageText: pickUtterance(city.name, kind, origin),
+      })),
     },
   };
 
-  const outputs = [ask];
-  const mention = mentionCard(botName);
-  // ⚠️ **검증되지 않은 실험이다.** 별도 말풍선으로 내보내는 이유가 그것이다 —
-  //    카카오가 모르는 action 을 거부해 이 말풍선이 통째로 안 보여도(itemCard 전례)
-  //    위의 도시 목록은 그대로 나간다. 사용자는 아무것도 잃지 않는다.
-  if (mention) outputs.push(mention);
-
-  return t.skillResponse(outputs, [
-    ...cities.map((city) => t.quickReply(`${city} ${label}`, exampleUtterance(city, kind))),
-    // 목록에 없는 도시를 가려는 사람의 출구. 이게 없으면 고르거나 포기다.
-    t.quickReply('다른 도시', `${label} 다른 도시`),
-  ]);
+  // 목록에 없는 도시를 가려는 사람의 몫. 카드 안 버튼으로 두면 다섯 번째 선택지처럼
+  // 보이는데, 이건 선택지가 아니라 다른 길이다.
+  return t.skillResponse([card, otherCityCard(kind, country, origin, botName)]);
 }
 
 /**
- * 입력창에 봇 멘션을 채워주는 카드. **문서에 없는 동작이라 실험 중이다.**
+ * "다른 도시" 영역.
  *
- * 다른 봇(다비니)에서 "@OO에게 말하기" 를 누르면 전송 대신 입력창에 `@OO ` 이 채워지는
- * 것이 목격됐다. 그 동작을 내는 `talk_mention` 액션이 있다는 이야기가 있으나 **카카오
- * 공식 문서에는 없다** — 검색해도 우리 저장소 PR 말고는 나오지 않는다. 그래서
- * 문서화된 message 액션을 같이 실어 둘 중 하나는 걸리게 한다.
+ * **봇을 멘션한 채로 입력창을 열어주는 버튼**을 단다. `messageText` 가 멘션 + 공백이라,
+ * 카카오톡이 이걸 전송 대신 입력창에 채워주면 사용자는 도시 이름만 이어 치면 된다.
  *
- * 결과를 읽는 법 (팀톡방에서):
- *   · 버튼이 보이고 누르니 입력창에 `@봇이름 ` 이 채워진다 → 성공. 이 카드를 남긴다
- *   · 버튼이 보이는데 눌러도 그냥 전송된다 → message 로 동작한 것. 라벨만 바꾸면 된다
- *   · **이 말풍선만 통째로 안 보인다** → 카카오가 모르는 action 을 거부한 것. 지우면 된다
+ * ⚠️ 단톡방에서는 봇을 멘션한 메시지만 서버로 온다. 사용자가 맨손으로 "삿포로" 를 치면
+ *    멘션이 빠져 **봇이 아예 듣지 못한다** — 그래서 멘션을 대신 찍어주는 이 버튼이
+ *    안내 문구보다 실질적이다.
+ *
+ * ⚠️ 프리필이 안 되고 그냥 전송되더라도 대화는 안 끊긴다. 멘션만 남은 빈 발화는
+ *    라우터가 되묻기로 받는다(router.controller.ts). 예문도 같이 적어 어느 쪽이든
+ *    다음에 뭘 할지 알 수 있게 한다.
  */
-export function mentionCard(botName: string | null): t.Json | null {
-  if (!botName) return null;
+function otherCityCard(
+  kind: SearchKind,
+  country: string,
+  origin: string,
+  botName: string | null,
+): t.Json {
+  const example = pickUtterance(otherCityExample(country), kind, origin);
+  const description = botName
+    ? `아래 버튼을 누른 뒤 도시 이름을 이어서 입력해 주세요.\n예) ${example}`
+    : `「${example}」처럼 도시 이름을 말해주세요.`;
 
+  return t.textCard({
+    title: '다른 도시를 찾고 있나요?',
+    description,
+    buttons: botName ? [mentionButton(botName)] : [],
+  });
+}
+
+/**
+ * 봇을 멘션한 채로 입력창을 열어주려는 버튼.
+ *
+ * `talk_mention` 은 공식 문서에 없는 액션이다. 다만 배포해보니 **말풍선은 정상적으로
+ * 그려졌다** — 카카오가 모르는 액션이라고 버리지는 않는다. 프리필까지 되는지는 팀톡방
+ * 확인이 남았고, 안 되면 `messageText` 대로 전송된다.
+ *
+ * ⚠️ 버튼 라벨은 14자다. "@여행메이트 TST에게 말하기" 는 17자라 잘리고, 잘린 라벨은
+ *    무슨 버튼인지 알 수 없다. 들어가는 것 중 가장 긴 걸 고른다.
+ */
+export function mentionButton(botName: string): t.Json {
   const full = `@${botName}에게 말하기`;
   const short = `@${botName}`;
-  // 버튼 라벨은 14자다. 잘린 라벨은 무슨 버튼인지 알 수 없다.
   const label =
     full.length <= t.MAX_BUTTON_LABEL ? full : short.length <= t.MAX_BUTTON_LABEL ? short : '봇에게 말하기';
 
-  return t.textCard({
-    title: '목록에 없는 도시인가요?',
-    description: '아래 버튼을 누른 뒤 도시 이름을 이어서 입력해 주세요.',
-    buttons: [
-      {
-        label: t.cut(label, t.MAX_BUTTON_LABEL),
-        action: 'talk_mention',
-        // message 로도 동작하도록 같이 싣는다. 멘션 뒤 공백이 핵심이다 —
-        // 입력창에 채워졌을 때 바로 이어 칠 수 있어야 한다.
-        messageText: `@${botName} `,
-        extra: { bot_name: botName },
-      },
-    ],
-  });
+  return {
+    label: t.cut(label, t.MAX_BUTTON_LABEL),
+    action: 'talk_mention',
+    // 프리필이 안 되면 이 문장이 전송된다. 멘션 뒤 공백이 핵심이다.
+    messageText: `@${botName} `,
+    extra: { bot_name: botName },
+  };
 }
+
+/**
+ * 줄을 눌렀을 때 전송될 문장.
+ *
+ * 항공권은 **출발지까지 박는다.** 그러면 카드 아래 "서울 출발 기준이에요" 안내가
+ * 필요 없어지고, 부산에서 가려는 사람은 그 문장을 고쳐 보내면 된다.
+ */
+function pickUtterance(city: string, kind: SearchKind, origin: string): string {
+  if (kind === 'flight') return `${origin}에서 ${city} 항공권 찾아줘`;
+  return exampleUtterance(city, kind);
+}
+
+/**
+ * 안내 문구에 쓸 "목록에 없는 도시" 예시.
+ *
+ * 나라와 상관없는 도시를 예로 들면(베트남을 묻는 사람에게 "삿포로") 안내가 아니라
+ * 딴소리가 된다. 사전에 있는 그 나라 도시 하나를 고르고, 없으면 도시를 빼고 말한다.
+ */
+function otherCityExample(country: string): string {
+  return OTHER_CITY_EXAMPLE[country] ?? '그 도시';
+}
+
+/** 나라별 "목록에 없는" 예시 도시. 대표 4곳에 안 들어가는 곳으로 고른다. */
+const OTHER_CITY_EXAMPLE: Record<string, string> = {
+  일본: '삿포로',
+  베트남: '하롱베이',
+  태국: '치앙마이',
+  중국: '시안',
+  대만: '가오슝',
+  필리핀: '보홀',
+  미국: '시애틀',
+  프랑스: '니스',
+  이탈리아: '피렌체',
+  스페인: '세비야',
+  독일: '함부르크',
+};
 
 /**
  * "다른 도시" 를 누른 사람에게. **다음 발화를 지명으로 받겠다는 약속이다.**

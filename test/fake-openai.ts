@@ -140,9 +140,18 @@ export function parseIntent(utterance: string): Record<string, unknown> {
 }
 
 /** 나라 → 대표 도시. 진짜 모델은 더 많이 알지만 테스트에는 이걸로 충분하다. */
-const COUNTRY_CITIES: Record<string, string[]> = {
-  베트남: ['다낭', '하노이', '호치민', '나트랑'],
-  일본: ['도쿄', '오사카', '후쿠오카'],
+const COUNTRY_CITIES: Record<string, { name: string; blurb: string }[]> = {
+  베트남: [
+    { name: '다낭', blurb: '미케 · 한강' },
+    { name: '하노이', blurb: '호안끼엠 · 구시가' },
+    { name: '호치민', blurb: '1군 · 벤탄' },
+    { name: '나트랑', blurb: '해변 · 빈펄' },
+  ],
+  일본: [
+    { name: '도쿄', blurb: '신주쿠 · 시부야' },
+    { name: '오사카', blurb: '도톤보리 · 난바' },
+    { name: '후쿠오카', blurb: '하카타 · 텐진' },
+  ],
 };
 
 /** 사전에 없는 지명을 모델이 정리해주는 상황. */

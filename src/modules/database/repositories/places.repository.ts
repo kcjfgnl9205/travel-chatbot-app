@@ -27,20 +27,46 @@ export class PlacesRepository extends BaseRepository {
     return row ? toPlace(row) : null;
   }
 
-  /** 이 지역에 매달린 하위 지역. 나라의 도시 목록이 여기서 나온다. */
+  /**
+   * 이 지역에 매달린 하위 지역. 나라의 도시 목록이 여기서 나온다.
+   *
+   * **인기 순서(rank)로 정렬한다.** 등록 순으로 주면 나중에 목록을 고쳤을 때 순서가
+   * 뒤섞이고, 카드 맨 위에 엉뚱한 도시가 온다.
+   */
   async childrenOf(parentId: number, kind: PlaceKind): Promise<Place[]> {
     const rows = await this.run(
-      (t) => t.select(COLUMNS).eq('parent_id', parentId).eq('kind', kind).order('id'),
+      (t) =>
+        t
+          .select(COLUMNS)
+          .eq('parent_id', parentId)
+          .eq('kind', kind)
+          .order('rank', { ascending: true, nullsFirst: false })
+          .order('id'),
       'select child places',
     );
     return (rows ?? []).map(toPlace);
   }
 
-  /** 부모를 나중에 붙인다. 사전에서 온 도시는 나라를 모르는 채로 먼저 등록된다. */
-  async setParent(placeId: number, parentId: number): Promise<void> {
+  /**
+   * 도시를 나라에 매단다. 순서와 한 줄 설명도 같이 채운다.
+   *
+   * 부모가 이미 있으면 건드리지 않는다 — 도톤보리(오사카 소속)를 나라 밑으로 끌어올리면
+   * "도톤보리 주변" 이라는 정보가 사라진다.
+   */
+  async attachCity(
+    placeId: number,
+    parentId: number,
+    rank: number,
+    blurb: string | null,
+  ): Promise<void> {
     await this.run(
-      (t) => t.update({ parent_id: parentId }).eq('id', placeId).is('parent_id', null).select('id'),
-      'set place parent',
+      (t) =>
+        t
+          .update({ parent_id: parentId, rank, blurb })
+          .eq('id', placeId)
+          .is('parent_id', null)
+          .select('id'),
+      'attach city to country',
     );
   }
 
@@ -97,7 +123,7 @@ export class PlaceAliasesRepository extends BaseRepository {
   }
 }
 
-const COLUMNS = 'id, canonical_name, slug, country_code, kind, iata, parent_id';
+const COLUMNS = 'id, canonical_name, slug, country_code, kind, iata, parent_id, rank, blurb';
 
 function toPlace(row: Record<string, any>): Place {
   return {
@@ -108,5 +134,7 @@ function toPlace(row: Record<string, any>): Place {
     kind: (row.kind ?? 'city') as PlaceKind,
     iata: row.iata ?? null,
     parentId: row.parent_id == null ? null : Number(row.parent_id),
+    rank: row.rank == null ? null : Number(row.rank),
+    blurb: row.blurb ?? null,
   };
 }

@@ -5,7 +5,7 @@ import { DatabaseModule } from '../src/modules/database/database.module';
 import { OpenAiService } from '../src/modules/openai/openai.service';
 import { PlacesModule } from '../src/modules/places/places.module';
 import { PlacesService } from '../src/modules/places/places.service';
-import { usableCityNames } from '../src/modules/places/places.service';
+import { usableCities } from '../src/modules/places/places.service';
 import { aliasKey, slugOf } from '../src/modules/places/places.types';
 import { FakeOpenAiService } from './fake-openai';
 
@@ -92,20 +92,31 @@ describe('PlacesService', () => {
 });
 
 describe('나라 되묻기용 도시 이름', () => {
-  it('한글이 아니거나 라벨이 잘릴 이름은 버린다', () => {
-    // ⚠️ 실제로 "Santiago de C…" 로 잘린 퀵리플라이가 나갔다. 누를 마음이 안 든다.
-    expect(usableCityNames(['바르셀로나', 'Santiago de Compostela', '마드리드'])).toEqual([
-      '바르셀로나',
-      '마드리드',
-    ]);
-    expect(usableCityNames(['산티아고데콤포스텔라'])).toEqual([]);
+  const choice = (name: string, blurb: string | null = null) => ({ name, blurb });
+
+  it('한글이 아니거나 너무 긴 이름은 버린다', () => {
+    // ⚠️ 실제로 "Santiago de C…" 로 잘린 버튼이 나갔다. 누를 마음이 안 든다.
+    const names = usableCities([
+      choice('바르셀로나'),
+      choice('Santiago de Compostela'),
+      choice('마드리드'),
+    ]).map((c) => c.name);
+
+    expect(names).toEqual(['바르셀로나', '마드리드']);
+    expect(usableCities([choice('산티아고데콤포스텔라')])).toEqual([]);
   });
 
-  it('중복을 지우고 8곳까지만 남긴다 — 퀵리플라이 10칸에서 한 자리는 "다른 도시" 가 쓴다', () => {
-    const names = usableCityNames([
-      '다낭', '다낭', '하노이', '호치민', '나트랑', '하롱', '후에', '사파', '달랏', '푸꾸옥',
+  it('중복을 지우고 4곳까지만 남긴다 — 고르라고 내놓는 선택지는 적을수록 빨리 고른다', () => {
+    const cities = usableCities([
+      choice('다낭', '미케 · 한강'),
+      choice('다낭'),
+      choice('하노이'),
+      choice('호치민'),
+      choice('나트랑'),
+      choice('하롱'),
     ]);
-    expect(names).toHaveLength(8);
-    expect(names[0]).toBe('다낭');
+
+    expect(cities).toHaveLength(4);
+    expect(cities[0]).toEqual({ name: '다낭', blurb: '미케 · 한강' });
   });
 });

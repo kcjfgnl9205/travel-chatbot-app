@@ -212,24 +212,48 @@ describe('POST /api/v1/kakao/router', () => {
   // ---------------------------------------------------------- 나라
   it('나라를 말하면 그 나라의 도시로 되묻는다', async () => {
     const res = await post(ctx.app, kakaoPayload('베트남 여행지 추천해줘'));
+    const card = listCardOf(res.body);
 
-    // ⚠️ 퀵리플라이로 낸다. 단톡방에서는 봇을 멘션한 메시지만 서버로 오므로,
-    //    사용자가 도시 이름을 직접 치면 멘션이 빠져 봇이 아예 못 듣는다 — 눌러야 한다.
-    expect(textOf(res.body)).toContain('베트남 어디로 가세요?');
-    const labels = res.body.template.quickReplies.map((q: any) => q.label);
+    expect(card.header.title).toBe('베트남 어느 도시의 관광지를 찾을까요?');
     // ⚠️ 예전에는 베트남을 물어도 오사카·도쿄·후쿠오카를 권했다. 딴소리였다.
-    expect(labels).toEqual(
-      expect.arrayContaining(['다낭 관광지', '하노이 관광지', '호치민 관광지']),
-    );
-    expect(labels.join()).not.toContain('오사카');
+    expect(card.items.map((i: any) => i.title)).toEqual(['다낭', '하노이', '호치민', '나트랑']);
+    // 처음 가는 사람은 도시 이름만 보고 못 고른다.
+    expect(card.items[0].description).toBe('미케 · 한강');
+    // ⚠️ 줄을 누르면 **완성된 문장**이 전송된다 — 단톡방에서 멘션을 빼먹을 일이 없다.
+    expect(card.items[0]).toMatchObject({
+      action: 'message',
+      messageText: '다낭 관광지 추천해줘',
+    });
     // 검색은 돌지 않는다 — 나라 단위 결과는 도시가 섞여 쓸모가 없다.
     expect(ctx.attractionProvider.calls).toHaveLength(0);
   });
 
-  it('되묻기 버튼을 누르면 그대로 그 도시 검색이 된다', async () => {
-    await post(ctx.app, kakaoPayload('베트남 호텔 추천해줘'));
+  it('카드 뒤에 "다른 도시" 영역이 멘션 버튼과 함께 따라온다', async () => {
     const res = await post(ctx.app, kakaoPayload('베트남 호텔 추천해줘'));
-    const first = res.body.template.quickReplies[0];
+    const outputs = res.body.template.outputs;
+
+    expect(outputs).toHaveLength(2);
+    const guide = outputs[1].textCard;
+    expect(guide.title).toContain('다른 도시');
+    // 나라와 상관없는 도시를 예로 들면 안내가 아니라 딴소리다.
+    expect(guide.description).toContain('하롱베이 호텔 추천해줘');
+    // 단톡방에서는 멘션 없는 발화가 봇에게 오지 않는다. 멘션을 대신 찍어주는 버튼이다.
+    expect(guide.buttons[0]).toMatchObject({
+      action: 'talk_mention',
+      messageText: '@여행메이트 TST ',
+    });
+    expect(String(guide.buttons[0].label).length).toBeLessThanOrEqual(14);
+  });
+
+  it('항공권은 줄에 출발지까지 박는다 — 누르면 되묻기가 또 생기지 않는다', async () => {
+    const res = await post(ctx.app, kakaoPayload('베트남 항공권 찾아줘'));
+
+    expect(listCardOf(res.body).items[0].messageText).toBe('서울에서 다낭 항공권 찾아줘');
+  });
+
+  it('줄을 누르면 그대로 그 도시 검색이 된다', async () => {
+    const res = await post(ctx.app, kakaoPayload('베트남 호텔 추천해줘'));
+    const first = listCardOf(res.body).items[0];
 
     const body = await askUntilCard(ctx.app, String(first.messageText));
 
@@ -255,7 +279,7 @@ describe('POST /api/v1/kakao/router', () => {
   it('사전에 있는 나라는 의도도 지역도 모델 없이 판정한다', async () => {
     const res = await post(ctx.app, kakaoPayload('일본 호텔 추천해줘'));
 
-    expect(textOf(res.body)).toContain('일본 어디로 가세요?');
+    expect(listCardOf(res.body).header.title).toContain('일본 어느 도시');
     // ⚠️ 모델에 맡겼더니 같은 "독일" 을 어떤 때는 나라로, 어떤 때는 도시로 봤다.
     //    그때마다 나라가 지역 하나로 검색돼 뭉개진 결과가 나갔다. 사전이 그 흔들림을 없앤다.
     const parsing = ctx.openai.calls.filter((c) =>
@@ -270,24 +294,6 @@ describe('POST /api/v1/kakao/router', () => {
     const body = await askUntilCard(ctx.app, '일본 오사카 호텔 추천해줘');
 
     expect(listCardOf(body).header.title).toContain('오사카');
-  });
-
-  it('도시는 퀵리플라이로, 멘션 버튼은 별도 말풍선으로 나간다', async () => {
-    const res = await post(ctx.app, kakaoPayload('베트남 여행지 추천해줘'));
-
-    // ⚠️ 카카오 퀵리플라이는 10개가 한계다. 넘기면 뒤가 잘려 나간다.
-    const quick = res.body.template.quickReplies;
-    expect(quick.length).toBeLessThanOrEqual(10);
-    expect(quick[quick.length - 1].label).toBe('다른 도시');
-
-    // ⚠️ **검증되지 않은 실험이다.** 말풍선을 나눠두는 이유가 그것이다 — 카카오가
-    //    모르는 action 을 거부해 이 말풍선이 통째로 안 보여도 도시 목록은 살아남는다.
-    const mention = res.body.template.outputs.find((o: any) => o.textCard)?.textCard;
-    expect(mention.buttons[0]).toMatchObject({
-      action: 'talk_mention',
-      messageText: '@여행메이트 TST ', // 거부되면 message 로 동작하도록 같이 싣는다
-    });
-    expect(String(mention.buttons[0].label).length).toBeLessThanOrEqual(14);
   });
 
   it('"다른 도시" 를 누르면 도시 이름만 받아서 이어 검색한다', async () => {
@@ -328,8 +334,7 @@ describe('POST /api/v1/kakao/router', () => {
 
     const res = await post(ctx.app, kakaoPayload('일본여행지'));
 
-    expect(textOf(res.body)).toContain('일본 어디로 가세요?');
-    expect(textOf(res.body)).toContain('관광지'); // 호텔이 아니라
+    expect(listCardOf(res.body).header.title).toBe('일본 어느 도시의 관광지를 찾을까요?');
   });
 
   it('되묻기 상태여도 지명 같지 않은 말은 받지 않는다', async () => {

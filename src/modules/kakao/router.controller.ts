@@ -1,6 +1,7 @@
-import { Body, Controller, Logger, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Inject, Logger, Post, UseGuards } from '@nestjs/common';
 import { ApiBody, ApiHeader, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
+import { AppConfig, CONFIG } from '../../config/app.config';
 import { SkillTokenGuard } from '../../common/guards/skill-token.guard';
 import { UsersRepository } from '../database/repositories/users.repository';
 import { IntentService } from '../intent/intent.service';
@@ -62,6 +63,7 @@ export class RouterController {
   private readonly pending = new PendingAskMemory();
 
   constructor(
+    @Inject(CONFIG) private readonly config: AppConfig,
     private readonly intent: IntentService,
     private readonly places: PlacesService,
     private readonly search: SearchService,
@@ -213,6 +215,7 @@ export class RouterController {
         parsed.intent as SearchKind,
         place.canonicalName,
         cities,
+        parsed.from ?? this.config.flightDefaultOriginName,
         req.botName,
       );
     }
