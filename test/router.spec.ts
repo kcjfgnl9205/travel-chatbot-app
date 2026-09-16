@@ -321,6 +321,17 @@ describe('POST /api/v1/kakao/router', () => {
     expect(listCardOf(stranger.body)?.header?.title).toContain('여행메이트');
   });
 
+  it('되묻기 상태여도 새 질문은 새 질문으로 받는다', async () => {
+    // ⚠️ 중국 되묻기 뒤에 "일본여행지" 를 쳤더니 그걸 중국의 도시 이름으로 받아
+    //    "일본여행지 호텔을 찾고 있어요" 가 나갔다. 도메인 말이 붙어 있으면 새 질문이다.
+    await post(ctx.app, kakaoPayload('중국 호텔 추천해줘'));
+
+    const res = await post(ctx.app, kakaoPayload('일본여행지'));
+
+    expect(textOf(res.body)).toContain('일본 어디로 가세요?');
+    expect(textOf(res.body)).toContain('관광지'); // 호텔이 아니라
+  });
+
   it('되묻기 상태여도 지명 같지 않은 말은 받지 않는다', async () => {
     await post(ctx.app, kakaoPayload('관광지 다른 도시'));
 

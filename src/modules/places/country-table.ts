@@ -104,6 +104,18 @@ export function lookupCountry(text: string | null | undefined): CountryEntry | n
 const PARTICLES = /(은|는|이|가|의|에|에서|으로|로|도|만|랑|와|과)$/;
 
 /**
+ * 나라 이름에 **붙여 쓴** 도메인 말. "중국호텔" · "일본여행지" 를 나라로 읽는다.
+ *
+ * ⚠️ 붙여 쓰는 사람이 많다. 실제로 "중국호텔" 이 들어왔고, 나라를 못 찾아 모델로
+ *    넘어갔더니 모델이 **"중국호텔" 을 통째로 지명**으로 줘서 그 이름으로 검색했다
+ *    ("중국호텔 호텔 정보를 지금은 정리하지 못했어요").
+ *
+ * ⚠️ 아무 말이나 떼면 안 된다. "미국식" 에서 '식' 을 떼거나 "한국인" 에서 '인' 을 떼면
+ *    브런치 이야기가 미국 여행이 된다. **우리가 처리하는 도메인 말**만 뗀다.
+ */
+const DOMAIN_SUFFIX = /(호텔|숙소|항공권|비행기|여행지|관광지|맛집|여행)$/;
+
+/**
  * 문장에서 나라를 찾는다. **토큰 단위로만 본다.**
  *
  * ⚠️ 부분 일치로 훑으면 안 된다 — "**한국**인이 좋아하는 오사카" 가 한국이 되고,
@@ -114,8 +126,29 @@ export function findCountryInText(utterance: string): CountryEntry | null {
   for (const raw of utterance.split(/[\s,./]+/)) {
     const token = raw.replace(/\s+/g, '').toLowerCase();
     if (!token) continue;
-    const hit = COUNTRY_ALIASES.get(token) ?? COUNTRY_ALIASES.get(token.replace(PARTICLES, ''));
-    if (hit) return hit;
+
+    // 토큰 그대로 → 조사 뗀 것 → 붙여 쓴 도메인 말 뗀 것 → 둘 다 뗀 것.
+    for (const candidate of [
+      token,
+      token.replace(PARTICLES, ''),
+      token.replace(DOMAIN_SUFFIX, ''),
+      token.replace(DOMAIN_SUFFIX, '').replace(PARTICLES, ''),
+    ]) {
+      const hit = candidate && COUNTRY_ALIASES.get(candidate);
+      if (hit) return hit;
+    }
   }
   return null;
+}
+
+/**
+ * 지명 뒤에 붙은 도메인 말을 뗀다. "중국호텔" → "중국", "후쿠오카 호텔" → "후쿠오카".
+ *
+ * 모델이 발화를 덜 쪼개서 줄 때가 있어 한 번 더 다듬는다. 뗐더니 아무것도 안 남으면
+ * (발화가 "호텔" 뿐이었다면) 원문을 그대로 둔다 — 지명이 아니라는 건 다음 단계가 판단한다.
+ */
+export function stripDomainWord(place: string): string {
+  const trimmed = place.trim();
+  const stripped = trimmed.replace(/\s+/g, '').replace(DOMAIN_SUFFIX, '');
+  return stripped ? (trimmed.replace(DOMAIN_SUFFIX, '').trim() || stripped) : trimmed;
 }

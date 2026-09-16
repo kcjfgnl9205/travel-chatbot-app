@@ -5,7 +5,7 @@ import { AppConfig, CONFIG } from '../../config/app.config';
 import { IntentCacheRepository } from '../database/repositories/intent-cache.repository';
 import { OpenAiService, parseJsonLoose } from '../openai/openai.service';
 import { findCityInText } from '../places/city-table';
-import { findCountryInText } from '../places/country-table';
+import { findCountryInText, stripDomainWord } from '../places/country-table';
 import { SearchKind, TripType } from '../search/search.types';
 import {
   ParsedIntent,
@@ -269,7 +269,10 @@ export function fromKeywords(utterance: string): ParsedIntent | null {
 /** 모델(또는 캐시)이 준 값을 ParsedIntent 로 다듬는다. */
 function normalize(raw: RawIntent, utterance: string): ParsedIntent {
   const intent = KINDS.has(String(raw.intent)) ? (raw.intent as SearchKind) : 'unknown';
-  const place = text(raw.place);
+  // 모델이 발화를 덜 쪼개 "중국호텔" 을 통째로 줄 때가 있다. 그대로 두면 그 이름으로
+  // 검색하고 "중국호텔 호텔 정보를 …" 같은 말이 나간다.
+  const rawPlace = text(raw.place);
+  const place = rawPlace ? stripDomainWord(rawPlace) || rawPlace : null;
   const modelIgnored = Array.isArray(raw.ignored) ? raw.ignored.map((v) => String(v)) : [];
 
   return {

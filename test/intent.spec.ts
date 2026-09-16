@@ -64,6 +64,20 @@ describe('키워드 해석', () => {
     expect(fromKeywords('도톤보리 호텔')).toBeNull();
   });
 
+  it('붙여 쓴 나라도 알아본다 — "중국호텔"', () => {
+    // ⚠️ 실제로 이게 들어왔다. 나라를 못 찾아 모델로 넘어갔고, 모델이 "중국호텔" 을
+    //    통째로 지명으로 줘서 "중국호텔 호텔 정보를 …" 이 나갔다.
+    expect(fromKeywords('중국호텔')).toMatchObject({ intent: 'hotel', place: '중국' });
+    expect(fromKeywords('일본여행지 추천')).toMatchObject({ intent: 'attraction', place: '일본' });
+    expect(fromKeywords('태국항공권')).toMatchObject({ intent: 'flight', place: '태국' });
+  });
+
+  it('⚠️ 나라 이름이 들어간 흔한 말은 나라로 보지 않는다', () => {
+    // "미국식" 에서 '식' 을 떼면 브런치 이야기가 미국 여행이 된다. 도메인 말만 뗀다.
+    expect(fromKeywords('미국식 브런치 맛집')).toBeNull();
+    expect(fromKeywords('한국인이 좋아하는 호텔')?.place).not.toBe('한국');
+  });
+
   it('리조트도 숙소로 본다', () => {
     expect(intentFromKeywords('오사카 리조트')).toBe('hotel');
     expect(TRAVEL_HINT.test('오사카 리조트 추천')).toBe(true);

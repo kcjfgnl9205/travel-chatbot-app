@@ -1,3 +1,4 @@
+import { TRAVEL_HINT } from '../intent/intent.types';
 import { SearchKind } from '../search/search.types';
 
 /**
@@ -64,11 +65,17 @@ export function isAnotherPlaceRequest(utterance: string): boolean {
  * 되묻기 직후에만 쓰는 판정이다. 그래도 느슨하면 "ㅋㅋㅋ" 이나 "몰라" 가 지명이 되어
  * places 테이블에 쌓이고 엉뚱한 검색이 돈다. 짧고, 한 덩어리이고, 문장부호·숫자가
  * 없을 때만 인정한다.
+ *
+ * ⚠️ **여행 신호가 있으면 지명이 아니다.** 되묻기를 받아둔 사람이 다음 순간 새 질문을
+ *    할 수 있다. 실제로 중국 되묻기 뒤에 "일본여행지" 를 쳤더니, 그걸 "중국의 도시
+ *    이름" 으로 받아 **"일본여행지 호텔을 찾고 있어요"** 가 나갔다. 도메인 말이 붙어
+ *    있으면 그건 대답이 아니라 새 질문이다.
  */
 export function looksLikePlaceName(utterance: string): boolean {
   const text = utterance.trim();
   if (!text || text.length > 12) return false;
   if (/[?？!！0-9]/.test(text)) return false;
+  if (TRAVEL_HINT.test(text)) return false;
   // "다낭", "나트랑", "뉴욕" 처럼 한 덩어리. "거기 어디였지" 같은 문장은 거른다.
   if (text.split(/\s+/).length > 2) return false;
   if (NOT_A_PLACE.has(text.replace(/\s+/g, ''))) return false;
