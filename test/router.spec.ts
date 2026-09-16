@@ -228,23 +228,18 @@ describe('POST /api/v1/kakao/router', () => {
     expect(ctx.attractionProvider.calls).toHaveLength(0);
   });
 
-  it('카드 뒤에 "다른 도시" 영역이 멘션 버튼과 함께 따라온다', async () => {
+  it('카드 뒤에 "다른 도시" 안내가 글로만 따라온다', async () => {
     const res = await post(ctx.app, kakaoPayload('베트남 호텔 추천해줘'));
     const outputs = res.body.template.outputs;
 
     expect(outputs).toHaveLength(2);
-    const guide = outputs[1].textCard;
-    expect(guide.title).toContain('다른 도시');
-    // 나라와 상관없는 도시를 예로 들면 안내가 아니라 딴소리다.
-    expect(guide.description).toContain('하롱베이 호텔 추천해줘');
-    // 단톡방에서는 멘션 없는 발화가 봇에게 오지 않는다. 멘션을 대신 찍어주는 버튼이다.
-    // ⚠️ action 은 문서에 있는 값이어야 한다. talk_mention 을 썼더니 단톡방에서
-    //    **말풍선이 하나도 안 나왔다** — 카카오는 응답을 통째로 검증하는 것으로 보인다.
-    expect(guide.buttons[0]).toMatchObject({
-      action: 'message',
-      messageText: '@여행메이트 TST ',
-    });
-    expect(String(guide.buttons[0].label).length).toBeLessThanOrEqual(14);
+    const guide = outputs[1].simpleText.text;
+    expect(guide).toContain('다른 도시를 찾고 있나요?');
+    // ⚠️ 멘션부터 적는다. 단톡방에서는 멘션 없는 발화가 봇에게 오지 않는다.
+    //    나라와 상관없는 도시를 예로 들면 안내가 아니라 딴소리다.
+    expect(guide).toContain('「@여행메이트 TST 하롱베이 호텔 추천해줘」');
+    // ⚠️ 버튼으로는 입력창을 못 채운다. 문서에 없는 action 은 응답 전체를 죽인다.
+    expect(outputs[1].textCard).toBeUndefined();
   });
 
   it('항공권은 줄에 출발지까지 박는다 — 누르면 되묻기가 또 생기지 않는다', async () => {

@@ -121,18 +121,15 @@ export function askCityInCountry(
 }
 
 /**
- * "다른 도시" 영역.
+ * "다른 도시" 안내. **버튼 없이 글로만 알려준다.**
  *
- * **봇을 멘션한 채로 입력창을 열어주는 버튼**을 단다. `messageText` 가 멘션 + 공백이라,
- * 카카오톡이 이걸 전송 대신 입력창에 채워주면 사용자는 도시 이름만 이어 치면 된다.
+ * ⚠️ 버튼으로는 이 일을 못 한다. 카카오 버튼은 누르는 즉시 전송되고(action:"message"),
+ *    입력창을 채워주는 액션은 문서에 없다. 문서에 없는 값(talk_mention)을 써봤더니
+ *    **응답 전체가 렌더링되지 않아** 카드까지 같이 사라졌다.
  *
- * ⚠️ 단톡방에서는 봇을 멘션한 메시지만 서버로 온다. 사용자가 맨손으로 "삿포로" 를 치면
- *    멘션이 빠져 **봇이 아예 듣지 못한다** — 그래서 멘션을 대신 찍어주는 이 버튼이
- *    안내 문구보다 실질적이다.
- *
- * ⚠️ 프리필이 안 되고 그냥 전송되더라도 대화는 안 끊긴다. 멘션만 남은 빈 발화는
- *    라우터가 되묻기로 받는다(router.controller.ts). 예문도 같이 적어 어느 쪽이든
- *    다음에 뭘 할지 알 수 있게 한다.
+ * ⚠️ 예문에 **멘션부터** 적는다. 단톡방에서는 봇을 멘션한 메시지만 서버로 온다 —
+ *    "삿포로 호텔 추천해줘" 라고만 치면 봇이 아예 듣지 못하고, 사용자에게는 봇이 죽은
+ *    것처럼 보인다. 그대로 따라 칠 수 있는 한 줄이 가장 확실한 안내다.
  */
 function otherCityCard(
   kind: SearchKind,
@@ -141,41 +138,13 @@ function otherCityCard(
   botName: string | null,
 ): t.Json {
   const example = pickUtterance(otherCityExample(country), kind, origin);
-  const description = botName
-    ? `아래 버튼을 누른 뒤 도시 이름을 이어서 입력해 주세요.\n예) ${example}`
-    : `「${example}」처럼 도시 이름을 말해주세요.`;
+  const full = botName ? `@${botName} ${example}` : example;
 
-  return t.textCard({
-    title: '다른 도시를 찾고 있나요?',
-    description,
-    buttons: botName ? [mentionButton(botName)] : [],
-  });
-}
-
-/**
- * 봇을 멘션한 채로 입력창을 열어주려는 버튼.
- *
- * ⚠️ **`action` 은 반드시 문서에 있는 값이어야 한다.** `talk_mention` 을 써봤더니
- *    단톡방에서 **말풍선이 하나도 안 나왔다** — 서버는 2초 만에 정상 카드를 응답했는데
- *    화면에는 아무것도 없었다. 카카오는 응답을 말풍선 단위가 아니라 **통째로** 검증하는
- *    것으로 보인다. 모르는 action 하나가 카드까지 같이 죽인다. itemCard 때와 같은
- *    실패 방식이다(로그는 200, 화면은 빈칸).
- *
- *    그래서 `message` 로 돌린다. 이 모양은 실제로 렌더링되는 걸 확인했다.
- *    프리필이 되는지는 `messageText` 가 멘션 + 공백이라는 점에 걸어둔다 — 안 되면
- *    그 문장이 전송되고, 라우터가 빈 발화를 되묻기로 받는다.
- *
- * ⚠️ 버튼 라벨은 14자다. "@여행메이트 TST에게 말하기" 는 17자라 잘리고, 잘린 라벨은
- *    무슨 버튼인지 알 수 없다. 들어가는 것 중 가장 긴 걸 고른다.
- */
-export function mentionButton(botName: string): t.Json {
-  const full = `@${botName}에게 말하기`;
-  const short = `@${botName}`;
-  const label =
-    full.length <= t.MAX_BUTTON_LABEL ? full : short.length <= t.MAX_BUTTON_LABEL ? short : '봇에게 말하기';
-
-  // 멘션 뒤 공백이 핵심이다 — 입력창에 채워졌을 때 바로 이어 칠 수 있어야 한다.
-  return t.messageButton(label, `@${botName} `);
+  return {
+    simpleText: {
+      text: `다른 도시를 찾고 있나요?\n「${full}」처럼 보내주세요.`,
+    },
+  };
 }
 
 /**
