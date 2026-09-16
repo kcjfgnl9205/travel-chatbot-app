@@ -94,69 +94,69 @@ export function askCityInCountry(
 
   const label = KIND_LABEL[kind];
 
-  // ⚠️ **카드로 보여주고, 누르면 그 문장이 전송되게 한다.**
-  //    단톡방에서는 봇을 멘션한 메시지만 서버로 온다 — 사용자가 "오사카" 라고 직접
-  //    타이핑하면 멘션이 빠져서 **봇이 아예 듣지 못한다.** 실제로 그 상태로 대화가
-  //    끊겼다. 누를 수 있는 길을 주는 게 안내 문구보다 확실하다.
-  const card: t.Json = {
-    listCard: {
-      header: { title: t.cut(`${country} 어디로 가세요?`, t.MAX_LIST_HEADER_TITLE) },
-      // 제목은 도시 이름만. 어느 도시인지가 고르는 기준이고, 무엇을 찾는지는
-      // 머리글과 설명에 이미 있다.
-      items: cities.slice(0, t.MAX_LIST_ITEMS).map((city) =>
-        t.listItem({
-          title: city,
-          description: `${label} 보기`,
-          messageText: exampleUtterance(city, kind),
-        }),
-      ),
+  // ⚠️ **퀵리플라이로 낸다. 카드가 아니다.**
+  //    고르는 화면이지 읽는 화면이 아니다 — 도시 이름 하나면 고를 수 있고, 카드로
+  //    만들면 줄 설명("관광지 보기")이 다섯 번 반복되며 자리만 차지한다.
+  //    무엇보다 단톡방에서는 **눌러서 보내는 길**이 확실해야 한다. 사용자가 직접 치면
+  //    멘션을 빼먹고, 멘션 없는 발화는 봇에게 아예 오지 않는다.
+  //
+  // 카카오 한계는 10개다. 마지막 한 자리는 "다른 도시" 가 쓴다.
+  const ask: t.Json = {
+    simpleText: {
+      text: `${country} 어디로 가세요?\n도시를 고르면 ${withObjectParticle(label)} 찾아드릴게요.`,
     },
   };
 
-  // 목록에 없는 도시를 가려는 사람의 영역. **카드 안 버튼이 아니라 따로 세운다** —
-  // 5줄과 나란히 두면 여섯 번째 선택지처럼 보이는데, 이건 선택지가 아니라 다른 길이다.
-  //
-  // ⚠️ 카카오 버튼은 입력창을 미리 채우지 못한다(액션이 webLink·message·block·phone·
-  //    share·operator 뿐이다). 그래서 **멘션을 포함한 예문**을 보여주는 게 최선이다.
-  const guide = t.textCard({
-    title: '다른 도시를 찾고 있나요?',
-    description: '아래 버튼을 누른 뒤 도시 이름을 이어서 입력해 주세요.',
-    buttons: [mentionButton(botName, label)],
-  });
+  const outputs = [ask];
+  const mention = mentionCard(botName);
+  // ⚠️ **검증되지 않은 실험이다.** 별도 말풍선으로 내보내는 이유가 그것이다 —
+  //    카카오가 모르는 action 을 거부해 이 말풍선이 통째로 안 보여도(itemCard 전례)
+  //    위의 도시 목록은 그대로 나간다. 사용자는 아무것도 잃지 않는다.
+  if (mention) outputs.push(mention);
 
-  return t.skillResponse(
-    [card, guide],
-    // 줄 탭(action:"message")이 그룹챗방에서 되는지 확인되지 않았다. 안 될 때 남는 길이다.
-    cities.map((city) => t.quickReply(`${city} ${label}`, exampleUtterance(city, kind))),
-  );
+  return t.skillResponse(outputs, [
+    ...cities.map((city) => t.quickReply(`${city} ${label}`, exampleUtterance(city, kind))),
+    // 목록에 없는 도시를 가려는 사람의 출구. 이게 없으면 고르거나 포기다.
+    t.quickReply('다른 도시', `${label} 다른 도시`),
+  ]);
 }
 
 /**
- * 봇을 멘션한 채로 입력창을 열어주려는 버튼.
+ * 입력창에 봇 멘션을 채워주는 카드. **문서에 없는 동작이라 실험 중이다.**
  *
- * `messageText` 가 **봇 멘션 + 공백**이다. 카카오톡 그룹챗방에서 이런 버튼을 누르면
- * 전송되지 않고 입력창에 멘션이 채워진다고 알려져 있다(대표 명령어 툴바와 같은 동작).
- * 공식 스킬 문서에는 없는 동작이라 **팀톡방에서 확인해야 한다.**
+ * 다른 봇(다비니)에서 "@OO에게 말하기" 를 누르면 전송 대신 입력창에 `@OO ` 이 채워지는
+ * 것이 목격됐다. 그 동작을 내는 `talk_mention` 액션이 있다는 이야기가 있으나 **카카오
+ * 공식 문서에는 없다** — 검색해도 우리 저장소 PR 말고는 나오지 않는다. 그래서
+ * 문서화된 message 액션을 같이 실어 둘 중 하나는 걸리게 한다.
  *
- * ⚠️ 안 되면 `@여행메이트 ` 한 줄이 그대로 전송된다. 그때도 대화가 끊기지 않도록
- *    서버는 **멘션만 있는 빈 발화**를 되묻기로 받는다 (router.controller.ts).
- *    그래서 이 버튼은 실패해도 손해가 없다.
- *
- * 봇 이름을 모르면(요청에 bot.name 이 없으면) 평범한 메시지 버튼으로 떨어진다.
+ * 결과를 읽는 법 (팀톡방에서):
+ *   · 버튼이 보이고 누르니 입력창에 `@봇이름 ` 이 채워진다 → 성공. 이 카드를 남긴다
+ *   · 버튼이 보이는데 눌러도 그냥 전송된다 → message 로 동작한 것. 라벨만 바꾸면 된다
+ *   · **이 말풍선만 통째로 안 보인다** → 카카오가 모르는 action 을 거부한 것. 지우면 된다
  */
-export function mentionButton(botName: string | null, label: string): t.Json {
-  if (!botName) return t.messageButton('다른 도시 말하기', `${label} 다른 도시`);
+export function mentionCard(botName: string | null): t.Json | null {
+  if (!botName) return null;
 
-  // ⚠️ **버튼 라벨은 14자다.** "@여행메이트 TST에게 말하기" 는 17자라 "@여행메이트 TS…"
-  //    로 잘린다. 잘린 라벨은 무슨 버튼인지 알 수 없으므로, 들어가는 것 중 가장 긴 걸
-  //    고른다. 마지막 폴백은 이름을 아예 빼서 어떤 봇 이름에도 안 잘리게 한다.
   const full = `@${botName}에게 말하기`;
   const short = `@${botName}`;
-  const label14 =
+  // 버튼 라벨은 14자다. 잘린 라벨은 무슨 버튼인지 알 수 없다.
+  const label =
     full.length <= t.MAX_BUTTON_LABEL ? full : short.length <= t.MAX_BUTTON_LABEL ? short : '봇에게 말하기';
 
-  // 멘션 뒤 공백이 핵심이다 — 입력창에 채워졌을 때 바로 이어 칠 수 있어야 한다.
-  return t.messageButton(label14, `@${botName} `);
+  return t.textCard({
+    title: '목록에 없는 도시인가요?',
+    description: '아래 버튼을 누른 뒤 도시 이름을 이어서 입력해 주세요.',
+    buttons: [
+      {
+        label: t.cut(label, t.MAX_BUTTON_LABEL),
+        action: 'talk_mention',
+        // message 로도 동작하도록 같이 싣는다. 멘션 뒤 공백이 핵심이다 —
+        // 입력창에 채워졌을 때 바로 이어 칠 수 있어야 한다.
+        messageText: `@${botName} `,
+        extra: { bot_name: botName },
+      },
+    ],
+  });
 }
 
 /**
