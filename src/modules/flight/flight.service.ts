@@ -1,16 +1,11 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { randomBytes } from 'node:crypto';
 
-import { applySubid } from '../adpick/adpick.service';
+import { dedupeBy } from '../../common/dedupe';
 import { AffiliateService } from '../affiliate/affiliate.service';
-import { AppConfig, CONFIG, redirectUrl } from '../../config/app.config';
-import { MemoryStoreService } from '../database/memory-store.service';
-import {
-  RecommendationItemsRepository,
-  RecommendationsRepository,
-} from '../database/repositories/recommendations.repository';
+import { AppConfig, CONFIG } from '../../config/app.config';
 import * as cards from '../kakao/cards';
 import * as t from '../kakao/templates';
+import { RecommendationRowsService } from '../recommendation/rows.service';
 import {
   RenderContext,
   SearchContext,
@@ -42,12 +37,6 @@ import {
  *   · **날짜를 검색에 넘기지 않는다.** 캐시를 노선·왕복여부로만 가르기 때문이다.
  *     대신 카드 아래 안내에 반영하지 않은 조건을 적는다.
  */
-const DOMAIN = 'flight';
-
-function newClickId(): string {
-  // 파이썬의 secrets.token_urlsafe(9) 와 같은 길이(12자)·문자셋.
-  return randomBytes(9).toString('base64url');
-}
 
 /**
  * 같은 항공편이 리스트에 두 번 나가지 않게 한다.
@@ -56,18 +45,12 @@ function newClickId(): string {
  * 페이지를 가리키므로 줄이 한 줄만 남는다. 편명+출발시각이 항공편의 신원이다.
  */
 export function dedupe(flights: Flight[], logger?: Logger): Flight[] {
-  const seen = new Set<string>();
-  const unique: Flight[] = [];
-  for (const flight of flights) {
-    const key = flightKey(flight);
-    if (seen.has(key)) {
-      logger?.log(`duplicate flight dropped: ${flight.airline} (${key})`);
-      continue;
-    }
-    seen.add(key);
-    unique.push(flight);
-  }
-  return unique;
+  return dedupeBy(flights, {
+    label: 'flight',
+    keyOf: flightKey,
+    nameOf: (flight) => flight.airline,
+    logger,
+  });
 }
 
 @Injectable()
@@ -78,10 +61,8 @@ export class FlightService implements SearchDomain<Flight> {
   constructor(
     @Inject(CONFIG) private readonly config: AppConfig,
     @Inject(FLIGHT_PROVIDER) private readonly provider: FlightProvider,
-    private readonly recommendations: RecommendationsRepository,
-    private readonly items: RecommendationItemsRepository,
     private readonly affiliate: AffiliateService,
-    private readonly memory: MemoryStoreService,
+    private readonly renderer: RecommendationRowsService,
   ) {}
 
   /** 실제로 붙어 있는 데이터 소스. 설정값이 아니라 주입된 구현이 답이다 (/health). */
@@ -130,82 +111,19 @@ export class FlightService implements SearchDomain<Flight> {
           .map((f) => ({ sourceUrl: f.sourceUrl, merchant: f.merchant })),
       ));
 
-    const recommendation =
-      ctx.persist === false
-        ? null
-        : await this.recommendations.create({
-            userId: ctx.userId,
-            messageId: ctx.messageId,
-            domain: DOMAIN,
-            // 호텔의 city_slug 자리에 목적지를 넣는다. 도메인별 컬럼을 늘리지 않는다.
-            citySlug: ctx.meta.placeSlug,
-            provider: this.provider.name,
-            itemCount: flights.length,
-            guests: null,
-            latencyMs: Date.now() - ctx.started,
-            cacheHit: ctx.cacheHit,
-          });
-    const recommendationId = (recommendation?.id as string) ?? null;
-
-    const rows: Record<string, unknown>[] = [];
-    const listItems: t.Json[] = [];
-    /** 애드픽 변환이 안 돼 원본 주소로 나가는 줄. 수익화가 안 되는 노출이다. */
-    const unconverted: string[] = [];
-
-    flights.forEach((flight, position) => {
-      const clickId = newClickId();
-      const link = links.get(flight.sourceUrl);
-      // 변환이 실패해도 원본 주소로 보낸다. 수익화는 못 해도 사용자는 항공권을 본다.
-      const destination = link?.affiliateUrl ?? flight.sourceUrl;
-      if (!destination) {
-        this.logger.warn(`no destination for flight=${flight.airline}, skipping row`);
-        return;
-      }
-      if (destination === flight.sourceUrl) unconverted.push(flight.airline);
-      const targetUrl = applySubid(destination, clickId, this.config);
-      const label = itemLabel(flight);
-
-      rows.push({
-        recommendation_id: recommendationId,
-        affiliate_link_id: link?.affiliateLinkId ?? null,
-        position,
-        click_id: clickId,
-        // hotel_name 컬럼이지만 담기는 건 "노출된 항목의 이름" 이다
-        // (0002 마이그레이션 주석 참고).
-        hotel_name: label,
-        price_from: flight.priceFrom ?? null,
-        merchant: flight.merchant ?? null,
-        thumbnail_url: null,
-        source_url: flight.sourceUrl,
-        target_url: targetUrl,
-      });
-
-      this.memory.put(clickId, {
-        recommendationId,
-        itemName: label,
+    return this.renderer.render(
+      flights.map((flight) => ({
+        // 카드에는 시각·경유가 찍히지만, DB 에는 알아볼 수 있는 이름으로 남긴다.
+        label: itemLabel(flight),
         sourceUrl: flight.sourceUrl,
-        targetUrl,
-        userId: ctx.userId,
-      });
-
-      listItems.push(
-        t.listItem({
-          title: listRowTitle(flight),
-          description: listRowDescription(flight),
-          linkUrl: redirectUrl(this.config, clickId),
-        }),
-      );
-    });
-
-    if (unconverted.length) {
-      this.logger.warn(
-        `애드픽 변환 실패 ${unconverted.length}/${listItems.length}건 — 원본 주소로 나간다: ` +
-          unconverted.join(', '),
-      );
-    }
-
-    if (recommendationId && rows.length) await this.items.createMany(rows);
-    return listItems;
+        title: listRowTitle(flight),
+        description: listRowDescription(flight),
+        priceFrom: flight.priceFrom,
+        merchant: flight.merchant,
+      })),
+      ctx,
+      { provider: this.provider.name, links },
+    );
   }
 
   /**

@@ -1,16 +1,10 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { randomBytes } from 'node:crypto';
 
-import { applySubid } from '../adpick/adpick.service';
+import { dedupeBy } from '../../common/dedupe';
 import { AffiliateService } from '../affiliate/affiliate.service';
-import { AppConfig, CONFIG, redirectUrl } from '../../config/app.config';
-import { MemoryStoreService } from '../database/memory-store.service';
-import {
-  RecommendationItemsRepository,
-  RecommendationsRepository,
-} from '../database/repositories/recommendations.repository';
 import * as cards from '../kakao/cards';
 import * as t from '../kakao/templates';
+import { RecommendationRowsService } from '../recommendation/rows.service';
 import { searchName } from '../search/search-name';
 import {
   RenderContext,
@@ -43,12 +37,6 @@ import {
  * ⚠️ **search() 를 요청 경로에서 부르면 안 된다.** 카카오는 5초 안에 응답을 받아야
  *    하는데 AI 검색은 7~30초다. 라우터는 이걸 백그라운드에서만 부른다.
  */
-const DOMAIN = 'hotel';
-
-function newClickId(): string {
-  // 파이썬의 secrets.token_urlsafe(9) 와 같은 길이(12자)·문자셋.
-  return randomBytes(9).toString('base64url');
-}
 
 /**
  * 같은 호텔이 리스트에 두 번 나가지 않게 한다.
@@ -58,18 +46,12 @@ function newClickId(): string {
  * 이름은 못 믿으므로 sourceUrl(호텔 신원)로 판정한다.
  */
 export function dedupe(hotels: Hotel[], logger?: Logger): Hotel[] {
-  const seen = new Set<string>();
-  const unique: Hotel[] = [];
-  for (const hotel of hotels) {
-    const key = hotel.sourceUrl || hotel.name;
-    if (seen.has(key)) {
-      logger?.log(`duplicate hotel dropped: ${hotel.name} (${key})`);
-      continue;
-    }
-    seen.add(key);
-    unique.push(hotel);
-  }
-  return unique;
+  return dedupeBy(hotels, {
+    label: 'hotel',
+    keyOf: (hotel) => hotel.sourceUrl || hotel.name,
+    nameOf: (hotel) => hotel.name,
+    logger,
+  });
 }
 
 @Injectable()
@@ -78,12 +60,9 @@ export class HotelService implements SearchDomain<Hotel> {
   private readonly logger = new Logger(HotelService.name);
 
   constructor(
-    @Inject(CONFIG) private readonly config: AppConfig,
     @Inject(HOTEL_PROVIDER) private readonly provider: HotelProvider,
-    private readonly recommendations: RecommendationsRepository,
-    private readonly items: RecommendationItemsRepository,
     private readonly affiliate: AffiliateService,
-    private readonly memory: MemoryStoreService,
+    private readonly renderer: RecommendationRowsService,
   ) {}
 
   /** 실제로 붙어 있는 데이터 소스. 설정값이 아니라 주입된 구현이 답이다 (/health). */
@@ -140,86 +119,19 @@ export class HotelService implements SearchDomain<Hotel> {
           .map((h) => ({ sourceUrl: h.sourceUrl, merchant: h.merchant })),
       ));
 
-    // persist:false 면 통계를 안 남긴다 (진단 경로). recommendationId 가 null 이 되고
-    // 아래 items.createMany 도 자연히 건너뛴다.
-    const recommendation =
-      ctx.persist === false
-        ? null
-        : await this.recommendations.create({
-            userId: ctx.userId,
-            messageId: ctx.messageId,
-            domain: DOMAIN,
-            citySlug: ctx.meta.placeSlug,
-            provider: this.provider.name,
-            itemCount: hotels.length,
-            guests: null,
-            latencyMs: Date.now() - ctx.started,
-            cacheHit: ctx.cacheHit,
-          });
-    const recommendationId = (recommendation?.id as string) ?? null;
-
-    const rows: Record<string, unknown>[] = [];
-    const listItems: t.Json[] = [];
-    /** 애드픽 변환이 안 돼 원본 주소로 나가는 줄. 수익화가 안 되는 노출이다. */
-    const unconverted: string[] = [];
-
-    hotels.forEach((hotel, position) => {
-      const clickId = newClickId();
-      const link = links.get(hotel.sourceUrl);
-      // 변환이 실패해도 원본 주소로 보낸다. 수익화는 못 해도 사용자는 호텔을 본다.
-      const destination = link?.affiliateUrl ?? hotel.sourceUrl;
-      if (!destination) {
-        this.logger.warn(`no destination for hotel=${hotel.name}, skipping row`);
-        return;
-      }
-      // 목적지가 원본과 같다 = 커미션 링크가 아니다. 여기서 세지 않으면
-      // "링크는 잘 열리는데 수수료가 안 들어온다"를 영영 못 찾는다.
-      if (destination === hotel.sourceUrl) unconverted.push(hotel.name);
-      const targetUrl = applySubid(destination, clickId, this.config);
-
-      rows.push({
-        recommendation_id: recommendationId,
-        affiliate_link_id: link?.affiliateLinkId ?? null,
-        position,
-        click_id: clickId,
-        hotel_name: hotel.name,
-        price_from: hotel.priceFrom ?? null,
-        merchant: hotel.merchant ?? null,
-        thumbnail_url: hotel.thumbnailUrl ?? null,
-        source_url: hotel.sourceUrl,
-        target_url: targetUrl,
-      });
-
-      // DB 가 없어도 리다이렉트가 동작하도록 인메모리에도 남긴다.
-      this.memory.put(clickId, {
-        recommendationId,
-        itemName: hotel.name,
+    return this.renderer.render(
+      hotels.map((hotel) => ({
+        label: hotel.name,
         sourceUrl: hotel.sourceUrl,
-        targetUrl,
-        userId: ctx.userId,
-      });
-
-      // 줄 전체가 링크가 된다. 링크는 애드픽이 아니라 우리 리다이렉트를 가리킨다.
-      listItems.push(
-        t.listItem({
-          title: hotel.name,
-          description: listDescription(hotel),
-          imageUrl: hotel.thumbnailUrl,
-          linkUrl: redirectUrl(this.config, clickId),
-        }),
-      );
-    });
-
-    if (unconverted.length) {
-      // 경고로 남긴다. 배포를 막을 일은 아니지만 방치하면 그대로 매출이 샌다.
-      this.logger.warn(
-        `애드픽 변환 실패 ${unconverted.length}/${listItems.length}건 — 원본 주소로 나간다: ` +
-          unconverted.join(', '),
-      );
-    }
-
-    if (recommendationId && rows.length) await this.items.createMany(rows);
-    return listItems;
+        title: hotel.name,
+        description: listDescription(hotel),
+        imageUrl: hotel.thumbnailUrl,
+        priceFrom: hotel.priceFrom,
+        merchant: hotel.merchant,
+      })),
+      ctx,
+      { provider: this.provider.name, links },
+    );
   }
 }
 
