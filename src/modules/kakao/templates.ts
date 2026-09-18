@@ -43,14 +43,6 @@ export function messageButton(label: string, messageText: string): Json {
   };
 }
 
-export function webLinkButton(label: string, url: string): Json {
-  return {
-    action: 'webLink',
-    label: cut(label, MAX_BUTTON_LABEL),
-    webLinkUrl: url,
-  };
-}
-
 export function skillResponse(outputs: Json[], quickReplies?: Json[]): Json {
   const template: Json = { outputs };
   if (quickReplies?.length) {

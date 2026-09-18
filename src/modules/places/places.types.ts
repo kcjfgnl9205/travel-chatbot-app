@@ -75,9 +75,3 @@ export function slugOf(name: string): string {
     .replace(/\s+/g, '-')
     .replace(/[^\p{L}\p{N}-]/gu, '');
 }
-
-/** 지역명을 그대로 검색어로 쓸 수 있는 형태로. '도톤보리' → '도톤보리(오사카)'. */
-export function placeLabel(place: Place, parent?: Place | null): string {
-  if (!parent || parent.id === place.id) return place.canonicalName;
-  return `${place.canonicalName}(${parent.canonicalName})`;
-}

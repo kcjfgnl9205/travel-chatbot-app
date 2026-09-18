@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { SupabaseClient, createClient } from '@supabase/supabase-js';
 
 import { AppConfig, CONFIG, dbEnabled } from '../../config/app.config';
+import { supabaseClientOptions } from '../../config/database.config';
 
 /**
  * Supabase 접근 래퍼.
@@ -28,8 +29,7 @@ export class SupabaseService {
       this.client = createClient(
         this.config.supabaseUrl,
         this.config.supabaseServiceRoleKey,
-        // 서버 전용이라 세션을 들고 있을 필요가 없다.
-        { auth: { persistSession: false, autoRefreshToken: false } },
+        supabaseClientOptions,
       );
       this.logger.log('supabase client ready');
     } catch (err) {
