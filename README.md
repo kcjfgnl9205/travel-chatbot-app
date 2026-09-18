@@ -7,7 +7,9 @@
 모든 발화가 폴백으로 떨어지고, 폴백 블록이 `POST /api/v1/kakao/router` 하나를 부른다.
 무엇을 묻는지는 URL 이 아니라 **발화**가 정한다 → **[docs/ROUTER.md](docs/ROUTER.md)**
 
-운영: https://bot.nolmoa.com · 라우터: [docs/ROUTER.md](docs/ROUTER.md) · 오픈빌더 설정: [docs/KAKAO-SETUP.md](docs/KAKAO-SETUP.md) · 남은 문제: [docs/HANDOFF.md](docs/HANDOFF.md) · DB: [docs/DB.md](docs/DB.md) · 항공권: [docs/FLIGHT.md](docs/FLIGHT.md) · 관광지: [docs/ATTRACTION.md](docs/ATTRACTION.md) · 배포: [docs/DEPLOY.md](docs/DEPLOY.md)
+운영: https://bot.nolmoa.com · 라우터: [docs/ROUTER.md](docs/ROUTER.md) · 오픈빌더 설정: [docs/KAKAO-SETUP.md](docs/KAKAO-SETUP.md) · 남은 문제: [docs/HANDOFF.md](docs/HANDOFF.md) · DB: [docs/DB.md](docs/DB.md) · 배포: [docs/DEPLOY.md](docs/DEPLOY.md)
+
+**도메인별 상세 — 발화에서 말풍선까지:** [호텔](docs/HOTEL.md) · [항공권](docs/FLIGHT.md) · [관광지](docs/ATTRACTION.md)
 
 > FastAPI 로 먼저 만들었다가 NestJS 로 전환했다. 전환 기록과 주의점은 [docs/MIGRATION.md](docs/MIGRATION.md).
 
@@ -453,7 +455,7 @@ mapsUrl('오사카성', '오사카')
 
 시드 스크립트는 없다. **호텔·항공권·관광지 데이터는 전부 provider 가 런타임에 만든다.**
 
-### 테이블 (9개 — 세 도메인 공용)
+### 테이블 (스키마 10개 · 코드가 쓰는 건 9개 — 세 도메인 공용)
 
 | 그룹 | 테이블 |
 | --- | --- |
@@ -461,8 +463,10 @@ mapsUrl('오사카성', '오사카')
 | 결과·캐시 | `search_results` · `intent_cache` · `affiliate_links` |
 | 행동 로그 | `users` · `messages` · `recommendations` · `recommendation_items` |
 
-**전부 코드가 실제로 읽고 쓴다.** 빈 껍데기 테이블은 없다.
-(`search_cache` 는 라우터 이전 구조의 잔재다 — 이제 읽지 않지만 롤백을 위해 남겨뒀다)
+위 9개는 **전부 코드가 실제로 읽고 쓴다.** 빈 껍데기는 하나뿐이다 —
+`search_cache`(0001)는 라우터 이전 구조의 잔재로, `search_results`(0004)가 대체했다.
+이제 읽지도 쓰지도 않지만 롤백을 위해 남겨뒀고, 그래서 **헬스체크도 찌르지 않는다**
+(누가 드롭해도 서버는 정상으로 보고한다).
 
 흐름: 발화 1건 → `messages` 1행 → `search_results` 1행(20건, 여러 사람이 공유) →
 `recommendations` 1행(카드 1장) → `recommendation_items` N행(노출) → 클릭 시 `click_count` 증가
