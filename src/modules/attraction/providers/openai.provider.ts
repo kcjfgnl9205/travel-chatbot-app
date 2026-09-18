@@ -3,7 +3,8 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { mapsUrl } from '../../../common/maps-url';
 import { positiveInt, text } from '../../../common/parse';
 import { AppConfig, CONFIG } from '../../../config/app.config';
-import { OpenAiService, parseJsonLoose } from '../../openai/openai.service';
+import { OpenAiService } from '../../openai/openai.service';
+import { TwoStageSearch, TwoStageTrace, newTwoStageTrace } from '../../openai/two-stage';
 import { FoundImage, findAttractionImage } from '../attraction-image';
 import { Attraction, AttractionProvider, AttractionQuery } from '../attraction.types';
 
@@ -246,20 +247,13 @@ const RANK_INSTRUCTIONS = [
 ].join(' ');
 
 /**
- * 검색 한 번에 대한 계측.
+ * 검색 한 번에 대한 계측. 공통 필드는 [TwoStageTrace](../../openai/two-stage.ts) 에 있다.
  *
- * 응답 경로에서는 아무도 안 본다 — 진단용 엔드포인트가 "어디서 몇 초가 녹았는지"를
- * 보여주려고 모은다. 로그에도 같은 값이 찍힌다.
+ * ⚠️ **지금 이 값을 읽는 코드가 없다.** 주석이 가리키던 /api/v1/debug/attraction-search 는
+ *    컨트롤러가 /debug/search 하나로 합쳐지면서 사라졌고, 로그에 찍히는 건 trace 가
+ *    아니라 respond() 의 반환값이다. 남겨둔 이유와 정리 방향은 TwoStageTrace 주석 참고.
  */
-export interface AttractionSearchTrace {
-  searchMs: number;
-  rankMs: number;
-  totalMs: number;
-  /** 모델이 web_search 를 실제로 돌린 횟수. 0 이면 기억으로 답한 것이다. */
-  searchCalls: number;
-  candidateChars: number;
-  candidates: number;
-  picks: number;
+export interface AttractionSearchTrace extends TwoStageTrace {
   /** 이름이 없어서 버린 수. 관광지는 URL 검증이 없으므로 이게 유일한 탈락 사유다. */
   droppedInvalid: number;
   attractions: number;
@@ -291,18 +285,46 @@ interface RawPick {
 }
 
 @Injectable()
-export class OpenAiAttractionProvider implements AttractionProvider {
+export class OpenAiAttractionProvider
+  extends TwoStageSearch<AttractionQuery>
+  implements AttractionProvider
+{
   readonly name = 'openai';
-  private readonly logger = new Logger(OpenAiAttractionProvider.name);
+  protected readonly logger = new Logger(OpenAiAttractionProvider.name);
+  protected readonly label = 'attraction';
 
-  constructor(
-    @Inject(CONFIG) private readonly config: AppConfig,
-    private readonly openai: OpenAiService,
-  ) {}
+  protected readonly searchInstructions = SEARCH_INSTRUCTIONS;
+  protected readonly candidateSchema = ATTRACTION_CANDIDATE_SCHEMA;
+  protected readonly rankInstructions = RANK_INSTRUCTIONS;
+  protected readonly pickSchema = ATTRACTION_SCHEMA;
+  protected readonly pickKey = 'attractions';
 
-  /** 키가 없으면 검색을 시도조차 하지 않는다. 호출부가 미리 알아야 한다. */
-  get enabled(): boolean {
-    return this.openai.enabled;
+  constructor(@Inject(CONFIG) config: AppConfig, openai: OpenAiService) {
+    super(config, openai);
+  }
+
+  protected subjectOf(query: AttractionQuery): string {
+    return `city=${query.cityName}`;
+  }
+
+  protected searchInput(query: AttractionQuery, wanted: number): string {
+    return [
+      `${query.cityName} 에서 가볼 만한 관광지 ${wanted}곳을 지금 웹에서 검색해 찾아라.`,
+      `카테고리가 겹치지 않게 다양하게 모아라: ${CATEGORIES.join(', ')}.`,
+      '유명한 곳과 현지에서 평이 좋은 곳을 섞어라.',
+      '확인 못 한 항목은 null 로 둔다. 되묻지 말고 바로 결과를 낸다.',
+    ].join('\n');
+  }
+
+  protected rankInput(query: AttractionQuery, candidates: string): string {
+    return [
+      `다음은 ${query.cityName} 관광지 후보 목록(JSON)이다.`,
+      `처음 ${query.cityName} 에 가는 한국인 여행자에게 추천할 ${query.limit}곳을 골라라.`,
+      '유명세·특색·카테고리를 고려하되, 같은 카테고리를 연달아 고르지 마라.',
+      '',
+      '--- 후보 목록 (JSON) ---',
+      candidates,
+    ].join('\n');
   }
 
   async search(query: AttractionQuery): Promise<Attraction[]> {
@@ -313,13 +335,7 @@ export class OpenAiAttractionProvider implements AttractionProvider {
   async searchTraced(query: AttractionQuery): Promise<TracedAttractionSearch> {
     const started = Date.now();
     const trace: AttractionSearchTrace = {
-      searchMs: 0,
-      rankMs: 0,
-      totalMs: 0,
-      searchCalls: 0,
-      candidateChars: 0,
-      candidates: 0,
-      picks: 0,
+      ...newTwoStageTrace(),
       droppedInvalid: 0,
       attractions: 0,
       images: 0,
@@ -343,9 +359,7 @@ export class OpenAiAttractionProvider implements AttractionProvider {
     const candidates = await this.findCandidates(query, trace);
     if (!candidates) return done([], null);
 
-    const picks = await this.rank(query, candidates, trace);
-    trace.picks = picks.length;
-
+    const picks = await this.rank<RawPick>(query, candidates, trace);
     const attractions = this.toAttractions(picks, query, trace);
     return done(await this.withImages(attractions, query, trace), candidates);
   }
@@ -400,95 +414,6 @@ export class OpenAiAttractionProvider implements AttractionProvider {
 
     trace.imageMs = Date.now() - started;
     return resolved;
-  }
-
-  // -------------------------------------------------- 1차: 웹 검색으로 후보 수집
-  private async findCandidates(
-    query: AttractionQuery,
-    trace: AttractionSearchTrace,
-  ): Promise<string | null> {
-    const wanted = this.config.openaiCandidateCount;
-
-    const result = await this.openai.respond({
-      instructions: SEARCH_INSTRUCTIONS,
-      tools: [this.openai.webSearchToolSpec],
-      // ⚠️ 검색을 **반드시** 돌린다. auto 로 두면 모델이 건너뛰고 빈 결과를 낸다.
-      toolChoice: 'required',
-      effort: this.config.openaiSearchEffort,
-      format: ATTRACTION_CANDIDATE_SCHEMA,
-      input: [
-        `${query.cityName} 에서 가볼 만한 관광지 ${wanted}곳을 지금 웹에서 검색해 찾아라.`,
-        `카테고리가 겹치지 않게 다양하게 모아라: ${CATEGORIES.join(', ')}.`,
-        '유명한 곳과 현지에서 평이 좋은 곳을 섞어라.',
-        '확인 못 한 항목은 null 로 둔다. 되묻지 말고 바로 결과를 낸다.',
-      ].join('\n'),
-    });
-
-    trace.searchMs = result.ms;
-    trace.searchCalls = result.searchCalls;
-    trace.candidateChars = result.text.length;
-
-    // 검색을 한 번도 안 돌았으면 모델이 기억으로 답한 것이다.
-    // 관광지는 URL 이 없어 피해가 적지만, 입장료와 폐관 여부가 낡을 수 있다.
-    if (!result.searchCalls) {
-      this.logger.warn(`web_search 가 호출되지 않았다 city=${query.cityName}`);
-    }
-
-    const parsed = parseJsonLoose<{ candidates?: unknown[] }>(result.text);
-    const candidates = Array.isArray(parsed?.candidates) ? parsed.candidates : [];
-    trace.candidates = candidates.length;
-
-    this.logger.log(
-      `attraction search city=${query.cityName} searches=${result.searchCalls} ` +
-        `candidates=${candidates.length} chars=${result.text.length} ms=${result.ms}`,
-    );
-
-    if (!candidates.length) {
-      // 스키마를 걸어뒀는데도 비어 오면 프롬프트가 안 먹은 것이다. 원문을 남긴다.
-      this.logger.warn(
-        `attraction search produced no candidates city=${query.cityName} ` +
-          `text=${result.text.slice(0, 200)}`,
-      );
-      return null;
-    }
-    return JSON.stringify(candidates);
-  }
-
-  // ------------------------------------------------ 2차: 비교 후 상위 N곳 선정
-  private async rank(
-    query: AttractionQuery,
-    candidates: string,
-    trace: AttractionSearchTrace,
-  ): Promise<RawPick[]> {
-    const result = await this.openai.respond({
-      instructions: RANK_INSTRUCTIONS,
-      effort: this.config.openaiRankEffort,
-      format: ATTRACTION_SCHEMA,
-      input: [
-        `다음은 ${query.cityName} 관광지 후보 목록(JSON)이다.`,
-        `처음 ${query.cityName} 에 가는 한국인 여행자에게 추천할 ${query.limit}곳을 골라라.`,
-        '유명세·특색·카테고리를 고려하되, 같은 카테고리를 연달아 고르지 마라.',
-        '',
-        '--- 후보 목록 (JSON) ---',
-        candidates,
-      ].join('\n'),
-    });
-
-    trace.rankMs = result.ms;
-
-    const parsed = parseJsonLoose<{ attractions?: RawPick[] }>(result.text);
-    if (!parsed?.attractions?.length) {
-      this.logger.warn(
-        `attraction rank produced no picks city=${query.cityName} status=${result.status} ` +
-          `text=${result.text.slice(0, 200)}`,
-      );
-      return [];
-    }
-
-    this.logger.log(
-      `attraction rank city=${query.cityName} picks=${parsed.attractions.length} ms=${result.ms}`,
-    );
-    return parsed.attractions;
   }
 
   // ------------------------------------------------------------ 정규화

@@ -4,7 +4,8 @@ import { allowedHost, merchantFrom, toKoreanUrl } from '../../../common/booking-
 import { fetchWithTimeout } from '../../../common/fetch';
 import { bounded, positiveInt, text } from '../../../common/parse';
 import { AppConfig, CONFIG } from '../../../config/app.config';
-import { OpenAiService, parseJsonLoose } from '../../openai/openai.service';
+import { OpenAiService } from '../../openai/openai.service';
+import { TwoStageSearch, TwoStageTrace, newTwoStageTrace } from '../../openai/two-stage';
 import { Hotel, HotelProvider, HotelQuery } from '../hotel.types';
 import { ThumbnailSource, extractThumbnail } from '../thumbnail';
 
@@ -120,23 +121,14 @@ export const HOTEL_SCHEMA = {
 };
 
 /**
- * 검색 한 번에 대한 계측.
+ * 검색 한 번에 대한 계측. 공통 필드는 [TwoStageTrace](../../openai/two-stage.ts) 에 있다.
  *
- * 응답 경로에서는 아무도 안 본다 — 진단용 엔드포인트(/api/v1/debug/hotel-search)가
- * "어디서 몇 초가 녹았는지"를 보여주려고 모은다. 로그에도 같은 값이 찍힌다.
+ * ⚠️ **지금 이 값을 읽는 코드가 없다.** 주석이 가리키던 /api/v1/debug/hotel-search 는
+ *    컨트롤러가 /debug/search 하나로 합쳐지면서 사라졌고, 로그에 찍히는 건 trace 가
+ *    아니라 respond() 의 반환값이다. 남겨둔 이유와 정리 방향은 TwoStageTrace 주석 참고.
  */
-export interface SearchTrace {
-  searchMs: number;
-  rankMs: number;
+export interface SearchTrace extends TwoStageTrace {
   thumbnailMs: number;
-  totalMs: number;
-  /** 모델이 web_search 를 실제로 돌린 횟수. 0 이면 기억으로 답한 것이다. */
-  searchCalls: number;
-  candidateChars: number;
-  /** 1차 호출이 모아온 후보 개수. 0 이면 검색 프롬프트가 안 먹은 것이다. */
-  candidates: number;
-  /** 2차 호출이 고른 개수 (필터 전). */
-  picks: number;
   droppedUntrusted: number;
   /** 살아 있지 않아서 버린 이미지 주소 수. */
   droppedThumbnails: number;
@@ -233,18 +225,50 @@ const RANK_INSTRUCTIONS = [
 ].join(' ');
 
 @Injectable()
-export class OpenAiHotelProvider implements HotelProvider {
+export class OpenAiHotelProvider
+  extends TwoStageSearch<HotelQuery>
+  implements HotelProvider
+{
   readonly name = 'openai';
-  private readonly logger = new Logger(OpenAiHotelProvider.name);
+  protected readonly logger = new Logger(OpenAiHotelProvider.name);
+  protected readonly label = 'hotel';
 
-  constructor(
-    @Inject(CONFIG) private readonly config: AppConfig,
-    private readonly openai: OpenAiService,
-  ) {}
+  protected readonly searchInstructions = SEARCH_INSTRUCTIONS;
+  protected readonly candidateSchema = CANDIDATE_SCHEMA;
+  protected readonly rankInstructions = RANK_INSTRUCTIONS;
+  protected readonly pickSchema = HOTEL_SCHEMA;
+  protected readonly pickKey = 'hotels';
 
-  /** 키가 없으면 검색을 시도조차 하지 않는다. 호출부가 미리 알아야 한다. */
-  get enabled(): boolean {
-    return this.openai.enabled;
+  constructor(@Inject(CONFIG) config: AppConfig, openai: OpenAiService) {
+    super(config, openai);
+  }
+
+  protected subjectOf(query: HotelQuery): string {
+    return `city=${query.cityName}`;
+  }
+
+  protected searchInput(query: HotelQuery, wanted: number): string {
+    const guests = query.guests ? `${query.guests}명이 묵을 예정이다. ` : '';
+    return [
+      `${query.cityName} 에서 묵을 만한 호텔 ${wanted}곳을 지금 웹에서 검색해 찾아라.`,
+      guests,
+      '가격대와 지역이 겹치지 않게 다양하게 모아라.',
+      '확인 못 한 항목은 null 로 둔다. 되묻지 말고 바로 결과를 낸다.',
+    ].join('\n');
+  }
+
+  protected rankInput(query: HotelQuery, candidates: string): string {
+    const guests = query.guests ? `투숙 인원은 ${query.guests}명이다.` : '';
+    return [
+      `다음은 ${query.cityName} 호텔 후보 목록(JSON)이다.`,
+      guests,
+      `가격·위치·평점·특징을 비교해 가장 추천할 만한 ${query.limit}곳을 골라라.`,
+      `예약 페이지 URL 이 없거나 ${ALLOWED_SITES_TEXT} 밖의 링크인 후보는 제외한다.`,
+      '비슷한 호텔만 고르지 말고 가격대와 지역을 섞어라.',
+      '',
+      '--- 후보 목록 (JSON) ---',
+      candidates,
+    ].join('\n');
   }
 
   async search(query: HotelQuery): Promise<Hotel[]> {
@@ -255,14 +279,8 @@ export class OpenAiHotelProvider implements HotelProvider {
   async searchTraced(query: HotelQuery): Promise<TracedSearch> {
     const started = Date.now();
     const trace: SearchTrace = {
-      searchMs: 0,
-      rankMs: 0,
+      ...newTwoStageTrace(),
       thumbnailMs: 0,
-      totalMs: 0,
-      searchCalls: 0,
-      candidateChars: 0,
-      candidates: 0,
-      picks: 0,
       droppedUntrusted: 0,
       droppedThumbnails: 0,
       thumbnails: 0,
@@ -283,9 +301,7 @@ export class OpenAiHotelProvider implements HotelProvider {
     const candidates = await this.findCandidates(query, trace);
     if (!candidates) return done([], null);
 
-    const picks = await this.rank(query, candidates, trace);
-    trace.picks = picks.length;
-
+    const picks = await this.rank<RawPick>(query, candidates, trace);
     const normalized = this.toHotels(picks, query, trace);
 
     const thumbStarted = Date.now();
@@ -293,96 +309,6 @@ export class OpenAiHotelProvider implements HotelProvider {
     trace.thumbnailMs = Date.now() - thumbStarted;
 
     return done(hotels, candidates);
-  }
-
-  // -------------------------------------------------- 1차: 웹 검색으로 후보 수집
-  private async findCandidates(query: HotelQuery, trace: SearchTrace): Promise<string | null> {
-    const wanted = this.config.openaiCandidateCount;
-    const guests = query.guests ? `${query.guests}명이 묵을 예정이다. ` : '';
-
-    const result = await this.openai.respond({
-      instructions: SEARCH_INSTRUCTIONS,
-      tools: [this.openai.webSearchToolSpec],
-      // ⚠️ 검색을 **반드시** 돌린다. auto 로 두면 모델이 건너뛰고 빈 결과를 낸다.
-      toolChoice: 'required',
-      effort: this.config.openaiSearchEffort,
-      format: CANDIDATE_SCHEMA,
-      input: [
-        `${query.cityName} 에서 묵을 만한 호텔 ${wanted}곳을 지금 웹에서 검색해 찾아라.`,
-        guests,
-        '가격대와 지역이 겹치지 않게 다양하게 모아라.',
-        '확인 못 한 항목은 null 로 둔다. 되묻지 말고 바로 결과를 낸다.',
-      ].join('\n'),
-    });
-
-    trace.searchMs = result.ms;
-    trace.searchCalls = result.searchCalls;
-    trace.candidateChars = result.text.length;
-
-    // 검색을 한 번도 안 돌았으면 모델이 기억으로 답한 것이다. URL 이 특히 위험하다.
-    if (!result.searchCalls) {
-      this.logger.warn(`web_search 가 호출되지 않았다 city=${query.cityName}`);
-    }
-
-    const parsed = parseJsonLoose<{ candidates?: unknown[] }>(result.text);
-    const candidates = Array.isArray(parsed?.candidates) ? parsed.candidates : [];
-    trace.candidates = candidates.length;
-
-    this.logger.log(
-      `hotel search city=${query.cityName} searches=${result.searchCalls} ` +
-        `candidates=${candidates.length} chars=${result.text.length} ms=${result.ms}`,
-    );
-
-    if (!candidates.length) {
-      // 스키마를 걸어뒀는데도 비어 오면 프롬프트가 안 먹은 것이다. 원문을 남긴다.
-      this.logger.warn(
-        `hotel search produced no candidates city=${query.cityName} ` +
-          `text=${result.text.slice(0, 200)}`,
-      );
-      return null;
-    }
-    return JSON.stringify(candidates);
-  }
-
-  // ------------------------------------------------ 2차: 비교 후 상위 N개 선정
-  private async rank(
-    query: HotelQuery,
-    candidates: string,
-    trace: SearchTrace,
-  ): Promise<RawPick[]> {
-    const guests = query.guests ? `투숙 인원은 ${query.guests}명이다.` : '';
-
-    const result = await this.openai.respond({
-      instructions: RANK_INSTRUCTIONS,
-      effort: this.config.openaiRankEffort,
-      format: HOTEL_SCHEMA,
-      input: [
-        `다음은 ${query.cityName} 호텔 후보 목록(JSON)이다.`,
-        guests,
-        `가격·위치·평점·특징을 비교해 가장 추천할 만한 ${query.limit}곳을 골라라.`,
-        `예약 페이지 URL 이 없거나 ${ALLOWED_SITES_TEXT} 밖의 링크인 후보는 제외한다.`,
-        '비슷한 호텔만 고르지 말고 가격대와 지역을 섞어라.',
-        '',
-        '--- 후보 목록 (JSON) ---',
-        candidates,
-      ].join('\n'),
-    });
-
-    trace.rankMs = result.ms;
-
-    const parsed = parseJsonLoose<{ hotels?: RawPick[] }>(result.text);
-    if (!parsed?.hotels?.length) {
-      this.logger.warn(
-        `hotel rank produced no picks city=${query.cityName} status=${result.status} ` +
-          `text=${result.text.slice(0, 200)}`,
-      );
-      return [];
-    }
-
-    this.logger.log(
-      `hotel rank city=${query.cityName} picks=${parsed.hotels.length} ms=${result.ms}`,
-    );
-    return parsed.hotels;
   }
 
   // ------------------------------------------------------------ 정규화
