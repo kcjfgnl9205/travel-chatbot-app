@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import { allowedHost, merchantFrom, toKoreanUrl } from '../../../common/booking-url';
+import { positiveInt, text } from '../../../common/parse';
 import { AppConfig, CONFIG } from '../../../config/app.config';
 import { OpenAiService, parseJsonLoose } from '../../openai/openai.service';
 import { Flight, FlightProvider, FlightQuery, isoDate } from '../flight.types';
@@ -477,13 +478,6 @@ export function conditionsText(query: FlightQuery): string {
 }
 
 // ------------------------------------------------------------------ 헬퍼
-function text(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (!trimmed || trimmed === '정보 없음' || trimmed.toLowerCase() === 'null') return null;
-  return trimmed;
-}
-
 /** IATA 공항 코드는 영문 3자다. */
 function code(value: unknown): string | null {
   const raw = text(value);
@@ -532,10 +526,4 @@ function stops(value: unknown): number | null {
   const n = Number(value);
   if (!Number.isInteger(n) || n < 0 || n > 5) return null;
   return n;
-}
-
-function positiveInt(value: unknown): number | null {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0) return null;
-  return Math.round(n);
 }

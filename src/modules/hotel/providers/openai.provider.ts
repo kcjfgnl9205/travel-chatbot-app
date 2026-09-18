@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import { allowedHost, merchantFrom, toKoreanUrl } from '../../../common/booking-url';
+import { bounded, positiveInt, text } from '../../../common/parse';
 import { AppConfig, CONFIG } from '../../../config/app.config';
 import { OpenAiService, parseJsonLoose } from '../../openai/openai.service';
 import { Hotel, HotelProvider, HotelQuery } from '../hotel.types';
@@ -556,27 +557,6 @@ async function fetchHtml(
   } finally {
     clearTimeout(timer);
   }
-}
-
-// ------------------------------------------------------------------ 헬퍼
-function text(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (!trimmed || trimmed === '정보 없음' || trimmed.toLowerCase() === 'null') return null;
-  return trimmed;
-}
-
-/** 범위를 벗어난 값은 버린다. 모델이 5점 만점 평점을 10점 칸에 넣기도 한다. */
-function bounded(value: unknown, min: number, max: number): number | null {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n < min || n > max) return null;
-  return n;
-}
-
-function positiveInt(value: unknown): number | null {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0) return null;
-  return Math.round(n);
 }
 
 export function merchantOf(url: string): string | null {

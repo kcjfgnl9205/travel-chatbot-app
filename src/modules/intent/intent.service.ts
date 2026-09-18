@@ -1,12 +1,13 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 
+import { clip, text } from '../../common/parse';
 import { AppConfig, CONFIG } from '../../config/app.config';
 import { IntentCacheRepository } from '../database/repositories/intent-cache.repository';
 import { OpenAiService, parseJsonLoose } from '../openai/openai.service';
 import { findCityInText } from '../places/city-table';
 import { findCountryInText, stripDomainWord } from '../places/country-table';
-import { SearchKind, TripType } from '../search/search.types';
+import { SearchKind } from '../search/search.types';
 import {
   ParsedIntent,
   UNKNOWN_INTENT,
@@ -90,6 +91,9 @@ const MAX_ENTRIES = 5000;
 
 const KINDS = new Set<string>(['hotel', 'flight', 'attraction']);
 
+/** 로그에 남기는 발화 길이. 어떤 문장이었는지 알아볼 정도면 충분하다. */
+const LOG_UTTERANCE = 40;
+
 @Injectable()
 export class IntentService {
   private readonly logger = new Logger(IntentService.name);
@@ -102,31 +106,35 @@ export class IntentService {
   ) {}
 
   async extract(utterance: string): Promise<ParsedIntent> {
-    const text = utterance.trim();
-    if (!text) return UNKNOWN_INTENT;
+    const trimmed = utterance.trim();
+    if (!trimmed) return UNKNOWN_INTENT;
 
-    const hash = hashOf(text);
+    const hash = hashOf(trimmed);
     const cached = this.fromMemory(hash) ?? (await this.fromStore(hash));
     if (cached) return cached;
 
     // 대표 명령어("여행지 오사카")는 의도가 확정이고 뒤가 곧 지명이다. 사전에 없는
     // 지명이어도 모델을 안 부른다 — 대표 명령어를 쓰는 사용자는 늘 0원이 된다.
-    const command = fromCommand(text);
+    const command = fromCommand(trimmed);
     if (command) {
-      this.logger.log(`intent (command) "${clip(text)}" → ${command.intent}/${command.place}`);
+      this.logger.log(
+        `intent (command) "${clip(trimmed, LOG_UTTERANCE)}" → ${command.intent}/${command.place}`,
+      );
       return this.remember(hash, command);
     }
 
-    const fast = fromKeywords(text);
+    const fast = fromKeywords(trimmed);
     if (fast) {
-      this.logger.log(`intent (keyword) "${clip(text)}" → ${fast.intent}/${fast.place}`);
+      this.logger.log(
+        `intent (keyword) "${clip(trimmed, LOG_UTTERANCE)}" → ${fast.intent}/${fast.place}`,
+      );
       return this.remember(hash, fast);
     }
 
-    const parsed = await this.askModel(text);
+    const parsed = await this.askModel(trimmed);
     // unknown 은 캐싱하지 않는다. 모델이 한 번 헛돈 것을 일주일씩 굳히면
     // 멀쩡한 질문이 그동안 계속 도움말로 떨어진다.
-    if (parsed.intent === 'unknown') return this.degrade(text, parsed.place);
+    if (parsed.intent === 'unknown') return this.degrade(trimmed, parsed.place);
     return this.remember(hash, parsed);
   }
 
@@ -176,7 +184,7 @@ export class IntentService {
     try {
       const raw = await this.repo.get(hash);
       if (!raw || typeof raw !== 'object') return null;
-      const parsed = normalize(raw as RawIntent, '');
+      const parsed = normalize(raw, '');
       return parsed.intent === 'unknown' ? null : parsed;
     } catch (err) {
       this.logger.warn(`intent cache read failed err=${err}`);
@@ -222,13 +230,13 @@ export class IntentService {
 
       const raw = parseJsonLoose<RawIntent>(result.text);
       if (!raw) {
-        this.logger.warn(`intent parse unreadable text=${clip(result.text)}`);
+        this.logger.warn(`intent parse unreadable text=${clip(result.text, LOG_UTTERANCE)}`);
         return UNKNOWN_INTENT;
       }
 
       const parsed = normalize(raw, utterance);
       this.logger.log(
-        `intent (model) "${clip(utterance)}" → ${parsed.intent}/${parsed.place ?? '-'} ` +
+        `intent (model) "${clip(utterance, LOG_UTTERANCE)}" → ${parsed.intent}/${parsed.place ?? '-'} ` +
           `from=${parsed.from ?? '-'} ms=${result.ms}`,
       );
       return parsed;
@@ -281,7 +289,7 @@ function normalize(raw: RawIntent, utterance: string): ParsedIntent {
     intent,
     place,
     from: text(raw.from),
-    tripType: (raw.trip_type === 'ow' ? 'ow' : 'rt') as TripType,
+    tripType: (raw.trip_type === 'ow' ? 'ow' : 'rt'),
     // 모델이 날짜를 빠뜨려도 고지는 나가야 한다. 정규식으로 한 번 더 훑는다.
     ignored: mergeIgnored(modelIgnored, utterance ? ignoredConditions(utterance) : []),
   };
@@ -303,13 +311,3 @@ function hashOf(utterance: string): string {
   return createHash('sha256').update(key).digest('hex');
 }
 
-function text(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (!trimmed || trimmed.toLowerCase() === 'null') return null;
-  return trimmed;
-}
-
-function clip(text: string): string {
-  return text.slice(0, 40);
-}

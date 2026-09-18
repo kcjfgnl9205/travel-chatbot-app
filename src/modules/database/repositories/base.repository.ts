@@ -49,7 +49,7 @@ export abstract class BaseRepository {
         return null;
       }
       if (data === null || data === undefined) return [];
-      return Array.isArray(data) ? (data as Row[]) : [data as Row];
+      return Array.isArray(data) ? (data as Row[]) : [data];
     } catch (err) {
       this.logger.warn(`supabase ${op} threw on ${this.tableName}: ${err}`);
       return null;

@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import { mapsUrl } from '../../../common/maps-url';
+import { positiveInt, text } from '../../../common/parse';
 import { AppConfig, CONFIG } from '../../../config/app.config';
 import { OpenAiService, parseJsonLoose } from '../../openai/openai.service';
 import { FoundImage, findAttractionImage } from '../attraction-image';
@@ -539,13 +540,6 @@ export class OpenAiAttractionProvider implements AttractionProvider {
 }
 
 // ------------------------------------------------------------------ 헬퍼
-function text(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (!trimmed || trimmed === '정보 없음' || trimmed.toLowerCase() === 'null') return null;
-  return trimmed;
-}
-
 /**
  * 지도에서 검색되는 이름만 남긴다.
  *
@@ -599,10 +593,4 @@ function currencyOf(value: unknown): string | null {
 function category(value: unknown): string | null {
   const raw = text(value);
   return raw && CATEGORIES.includes(raw) ? raw : null;
-}
-
-function positiveInt(value: unknown): number | null {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0) return null;
-  return Math.round(n);
 }

@@ -100,7 +100,7 @@ export class DebugController {
       from,
       cacheKey:
         place && parsed.intent !== 'unknown'
-          ? cacheKeyOf(parsed.intent as SearchKind, place, from, parsed.tripType)
+          ? cacheKeyOf(parsed.intent, place, from, parsed.tripType)
           : null,
       timing: { parseMs, totalMs: Date.now() - started },
       openaiEnabled: openaiEnabled(this.config),
@@ -141,7 +141,7 @@ export class DebugController {
     const place = await this.places.resolve(parsed.place);
     if (!place) return { utterance, intent: parsed, response: cards.helpCard() };
 
-    const kind = parsed.intent as SearchKind;
+    const kind = parsed.intent;
     const parent = await this.places.parentOf(place);
     const from =
       kind === 'flight'

@@ -8,7 +8,7 @@ import { IntentService } from '../intent/intent.service';
 import { TRAVEL_HINT, intentFromKeywords } from '../intent/intent.types';
 import { PlacesService } from '../places/places.service';
 import { SearchService } from '../search/search.service';
-import { RouterRequest, SearchKind } from '../search/search.types';
+import { RouterRequest } from '../search/search.types';
 import * as cards from './cards';
 import * as t from './templates';
 import { cacheKeyOf, needsCursorFallback, offsetOf } from './paging';
@@ -196,11 +196,11 @@ export class RouterController {
     // 4. 의도 + 지역.
     const parsed = await this.intent.extract(req.utterance);
     if (parsed.intent === 'unknown') return cards.helpCard();
-    if (!parsed.place) return cards.askPlaceCard(parsed.intent as SearchKind);
+    if (!parsed.place) return cards.askPlaceCard(parsed.intent);
 
     // 5. 지역 정규화. 모르는 지명도 등록해서 검색까지는 가본다.
     const place = await this.places.resolve(parsed.place);
-    if (!place) return cards.askPlaceCard(parsed.intent as SearchKind);
+    if (!place) return cards.askPlaceCard(parsed.intent);
 
     // 5-b. 나라를 말했으면 검색하지 않고 **그 나라의 도시**로 되묻는다.
     //      나라 단위 검색은 다낭·하노이가 섞인 목록이 되어 아무에게도 쓸모가 없다.
@@ -208,11 +208,11 @@ export class RouterController {
       const cities = await this.places.citiesOf(place);
       // "다른 도시" 를 누를 수 있게, 그 사람의 다음 발화를 지명으로 받을 준비를 해둔다.
       this.pending.remember(req.userKey, {
-        kind: parsed.intent as SearchKind,
+        kind: parsed.intent,
         country: place.canonicalName,
       });
       return cards.askCityInCountry(
-        parsed.intent as SearchKind,
+        parsed.intent,
         place.canonicalName,
         cities,
         parsed.from ?? this.config.flightDefaultOriginName,

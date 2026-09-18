@@ -18,7 +18,7 @@ export class IntentCacheRepository extends BaseRepository {
   }
 
   /** 만료되지 않은 결과. 없으면 null. */
-  async get(hash: string): Promise<unknown | null> {
+  async get(hash: string): Promise<unknown> {
     const row = await this.runOne(
       (t) => t.select('result, expires_at').eq('utterance_hash', hash).limit(1),
       'select intent cache',

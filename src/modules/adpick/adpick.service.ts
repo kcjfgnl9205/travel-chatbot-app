@@ -111,7 +111,10 @@ export class AdpickService {
     if (next) next();
   }
 
-  async convert(sourceUrl: string, merchant?: string | null): Promise<LinkResult> {
+  // ⚠️ merchant 는 받기만 하고 쓰지 않는다. 애드픽은 URL 만 보고 광고주를 판정하므로
+  //    넘길 데가 없다. 호출부(AffiliateService)가 이미 들고 있는 값이라 시그니처에
+  //    남겨두지만, 다른 제휴사를 붙이기 전까지는 죽은 인자다.
+  async convert(sourceUrl: string, _merchant?: string | null): Promise<LinkResult> {
     if (!sourceUrl) {
       return {
         sourceUrl,

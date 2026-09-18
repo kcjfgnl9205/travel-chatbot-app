@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 
 import { applySubid } from '../adpick/adpick.service';
-import { AffiliateService, ResolvedLink } from '../affiliate/affiliate.service';
+import { AffiliateService } from '../affiliate/affiliate.service';
 import { AppConfig, CONFIG, redirectUrl } from '../../config/app.config';
 import { MemoryStoreService } from '../database/memory-store.service';
 import {

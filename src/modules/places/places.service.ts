@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
+import { clip, text } from '../../common/parse';
 import { AppConfig, CONFIG } from '../../config/app.config';
 import {
   PlaceAliasesRepository,
@@ -407,7 +408,7 @@ export class PlacesService {
       if (!parsed || !name) {
         // ⚠️ 조용히 null 을 주면 원문 그대로 등록되고(kind=area) 나라가 지역으로 검색된다.
         //    로그가 없으면 "왜 되묻지 않지?" 를 영영 못 찾는다 — 실제로 그랬다.
-        this.logger.warn(`place lookup returned no name raw=${raw} text=${clip(result.text)}`);
+        this.logger.warn(`place lookup returned no name raw=${raw} text=${clip(result.text, 120)}`);
         return null;
       }
 
@@ -534,17 +535,6 @@ function toCityChoices(raw: unknown): CityChoice[] {
       return { name: String(city?.name ?? '').trim(), blurb: text(city?.blurb) };
     })
     .filter((city) => city.name);
-}
-
-function clip(text: string): string {
-  return text.slice(0, 120);
-}
-
-function text(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (!trimmed || trimmed.toLowerCase() === 'null') return null;
-  return trimmed;
 }
 
 function upper(value: unknown, length: number): string | null {
