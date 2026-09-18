@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 
+import { fetchWithTimeout } from '../../common/fetch';
 import { AppConfig, CONFIG, adpickApiEnabled } from '../../config/app.config';
 
 /**
@@ -152,17 +153,12 @@ export class AdpickService {
   }
 
   private async request(url: URL): Promise<unknown> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.config.adpickTimeoutMs);
-    try {
-      const res = await fetch(url, { signal: controller.signal });
+    return fetchWithTimeout(url, {}, this.config.adpickTimeoutMs, async (res) => {
       if (!res.ok) {
         throw new Error(`HTTP ${res.status} for url '${this.redact(url.toString())}'`);
       }
-      return await res.json();
-    } finally {
-      clearTimeout(timer);
-    }
+      return res.json();
+    });
   }
 
   // ---------------------------------------------------------------- 내부

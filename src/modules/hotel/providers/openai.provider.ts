@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import { allowedHost, merchantFrom, toKoreanUrl } from '../../../common/booking-url';
+import { fetchWithTimeout } from '../../../common/fetch';
 import { bounded, positiveInt, text } from '../../../common/parse';
 import { AppConfig, CONFIG } from '../../../config/app.config';
 import { OpenAiService, parseJsonLoose } from '../../openai/openai.service';
@@ -520,42 +521,45 @@ async function fetchHtml(
   timeoutMs: number,
   maxBytes: number,
 ): Promise<string | null> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      redirect: 'follow',
-      headers: {
-        'user-agent': BROWSER_UA,
-        accept: 'text/html,application/xhtml+xml',
-        'accept-language': 'ko-KR,ko;q=0.9',
+    return await fetchWithTimeout(
+      url,
+      {
+        redirect: 'follow',
+        headers: {
+          'user-agent': BROWSER_UA,
+          accept: 'text/html,application/xhtml+xml',
+          'accept-language': 'ko-KR,ko;q=0.9',
+        },
       },
-    });
-    if (!res.ok) return null;
-    if (!(res.headers.get('content-type') ?? '').includes('text/html')) return null;
+      timeoutMs,
+      // ⚠️ 여기서 시계가 계속 돈다는 게 중요하다 — 본문을 찔끔찔끔 흘리는 페이지를
+      //    만나도 timeoutMs 에서 끊긴다.
+      async (res) => {
+        if (!res.ok) return null;
+        if (!(res.headers.get('content-type') ?? '').includes('text/html')) return null;
 
-    const reader = res.body?.getReader();
-    if (!reader) return null;
+        const reader = res.body?.getReader();
+        if (!reader) return null;
 
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    try {
-      while (size < maxBytes) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        size += value.length;
-      }
-    } finally {
-      // 다 안 읽고 끊는다. 취소하지 않으면 연결이 남는다.
-      await reader.cancel().catch(() => undefined);
-    }
-    return Buffer.concat(chunks).toString('utf8');
+        const chunks: Uint8Array[] = [];
+        let size = 0;
+        try {
+          while (size < maxBytes) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            size += value.length;
+          }
+        } finally {
+          // 다 안 읽고 끊는다. 취소하지 않으면 연결이 남는다.
+          await reader.cancel().catch(() => undefined);
+        }
+        return Buffer.concat(chunks).toString('utf8');
+      },
+    );
   } catch {
     return null;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -585,21 +589,21 @@ async function isLiveImage(url: string): Promise<boolean> {
   return ranged ? acceptable(ranged) : false;
 }
 
+/** 죽은 주소 하나 때문에 카드 전체를 늦출 수는 없다. */
+const PROBE_TIMEOUT_MS = 2000;
+
 async function probe(
   url: string,
   method: 'HEAD' | 'GET',
   headers: Record<string, string> = {},
 ): Promise<Response | null> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 2000);
   try {
-    const res = await fetch(url, { method, headers, signal: controller.signal });
-    // 요청 자체는 성공했으므로 판정은 호출부에 맡긴다.
-    await res.body?.cancel().catch(() => undefined);
-    return res;
+    return await fetchWithTimeout(url, { method, headers }, PROBE_TIMEOUT_MS, async (res) => {
+      // 요청 자체는 성공했으므로 판정은 호출부에 맡긴다.
+      await res.body?.cancel().catch(() => undefined);
+      return res;
+    });
   } catch {
     return null;
-  } finally {
-    clearTimeout(timer);
   }
 }

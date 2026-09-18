@@ -27,6 +27,8 @@
  *    줄마다 출처를 달 자리가 없다. 지금은 카드 하단 버튼으로 출처를 밝힌다.
  */
 
+import { fetchWithTimeout } from '../../common/fetch';
+
 /** 이미지를 찾을 언어판. 순서가 곧 우선순위다. */
 const WIKIS = ['ko', 'en'] as const;
 export type WikiLang = (typeof WIKIS)[number];
@@ -170,25 +172,24 @@ export function searchUrl(lang: WikiLang, name: string, cityName: string): strin
 const WIKI_UA = 'travel-chatbot/0.1 (https://bot.nolmoa.com)';
 
 async function fetchPages(url: string, timeoutMs: number): Promise<WikiPage[]> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      headers: { 'user-agent': WIKI_UA, accept: 'application/json' },
-    });
-    if (!res.ok) return [];
-    const body = (await res.json()) as { query?: { pages?: unknown } };
-    const pages = body.query?.pages;
-    // formatversion=1 은 객체, 2 는 배열로 준다. 둘 다 받아둔다.
-    if (Array.isArray(pages)) return pages as WikiPage[];
-    if (pages && typeof pages === 'object') return Object.values(pages) as WikiPage[];
-    return [];
+    return await fetchWithTimeout(
+      url,
+      { headers: { 'user-agent': WIKI_UA, accept: 'application/json' } },
+      timeoutMs,
+      async (res) => {
+        if (!res.ok) return [];
+        const body = (await res.json()) as { query?: { pages?: unknown } };
+        const pages = body.query?.pages;
+        // formatversion=1 은 객체, 2 는 배열로 준다. 둘 다 받아둔다.
+        if (Array.isArray(pages)) return pages as WikiPage[];
+        if (pages && typeof pages === 'object') return Object.values(pages) as WikiPage[];
+        return [];
+      },
+    );
   } catch {
     // 사진은 있으면 좋은 것이지 없으면 안 되는 것이 아니다. 실패는 조용히 넘긴다.
     return [];
-  } finally {
-    clearTimeout(timer);
   }
 }
 

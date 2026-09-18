@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
+import { FetchTimeoutError, fetchWithTimeout } from '../../common/fetch';
 import { AppConfig, CONFIG, openaiEnabled } from '../../config/app.config';
 
 /**
@@ -205,28 +206,30 @@ export class OpenAiService {
 
   private async post(payload: Record<string, unknown>, timeoutMs: number): Promise<unknown> {
     const url = `${this.config.openaiApiBase.replace(/\/+$/, '')}/responses`;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: requestHeaders(this.config),
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
-
-      if (!res.ok) {
-        const detail = this.redact((await res.text().catch(() => '')).slice(0, 500));
-        throw new OpenAiHttpError(res.status, detail);
-      }
-      return await res.json();
+      return await fetchWithTimeout(
+        url,
+        {
+          method: 'POST',
+          headers: requestHeaders(this.config),
+          body: JSON.stringify(payload),
+        },
+        timeoutMs,
+        async (res) => {
+          if (!res.ok) {
+            const detail = this.redact((await res.text().catch(() => '')).slice(0, 500));
+            throw new OpenAiHttpError(res.status, detail);
+          }
+          return res.json();
+        },
+      );
     } catch (err) {
       if (err instanceof OpenAiHttpError) throw err;
-      if (controller.signal.aborted) throw new Error(`openai timeout after ${timeoutMs}ms`);
+      // 어느 호출이 늦었는지 알아야 해서 'openai' 를 붙인다 — 이 메시지는 검색이
+      // 빈손으로 끝난 이유를 추적할 때 로그에서 그대로 찾는 문자열이다.
+      if (err instanceof FetchTimeoutError) throw new Error(`openai timeout after ${timeoutMs}ms`);
       throw new Error(this.redact(String(err instanceof Error ? err.message : err)));
-    } finally {
-      clearTimeout(timer);
     }
   }
 

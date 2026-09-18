@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
+import { fetchWithTimeout } from '../../common/fetch';
 import { AppConfig, CONFIG } from '../../config/app.config';
 import { AttractionService } from '../attraction/attraction.service';
 import { MessagesRepository } from '../database/repositories/messages.repository';
@@ -333,25 +334,26 @@ export class SearchService {
   private async push(req: RouterRequest, body: t.Json): Promise<void> {
     if (!req.callbackUrl) return;
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.config.kakaoCallbackTimeoutMs);
     try {
-      const res = await fetch(req.callbackUrl, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-      if (!res.ok) {
-        const detail = (await res.text().catch(() => '')).slice(0, 200);
-        this.logger.warn(`kakao callback rejected status=${res.status} body=${detail}`);
-        return;
-      }
-      this.logger.log('kakao callback delivered');
+      await fetchWithTimeout(
+        req.callbackUrl,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+        this.config.kakaoCallbackTimeoutMs,
+        async (res) => {
+          if (!res.ok) {
+            const detail = (await res.text().catch(() => '')).slice(0, 200);
+            this.logger.warn(`kakao callback rejected status=${res.status} body=${detail}`);
+            return;
+          }
+          this.logger.log('kakao callback delivered');
+        },
+      );
     } catch (err) {
       this.logger.warn(`kakao callback failed err=${err}`);
-    } finally {
-      clearTimeout(timer);
     }
   }
 
