@@ -253,16 +253,7 @@ const RANK_INSTRUCTIONS = [
  *    컨트롤러가 /debug/search 하나로 합쳐지면서 사라졌고, 로그에 찍히는 건 trace 가
  *    아니라 respond() 의 반환값이다. 남겨둔 이유와 정리 방향은 TwoStageTrace 주석 참고.
  */
-export interface AttractionSearchTrace extends TwoStageTrace {
-  /** 이름이 없어서 버린 수. 관광지는 URL 검증이 없으므로 이게 유일한 탈락 사유다. */
-  droppedInvalid: number;
-  attractions: number;
-  /** 위키백과에서 사진을 찾은 수. 전부 채워지지 않는 게 정상이다(실측 87%). */
-  images: number;
-  /** 언어판별 성공 수 (ko / en). 영문명을 받는 게 값을 하는지 여기서 보인다. */
-  imageLangs: Record<string, number>;
-  imageMs: number;
-}
+export type AttractionSearchTrace = TwoStageTrace;
 
 export interface TracedAttractionSearch {
   attractions: Attraction[];
@@ -333,23 +324,11 @@ export class OpenAiAttractionProvider
 
   /** search() 와 같은 흐름이되 단계별 소요 시간을 같이 돌려준다. */
   async searchTraced(query: AttractionQuery): Promise<TracedAttractionSearch> {
-    const started = Date.now();
-    const trace: AttractionSearchTrace = {
-      ...newTwoStageTrace(),
-      droppedInvalid: 0,
-      attractions: 0,
-      images: 0,
-      imageLangs: {},
-      imageMs: 0,
-    };
+    const trace: AttractionSearchTrace = newTwoStageTrace();
     const done = (
       attractions: Attraction[],
       candidates: string | null,
-    ): TracedAttractionSearch => {
-      trace.attractions = attractions.length;
-      trace.totalMs = Date.now() - started;
-      return { attractions, trace, candidates };
-    };
+    ): TracedAttractionSearch => ({ attractions, trace, candidates });
 
     if (!this.openai.enabled) {
       this.logger.warn('OPENAI_API_KEY 가 없어 관광지 검색을 건너뛴다');
@@ -360,8 +339,8 @@ export class OpenAiAttractionProvider
     if (!candidates) return done([], null);
 
     const picks = await this.rank<RawPick>(query, candidates, trace);
-    const attractions = this.toAttractions(picks, query, trace);
-    return done(await this.withImages(attractions, query, trace), candidates);
+    const attractions = this.toAttractions(picks, query);
+    return done(await this.withImages(attractions, query), candidates);
   }
 
   // ------------------------------------------------------ 3차: 대표 이미지
@@ -381,15 +360,13 @@ export class OpenAiAttractionProvider
   private async withImages(
     attractions: Attraction[],
     query: AttractionQuery,
-    trace: AttractionSearchTrace,
   ): Promise<Attraction[]> {
     if (!this.config.attractionImages || !attractions.length) return attractions;
 
-    const started = Date.now();
     // 영어판 검색어에 쓸 도시명. 슬러그가 이미 영문이다 (ho-chi-minh → ho chi minh).
     const cityNameEn = query.citySlug.replace(/-/g, ' ');
 
-    const resolved = await Promise.all(
+    return Promise.all(
       attractions.map(async (attraction) => {
         const found: FoundImage | null = await findAttractionImage(
           attraction.name,
@@ -403,34 +380,24 @@ export class OpenAiAttractionProvider
           return attraction;
         }
 
-        trace.images += 1;
-        trace.imageLangs[found.lang] = (trace.imageLangs[found.lang] ?? 0) + 1;
+        // 어느 언어판에서 건졌는지 남긴다 — 영문명을 받는 게 값을 하는지는
+        // 이 로그의 ko/en 비율로 본다 (실측 커버리지 ko 62% → ko+en 87%).
         this.logger.log(
           `image ${found.lang} attraction=${attraction.name} doc=${found.title}`,
         );
         return { ...attraction, imageUrl: found.url };
       }),
     );
-
-    trace.imageMs = Date.now() - started;
-    return resolved;
   }
 
   // ------------------------------------------------------------ 정규화
-  private toAttractions(
-    picks: RawPick[],
-    query: AttractionQuery,
-    trace: AttractionSearchTrace,
-  ): Attraction[] {
+  private toAttractions(picks: RawPick[], query: AttractionQuery): Attraction[] {
     const attractions: Attraction[] = [];
 
     for (const pick of picks) {
       // 이름이 없으면 지도 검색어를 만들 수 없다. 관광지에서 유일한 필수값이다.
       const name = placeName(pick.name);
-      if (!name) {
-        trace.droppedInvalid += 1;
-        continue;
-      }
+      if (!name) continue;
 
       const free = typeof pick.free === 'boolean' ? pick.free : null;
       // 통화를 모르면 금액도 버린다. 숫자만 남기면 카드에서 '1,200' 이 되는데

@@ -206,10 +206,7 @@ const RANK_INSTRUCTIONS = [
  *    컨트롤러가 /debug/search 하나로 합쳐지면서 사라졌고, 로그에 찍히는 건 trace 가
  *    아니라 respond() 의 반환값이다. 남겨둔 이유와 정리 방향은 TwoStageTrace 주석 참고.
  */
-export interface FlightSearchTrace extends TwoStageTrace {
-  droppedUntrusted: number;
-  flights: number;
-}
+export type FlightSearchTrace = TwoStageTrace;
 
 export interface TracedFlightSearch {
   flights: Flight[];
@@ -296,17 +293,12 @@ export class OpenAiFlightProvider
 
   /** search() 와 같은 흐름이되 단계별 소요 시간을 같이 돌려준다. */
   async searchTraced(query: FlightQuery): Promise<TracedFlightSearch> {
-    const started = Date.now();
-    const trace: FlightSearchTrace = {
-      ...newTwoStageTrace(),
-      droppedUntrusted: 0,
-      flights: 0,
-    };
-    const done = (flights: Flight[], candidates: string | null): TracedFlightSearch => {
-      trace.flights = flights.length;
-      trace.totalMs = Date.now() - started;
-      return { flights, trace, candidates };
-    };
+    const trace: FlightSearchTrace = newTwoStageTrace();
+    const done = (flights: Flight[], candidates: string | null): TracedFlightSearch => ({
+      flights,
+      trace,
+      candidates,
+    });
 
     if (!this.openai.enabled) {
       this.logger.warn('OPENAI_API_KEY 가 없어 항공권 검색을 건너뛴다');
@@ -317,24 +309,20 @@ export class OpenAiFlightProvider
     if (!candidates) return done([], null);
 
     const picks = await this.rank<RawPick>(query, candidates, trace);
-    return done(this.toFlights(picks, query, trace), candidates);
+    return done(this.toFlights(picks, query), candidates);
   }
 
   // ------------------------------------------------------------ 정규화
-  private toFlights(picks: RawPick[], query: FlightQuery, trace: FlightSearchTrace): Flight[] {
+  private toFlights(picks: RawPick[], query: FlightQuery): Flight[] {
     const flights: Flight[] = [];
 
     for (const pick of picks) {
       const airline = text(pick.airline);
       const sourceUrl = text(pick.source_url);
-      if (!airline || !sourceUrl) {
-        trace.droppedUntrusted += 1;
-        continue;
-      }
+      if (!airline || !sourceUrl) continue;
 
       // 링크가 없으면 카드를 만들 수 없다. 지어낸 호스트도 여기서 걸린다.
       if (!isAllowedFlightUrl(sourceUrl)) {
-        trace.droppedUntrusted += 1;
         this.logger.warn(`dropped flight with untrusted url airline=${airline} url=${sourceUrl}`);
         continue;
       }

@@ -4,7 +4,6 @@ import {
   Body,
   Controller,
   Inject,
-  Logger,
   NotFoundException,
   Post,
   Headers,
@@ -50,8 +49,6 @@ import {
 })
 @Controller('api/v1/debug')
 export class DebugController {
-  private readonly logger = new Logger(DebugController.name);
-
   constructor(
     @Inject(CONFIG) private readonly config: AppConfig,
     private readonly intent: IntentService,

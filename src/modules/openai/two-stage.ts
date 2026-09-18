@@ -81,7 +81,6 @@ export abstract class TwoStageSearch<TQuery> {
 
     trace.searchMs = result.ms;
     trace.searchCalls = result.searchCalls;
-    trace.candidateChars = result.text.length;
 
     // 검색을 한 번도 안 돌았으면 모델이 기억으로 답한 것이다 — URL 과 가격이 특히 위험하다.
     if (!result.searchCalls) {
@@ -144,22 +143,19 @@ export abstract class TwoStageSearch<TQuery> {
 /**
  * 2단 검색 한 번에 대한 계측. 도메인 trace 가 이걸 확장한다.
  *
- * ⚠️ **지금 이 값을 읽는 코드가 없다.** 원래는 진단 엔드포인트
- *    (/api/v1/debug/{hotel,flight,attraction}-search)가 "어디서 몇 초가 녹았는지" 를
- *    보여주려고 모았는데, 그 컨트롤러들이 /debug/search 하나로 합쳐지면서 사라졌다.
- *    로그에 찍히는 건 여기 담긴 값이 아니라 respond() 의 반환값이다.
+ * **읽는 쪽은 테스트다.** 원래는 진단 엔드포인트(/api/v1/debug/{도메인}-search)가
+ * 보여주려고 모았는데 그 컨트롤러들이 /debug/search 하나로 합쳐지면서 사라졌고,
+ * 지금 이 값을 보는 건 파이프라인이 제 순서로 도는지 확인하는 테스트뿐이다.
  *
- *    남겨둔 이유는 채우는 비용이 사실상 0이고, 진단 화면을 다시 붙일 때 계측 지점을
- *    처음부터 다시 찾는 게 훨씬 비싸기 때문이다. 정말 안 쓸 거면 세 trace 인터페이스와
- *    searchTraced() 를 통째로 지우는 게 맞다 — 반쯤 남겨두는 게 제일 나쁘다.
+ * ⚠️ **그래서 읽는 사람이 없는 필드는 두지 않는다.** totalMs·candidateChars 처럼
+ *    채우기만 하던 칸이 있었는데, 그런 칸은 나중에 증가를 멈춰도 아무도 모른다 —
+ *    틀린 계측은 없는 계측보다 나쁘다. 필드를 늘릴 거면 읽는 쪽을 같이 만든다.
  */
 export interface TwoStageTrace {
   searchMs: number;
   rankMs: number;
-  totalMs: number;
   /** 모델이 web_search 를 실제로 돌린 횟수. 0 이면 기억으로 답한 것이다. */
   searchCalls: number;
-  candidateChars: number;
   /** 1차 호출이 모아온 후보 개수. 0 이면 검색 프롬프트가 안 먹은 것이다. */
   candidates: number;
   /** 2차 호출이 고른 개수 (필터 전). */
@@ -168,13 +164,5 @@ export interface TwoStageTrace {
 
 /** 공통 필드를 0으로. 도메인 필드는 호출부가 덧붙인다. */
 export function newTwoStageTrace(): TwoStageTrace {
-  return {
-    searchMs: 0,
-    rankMs: 0,
-    totalMs: 0,
-    searchCalls: 0,
-    candidateChars: 0,
-    candidates: 0,
-    picks: 0,
-  };
+  return { searchMs: 0, rankMs: 0, searchCalls: 0, candidates: 0, picks: 0 };
 }

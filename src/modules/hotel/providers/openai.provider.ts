@@ -128,15 +128,12 @@ export const HOTEL_SCHEMA = {
  *    아니라 respond() 의 반환값이다. 남겨둔 이유와 정리 방향은 TwoStageTrace 주석 참고.
  */
 export interface SearchTrace extends TwoStageTrace {
-  thumbnailMs: number;
-  droppedUntrusted: number;
   /** 살아 있지 않아서 버린 이미지 주소 수. */
   droppedThumbnails: number;
   /** 최종적으로 이미지가 붙은 호텔 수. */
   thumbnails: number;
   /** 어느 층에서 건졌는지 (og / ld / photo). 층별 성공률을 봐야 손볼 데가 보인다. */
   thumbnailSources: Record<string, number>;
-  hotels: number;
 }
 
 export interface TracedSearch {
@@ -277,21 +274,17 @@ export class OpenAiHotelProvider
 
   /** search() 와 같은 흐름이되 단계별 소요 시간을 같이 돌려준다. */
   async searchTraced(query: HotelQuery): Promise<TracedSearch> {
-    const started = Date.now();
     const trace: SearchTrace = {
       ...newTwoStageTrace(),
-      thumbnailMs: 0,
-      droppedUntrusted: 0,
       droppedThumbnails: 0,
       thumbnails: 0,
       thumbnailSources: {},
-      hotels: 0,
     };
-    const done = (hotels: Hotel[], candidates: string | null): TracedSearch => {
-      trace.hotels = hotels.length;
-      trace.totalMs = Date.now() - started;
-      return { hotels, trace, candidates };
-    };
+    const done = (hotels: Hotel[], candidates: string | null): TracedSearch => ({
+      hotels,
+      trace,
+      candidates,
+    });
 
     if (!this.openai.enabled) {
       this.logger.warn('OPENAI_API_KEY 가 없어 호텔 검색을 건너뛴다');
@@ -302,24 +295,19 @@ export class OpenAiHotelProvider
     if (!candidates) return done([], null);
 
     const picks = await this.rank<RawPick>(query, candidates, trace);
-    const normalized = this.toHotels(picks, query, trace);
+    const normalized = this.toHotels(picks, query);
 
-    const thumbStarted = Date.now();
-    const hotels = await this.withThumbnails(normalized, trace);
-    trace.thumbnailMs = Date.now() - thumbStarted;
-
-    return done(hotels, candidates);
+    return done(await this.withThumbnails(normalized, trace), candidates);
   }
 
   // ------------------------------------------------------------ 정규화
-  private toHotels(picks: RawPick[], query: HotelQuery, trace: SearchTrace): Hotel[] {
+  private toHotels(picks: RawPick[], query: HotelQuery): Hotel[] {
     const hotels: Hotel[] = [];
 
     for (const pick of picks) {
       const name = text(pick.name);
       const sourceUrl = text(pick.source_url);
       if (!name || !sourceUrl) {
-        trace.droppedUntrusted += 1;
         // ⚠️ **조용히 버리면 안 된다.** 스키마상 필수인 값이라 빠질 리 없다고 생각했지만,
         //    effort 를 내리면 모델이 빈 문자열이나 "정보 없음" 을 채워 보낸다. 그러면
         //    picks=10 인데 결과는 0건이 되고, 로그에 아무 흔적이 없어 원인을 못 찾는다.
@@ -331,7 +319,6 @@ export class OpenAiHotelProvider
 
       // 링크가 없으면 카드 줄을 만들 수 없다. 지어낸 호스트도 여기서 걸린다.
       if (!isAllowedSourceUrl(sourceUrl)) {
-        trace.droppedUntrusted += 1;
         this.logger.warn(`dropped hotel with untrusted url name=${name} url=${sourceUrl}`);
         continue;
       }
