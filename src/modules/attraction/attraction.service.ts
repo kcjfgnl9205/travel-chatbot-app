@@ -116,6 +116,15 @@ export class AttractionService implements SearchDomain<Attraction> {
         //    입장료는 현지 통화(엔·바트·동)라 비교 불가능한 숫자가 섞인다.
         //    (0003 마이그레이션 주석 참고)
         priceFrom: null,
+        // 대신 통화와 함께 도메인 칸에 남긴다. 0003 이 막은 건 "원화 칸에 엔을 넣는 것"
+        // 이지 입장료를 남기는 것이 아니다. category 는 2차 호출의 "카테고리를 섞어라"
+        // 지시가 실제로 값을 하는지 보려고 같이 담는다.
+        meta: {
+          admissionFee: attraction.admissionFee,
+          admissionCurrency: attraction.admissionCurrency,
+          durationMinutes: attraction.durationMinutes,
+          category: attraction.category,
+        },
       })),
       ctx,
       { provider: this.provider.name },

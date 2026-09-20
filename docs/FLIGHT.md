@@ -282,10 +282,10 @@ flight:{출발 place_id}>{도착 place_id}:{rt|ow}
 | 컬럼 | 호텔 | 항공권 |
 |---|---|---|
 | `recommendations.city_slug` | 도시 | **도착지** |
-| `recommendation_items.hotel_name` | 호텔명 | **`대한항공 KE723 ICN→KIX`** |
+| `recommendation_items.item_name` | 항목명 | **`대한항공 KE723 ICN→KIX`** |
 | `recommendation_items.thumbnail_url` | 썸네일 | `null` |
 
-`hotel_name` 컬럼이지만 담기는 건 "노출된 항목의 이름"이다(0002 마이그레이션 주석 참고). 나중에 로그에서 알아볼 수 있게 항공사·편명·구간을 합쳐 넣는다.
+담기는 건 "노출된 항목의 이름"이다. 나중에 로그에서 알아볼 수 있게 항공사·편명·구간을 합쳐 넣는다 (0007 전에는 `hotel_name` 이었다).
 
 ---
 

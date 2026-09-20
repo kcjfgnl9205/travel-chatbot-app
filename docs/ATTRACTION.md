@@ -303,7 +303,7 @@ mapUrl = mapsUrl(관광지명, 도시명)
 
 | 컬럼 | 값 |
 |---|---|
-| `recommendation_items.hotel_name` | 관광지 이름 |
+| `recommendation_items.item_name` | 관광지 이름 |
 | `recommendation_items.source_url` | `mapUrl` |
 | `recommendation_items.target_url` | `mapUrl` (변환 없음) |
 | `recommendation_items.affiliate_link_id` | **`null`** — 정상이다 |

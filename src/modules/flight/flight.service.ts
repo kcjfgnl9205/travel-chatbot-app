@@ -120,6 +120,14 @@ export class FlightService implements SearchDomain<Flight> {
         description: listRowDescription(flight),
         priceFrom: flight.priceFrom,
         merchant: flight.merchant,
+        // 카드 한 줄로 합쳐져 버리는 값들. 직항이 경유보다 얼마나 눌리는지는
+        // 이 칸이 없으면 영영 못 본다 (label 에서 되파싱할 수는 없다).
+        meta: {
+          airline: flight.airline,
+          stops: flight.stops,
+          cabin: flight.cabin,
+          durationMinutes: flight.durationMinutes,
+        },
       })),
       ctx,
       { provider: this.provider.name, links },

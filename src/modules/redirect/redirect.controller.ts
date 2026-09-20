@@ -49,7 +49,7 @@ export class RedirectController {
     const fallback = row ? null : this.memory.registerClick(clickId);
 
     const targetUrl = (row?.target_url as string) ?? fallback?.targetUrl ?? null;
-    const itemName = (row?.hotel_name as string) ?? fallback?.itemName ?? null;
+    const itemName = (row?.item_name as string) ?? fallback?.itemName ?? null;
     const clickCount = (row?.click_count as number) ?? fallback?.clickCount ?? null;
 
     if (!targetUrl) {

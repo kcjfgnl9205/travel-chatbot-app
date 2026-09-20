@@ -144,7 +144,9 @@ erDiagram
         uuid affiliate_link_id FK
         int position "줄 순서"
         text click_id UK "리다이렉트 키"
-        text hotel_name "스냅샷"
+        text domain "hotel | flight | attraction"
+        text item_name "스냅샷"
+        jsonb item_meta "도메인 고유 스냅샷"
         int price_from "스냅샷"
         text source_url "스냅샷 = 호텔 신원"
         text target_url "스냅샷 = 302 목적지"
@@ -244,7 +246,7 @@ latency_ms = 143          ← 카카오 5초 예산 대비 여유 추적
 
 3번째 줄을 3번 눌렀다면:
 
-| position | click_id | hotel_name | source_url | click_count | last_clicked_at |
+| position | click_id | item_name | source_url | click_count | last_clicked_at |
 |---|---|---|---|---|---|
 | 0 | `38JR4yL5V` | 호텔 한큐 리스파이어 | `agoda.com/…/555` | 0 | — |
 | 1 | `fZuJ2sSV4` | 칸데오 호텔 남바 | `agoda.com/…/777` | 0 | — |
@@ -253,7 +255,8 @@ latency_ms = 143          ← 카카오 5초 예산 대비 여유 추적
 4가지를 동시에 한다:
 
 1. **`click_id`** — 줄 링크(`/r/{click_id}`)의 키. 클릭이 들어오면 여기서 역추적한다.
-2. **스냅샷** — `hotel_name` / `price_from` / `source_url` / `target_url` / `thumbnail_url` 을 그 시점 값으로 **복사**. 캠페인이 바뀌거나 AI 가 다음번에 다른 값을 줘도 *"그때 사용자가 본 화면"* 이 복원된다.
+2. **스냅샷** — `item_name` / `price_from` / `source_url` / `target_url` / `thumbnail_url` 을 그 시점 값으로 **복사**. 캠페인이 바뀌거나 AI 가 다음번에 다른 값을 줘도 *"그때 사용자가 본 화면"* 이 복원된다.
+5. **도메인별 스냅샷** — 공통 칸에 안 들어가는 값은 `domain` + `item_meta`(jsonb)가 받는다. 아래 참고.
 3. **노출 로그** — 클릭 안 된 줄도 남는다.
 4. **클릭 카운터** — `click_count` / `first_clicked_at` / `last_clicked_at`.
 
@@ -372,16 +375,17 @@ select utterance, count(*) from messages
 where parsed_city is null group by 1 order by 2 desc limit 50;
 
 -- 호텔별 노출 대비 클릭률(CTR)
--- ⚠️ hotel_name 으로 묶으면 안 된다. AI 가 표기를 매번 다르게 준다.
+-- ⚠️ item_name 으로 묶으면 안 된다. AI 가 표기를 매번 다르게 준다.
 --    source_url 이 호텔의 유일한 신원이다.
 -- 노출과 클릭이 같은 행에 있어서 join 이 없다.
 select source_url,
-       max(hotel_name) as 표시명,
+       max(item_name) as 표시명,
        count(*)        as 노출,
        count(*) filter (where click_count > 0) as 클릭된줄,
        sum(click_count)                        as 총클릭,
        round(100.0 * count(*) filter (where click_count > 0) / count(*), 1) as ctr
 from recommendation_items
+where domain = 'hotel'
 group by 1 order by ctr desc;
 
 -- 줄 순서가 클릭에 미치는 영향 → 정렬 로직 튜닝 근거
@@ -391,7 +395,7 @@ select position,
 from recommendation_items group by 1 order by 1;
 
 -- 재클릭이 많은 호텔 (총클릭 / 클릭된줄 이 크면 반복 조회)
-select hotel_name, click_count, first_clicked_at, last_clicked_at
+select item_name, click_count, first_clicked_at, last_clicked_at
 from recommendation_items where click_count > 1 order by click_count desc limit 20;
 
 -- 애드픽 변환 실패 (수익 누수 지점)
@@ -436,4 +440,46 @@ from affiliate_links;
 `users` · `messages` · `recommendations` · `recommendation_items` · `affiliate_links` 를 그대로 쓴다.
 (`affiliate_links` 는 `source_url → affiliate_url` 매핑이라 도메인 중립적이다.)
 
-`recommendation_items.hotel_name` 만 도메인 중립적인 이름(`item_name`)으로 바꾸면 더 깔끔하다.
+`recommendation_items.hotel_name` 은 0007 에서 `item_name` 으로 바꿨다.
+
+### 도메인별로 다르게 남기기 (0007)
+
+세 도메인이 **남길 값은 같지 않다.** 관광지 입장료는 현지 통화(엔·바트·동)라 `price_from`
+(단위: 원)에 넣을 수 없고, 항공편의 경유 횟수나 호텔 평점은 담을 칸이 아예 없었다.
+그래서 0007 이 두 칸을 더한다.
+
+| 컬럼 | 쓰임 |
+|---|---|
+| `domain` | `recommendations.domain` 의 사본. **조인 없이** 도메인별로 보려고 둔다 |
+| `item_meta` | 도메인 고유 스냅샷 (jsonb). 키는 앱의 필드명(camelCase) 그대로 |
+
+담기는 값 — `rows()` 가 채운다:
+
+| 도메인 | `item_meta` |
+|---|---|
+| 관광지 | `admissionFee` · `admissionCurrency` · `durationMinutes` · `category` |
+| 호텔 | `starRating` · `reviewScore` |
+| 항공권 | `airline` · `stops` · `cabin` · `durationMinutes` |
+
+> **왜 컬럼을 늘리거나 테이블을 나누지 않았나** — 도메인별 컬럼은 나머지 두 도메인에서
+> 항상 null 이 된다(`thumbnail_url` 이 이미 그 모양이다). 도메인별 테이블은 노출 1건당
+> INSERT 가 2번이 되는데, 이 테이블에 쓰는 코드는 **카카오 5초 예산 안에서 돈다**
+> (`rows.service` 가 응답 전에 `await` 한다). 집계가 굳으면 그때 그 필드만 컬럼으로
+> 승격하면 된다.
+
+> ⚠️ **왜 `search_results` 로는 안 되나** — 거기에 도메인 객체가 통째로 있지만 그건
+> **캐시라서 갱신되면 덮어써진다.** "그때 사용자가 본 입장료" 는 스냅샷에만 남는다.
+
+```sql
+-- 관광지: 카테고리별 CTR (2차 호출의 "카테고리를 섞어라" 가 값을 하는지)
+select item_meta->>'category' as category,
+       count(*) as 노출,
+       count(*) filter (where click_count > 0) as 클릭된줄
+from recommendation_items where domain = 'attraction' group by 1 order by 2 desc;
+
+-- 항공권: 직항이 경유보다 얼마나 눌리나
+select (item_meta->>'stops')::int as 경유횟수,
+       count(*) as 노출,
+       count(*) filter (where click_count > 0) as 클릭된줄
+from recommendation_items where domain = 'flight' group by 1 order by 1;
+```

@@ -74,6 +74,67 @@ describe('노출 기록 + 클릭 링크 발급', () => {
     expect(link.endsWith(String(inserted[0][0].click_id))).toBe(true);
   });
 
+  // ------------------------------------------------------- 도메인별 스냅샷
+  describe('도메인별로 남는 값', () => {
+    it('행에 domain 이 박힌다 — 집계할 때 부모를 조인하지 않으려고', async () => {
+      const { service, inserted } = build();
+
+      await service.render([item()], CTX, { provider: 'openai' });
+
+      expect(inserted[0][0].domain).toBe('attraction');
+    });
+
+    it('도메인 고유 값은 item_meta 로 간다', async () => {
+      const { service, inserted } = build();
+
+      await service.render(
+        [item({ meta: { admissionFee: 1200, admissionCurrency: 'JPY', category: '역사/문화' } })],
+        CTX,
+        { provider: 'openai' },
+      );
+
+      expect(inserted[0][0].item_meta).toEqual({
+        admissionFee: 1200,
+        admissionCurrency: 'JPY',
+        category: '역사/문화',
+      });
+    });
+
+    /**
+     * AI 결과는 필드가 비어 오는 게 흔하다. 그대로 담으면 null 만 든 행이 쌓인다.
+     */
+    it('빈 값은 키째로 빠진다', async () => {
+      const { service, inserted } = build();
+
+      await service.render(
+        [item({ meta: { admissionFee: null, durationMinutes: undefined, category: '전망' } })],
+        CTX,
+        { provider: 'openai' },
+      );
+
+      expect(inserted[0][0].item_meta).toEqual({ category: '전망' });
+    });
+
+    /** ⚠️ 직항이 0 이다. 빈 값이라고 지우면 "직항" 이라는 정보가 통째로 사라진다. */
+    it('0 과 false 는 값이므로 남는다', async () => {
+      const { service, inserted } = build();
+
+      await service.render([item({ meta: { stops: 0, free: false } })], CTX, {
+        provider: 'openai',
+      });
+
+      expect(inserted[0][0].item_meta).toEqual({ stops: 0, free: false });
+    });
+
+    it('meta 를 안 넘기는 도메인은 빈 객체다', async () => {
+      const { service, inserted } = build();
+
+      await service.render([item()], CTX, { provider: 'openai' });
+
+      expect(inserted[0][0].item_meta).toEqual({});
+    });
+  });
+
   // ------------------------------------------------- links 를 안 넘기는 도메인 (관광지)
   describe('제휴 변환을 다루지 않는 도메인', () => {
     it('목적지는 원본 주소 그대로이고 subid 를 붙이지 않는다', async () => {

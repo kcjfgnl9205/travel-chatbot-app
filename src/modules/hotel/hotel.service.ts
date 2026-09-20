@@ -128,6 +128,12 @@ export class HotelService implements SearchDomain<Hotel> {
         imageUrl: hotel.thumbnailUrl,
         priceFrom: hotel.priceFrom,
         merchant: hotel.merchant,
+        // 카드에는 찍히지만 스냅샷에는 남지 않던 값들. "평점이 높은 줄이 더 눌리나" 를
+        // 보려면 노출 시점 값이 있어야 한다 — 캐시는 갱신되면 덮어써진다.
+        meta: {
+          starRating: hotel.starRating,
+          reviewScore: hotel.reviewScore,
+        },
       })),
       ctx,
       { provider: this.provider.name, links },

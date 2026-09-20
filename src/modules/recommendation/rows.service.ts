@@ -45,6 +45,16 @@ export interface ItemRow {
   imageUrl?: string | null;
   priceFrom?: number | null;
   merchant?: string | null;
+  /**
+   * 공통 칸에 안 들어가는 도메인 고유 값. `recommendation_items.item_meta` 로 간다.
+   *
+   * 세 도메인이 남길 게 같지 않아서 있다 — 관광지 입장료는 현지 통화라 price_from
+   * (단위: 원)에 못 넣고, 항공편의 경유 횟수나 호텔 평점은 담을 칸이 아예 없었다.
+   *
+   * ⚠️ **읽을 계획이 있는 값만 넣는다.** 채우기만 하고 아무도 안 보는 칸은 나중에
+   *    값이 틀어져도 알 수가 없다. 키는 도메인 타입의 필드명을 그대로 쓴다.
+   */
+  meta?: Record<string, unknown>;
 }
 
 export interface RenderOptions {
@@ -117,18 +127,19 @@ export class RecommendationRowsService {
 
       dbRows.push({
         recommendation_id: recommendationId,
+        // 부모(recommendations)도 같은 값을 갖는다. 조인 없이 도메인별로 보려고 복사한다.
+        domain: ctx.meta.kind,
         // 제휴 링크가 없는 도메인이면 null 인 게 정상이다.
         affiliate_link_id: link?.affiliateLinkId ?? null,
         position,
         click_id: clickId,
-        // hotel_name 컬럼이지만 담기는 건 "노출된 항목의 이름" 이다
-        // (0002 마이그레이션 주석 참고).
-        hotel_name: item.label,
+        item_name: item.label,
         price_from: item.priceFrom ?? null,
         merchant: item.merchant ?? null,
         thumbnail_url: item.imageUrl ?? null,
         source_url: item.sourceUrl,
         target_url: targetUrl,
+        item_meta: compact(item.meta),
       });
 
       // DB 가 없어도 리다이렉트가 동작하도록 인메모리에도 남긴다.
@@ -163,6 +174,20 @@ export class RecommendationRowsService {
     if (recommendationId && dbRows.length) await this.items.createMany(dbRows);
     return listItems;
   }
+}
+
+/**
+ * 값이 있는 키만 남긴다.
+ *
+ * AI 결과는 필드가 비어 오는 게 흔해서 그대로 담으면 `{"stops": null, "cabin": null}`
+ * 같은 행이 쌓인다. 집계에서 "키가 없다" 와 "값이 null 이다" 를 구별할 일이 없으므로
+ * (둘 다 `->>` 가 null 을 준다) 빈 값은 애초에 넣지 않는다.
+ */
+function compact(meta: Record<string, unknown> | undefined): Record<string, unknown> {
+  if (!meta) return {};
+  return Object.fromEntries(
+    Object.entries(meta).filter(([, value]) => value !== null && value !== undefined),
+  );
 }
 
 function newClickId(): string {
