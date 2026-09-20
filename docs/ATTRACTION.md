@@ -299,17 +299,20 @@ mapUrl = mapsUrl(관광지명, 도시명)
 
 ### DB
 
-호텔·항공권과 같은 테이블을 쓴다.
+공통 테이블(`recommendation_items`)에 노출 한 줄, 관광지 테이블에 상세 한 줄이 들어간다.
 
 | 컬럼 | 값 |
 |---|---|
 | `recommendation_items.item_name` | 관광지 이름 |
 | `recommendation_items.source_url` | `mapUrl` |
 | `recommendation_items.target_url` | `mapUrl` (변환 없음) |
-| `recommendation_items.affiliate_link_id` | **`null`** — 정상이다 |
-| `recommendation_items.price_from` | **`null`** |
+| `recommendation_item_attractions.admission_fee` · `admission_currency` | 입장료와 **현지 통화** |
+| `recommendation_item_attractions.duration_minutes` · `category` | 소요 시간 · 카테고리 |
+| `recommendation_item_attractions.image_url` | 위키백과 사진 (없을 수 있다) |
 
-> ⚠️ **입장료를 `price_from` 에 넣지 않는다.** 그 칸은 단위가 원인데 관광지 입장료는 현지 통화(엔·바트·동)라 비교 불가능한 숫자가 섞인다. (0003 마이그레이션 주석 참고)
+> ⚠️ **관광지 테이블에는 원화 가격 칸이 아예 없다.** 입장료는 현지 통화(엔·바트·동)라 원 단위 칸에 넣으면 비교 불가능한 숫자가 섞인다 — 통화와 함께 남기는 것이 유일하게 맞는 방법이다. (0003·0007 마이그레이션 주석 참고)
+
+> ⚠️ **판매처·제휴 링크 칸도 없다.** 관광지는 우리가 파는 게 아니라 장소라서 변환할 주소가 없다 — 칸이 없는 것이 곧 이 도메인의 정체다.
 
 > ⚠️ **수익 집계에서 관광지를 빼야 한다.** `domain='attraction'` 행은 클릭이 있어도 수수료가 0이다. 안 빼면 전환율이 실제보다 낮게 나온다.
 

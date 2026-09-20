@@ -42,14 +42,20 @@ export interface ItemRow {
   sourceUrl: string;
   title: string;
   description: string | null;
+  /**
+   * 카드 썸네일. **DB 에는 여기서 안 넣는다** — 썸네일이 있는 도메인(호텔·관광지)이
+   * 자기 `detail.image_url` 로 따로 넣는다. 항공권 카드에는 이미지가 없다.
+   */
   imageUrl?: string | null;
-  priceFrom?: number | null;
-  merchant?: string | null;
   /**
    * 도메인별 위성 테이블에 남길 한 행 (recommendation_item_attractions 등).
    *
-   * 세 도메인이 남길 게 같지 않아서 있다 — 관광지 입장료는 현지 통화라 price_from
-   * (단위: 원)에 못 넣고, 항공편의 경유 횟수나 호텔 평점은 담을 칸이 아예 없었다.
+   * **공통 테이블에는 세 도메인이 전부 쓰는 것만 남아 있다.** 가격·판매처·제휴링크·
+   * 썸네일처럼 한두 도메인만 쓰던 값은 전부 여기로 내려왔다. 특히 가격은 호텔(1박
+   * 최저가)과 항공권(1인 총액)이 의미가 달라 컬럼 이름부터 갈라져 있다.
+   *
+   * ⚠️ **제휴 링크(affiliate_link_id)는 여기 넣지 않는다.** 그건 도메인이 아니라
+   *    이 서비스가 해석해서 채운다 (아래 render 참고).
    *
    * ⚠️ **키는 DB 컬럼명(snake_case)이다.** 여기서 이름을 바꾸지 않고 그대로 넣는다 —
    *    중간에 매핑을 두면 컬럼을 추가할 때마다 고칠 자리가 하나 더 생긴다.
@@ -144,24 +150,28 @@ export class RecommendationRowsService {
       // id 를 DB 기본값에 맡기지 않고 여기서 만든다. 위성 행이 이 값을 가리켜야 하는데,
       // insert 응답의 순서를 믿고 되짚는 것보다 미리 정해두는 쪽이 확실하다.
       const itemId = randomUUID();
+      // 제휴 링크는 도메인이 아니라 여기서 해석한 값이라 이 자리에서 합친다.
+      // 변환을 다루지 않는 도메인(관광지)의 테이블에는 그 컬럼이 아예 없다.
       const detail = compact(item.detail);
+      // ⚠️ **변환에 실패해도 null 을 적어 행을 남긴다.** 빈 값이라고 지우면 그 노출은
+      //    위성 행조차 없어서 "변환 실패한 노출" 집계에서 통째로 빠진다 — 수수료가
+      //    새는 지점을 찾으려고 세는 값인데 정작 샌 것만 안 보이게 된다.
+      if (monetized) detail.affiliate_link_id = link?.affiliateLinkId ?? null;
       if (Object.keys(detail).length) detailRows.push({ item_id: itemId, ...detail });
 
       dbRows.push({
         id: itemId,
         recommendation_id: recommendationId,
-        // 부모(recommendations)도 같은 값을 갖는다. 조인 없이 도메인별로 보려고 복사한다.
+        // 부모(recommendations)도 같은 값을 갖는다. 조인 없이 도메인별로 보고,
+        // 어느 위성 테이블에 상세가 있는지도 이 값이 가리킨다.
         domain: ctx.meta.kind,
-        // 제휴 링크가 없는 도메인이면 null 인 게 정상이다.
-        affiliate_link_id: link?.affiliateLinkId ?? null,
         position,
+        // ⚠️ 이 셋은 한 테이블에 같이 있어야 한다. /r/{clickId} 가 click_id 하나로
+        //    목적지를 찾아 카운터를 올리는 걸 register_click() 이 왕복 한 번에 끝낸다.
         click_id: clickId,
-        item_name: item.label,
-        price_from: item.priceFrom ?? null,
-        merchant: item.merchant ?? null,
-        thumbnail_url: item.imageUrl ?? null,
-        source_url: item.sourceUrl,
         target_url: targetUrl,
+        source_url: item.sourceUrl,
+        item_name: item.label,
       });
 
       // DB 가 없어도 리다이렉트가 동작하도록 인메모리에도 남긴다.

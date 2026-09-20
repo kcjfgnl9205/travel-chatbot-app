@@ -170,7 +170,17 @@ describe('노출 기록 + 클릭 링크 발급', () => {
       const row = inserted[0][0];
       expect(row.target_url).toBe(MAP_URL);
       expect(row.source_url).toBe(MAP_URL);
-      expect(row.affiliate_link_id).toBeNull();
+      // 공통 테이블에는 제휴 칸이 없다. 관광지 테이블에도 없다 — 그게 이 도메인의
+      // 정체다. 남길 값이 없으면 위성 행 자체가 안 생긴다.
+      expect(row).not.toHaveProperty('affiliate_link_id');
+    });
+
+    it('제휴 칸을 위성 행에도 만들지 않는다', async () => {
+      const { service, details } = build();
+
+      await service.render([item({ detail: { category: '전망' } })], CTX, { provider: 'openai' });
+
+      expect(details[0].rows[0]).not.toHaveProperty('affiliate_link_id');
     });
 
     it('변환 실패로 세지 않는다 — 변환할 게 애초에 없다', async () => {
@@ -188,9 +198,11 @@ describe('노출 기록 + 클릭 링크 발급', () => {
   describe('제휴 변환을 다루는 도메인', () => {
     const BOOKING = 'https://kr.trip.com/hotels/osaka-detail-1/';
     const hotel = item({ label: '호텔 A', sourceUrl: BOOKING, title: '호텔 A' });
+    /** 도메인이 곧 위성 테이블이라 여기서는 호텔 맥락이어야 한다. */
+    const HOTEL_CTX = { ...CTX, meta: { ...CTX.meta, kind: 'hotel' as const } };
 
     it('변환된 링크가 목적지가 되고 affiliate_link_id 가 남는다', async () => {
-      const { service, inserted } = build();
+      const { service, inserted, details } = build();
       const links = new Map<string, ResolvedLink>([
         [
           BOOKING,
@@ -204,13 +216,32 @@ describe('노출 기록 + 클릭 링크 발급', () => {
         ],
       ]);
 
-      await service.render([hotel], CTX, { provider: 'openai', links });
+      await service.render([hotel], HOTEL_CTX, { provider: 'openai', links });
 
       const row = inserted[0][0];
       expect(row.target_url).toBe('https://link.adpick.co.kr/abcd');
-      expect(row.affiliate_link_id).toBe('link-1');
       // 원본은 DB 에만 남는다 — 사용자에게 나가는 건 리다이렉트뿐이다.
       expect(row.source_url).toBe(BOOKING);
+      // 제휴 링크는 그 도메인 테이블로 간다. 공통에는 칸이 없다.
+      expect(row).not.toHaveProperty('affiliate_link_id');
+      expect(details[0].table).toBe('recommendation_item_hotels');
+      expect(details[0].rows[0]).toMatchObject({ affiliate_link_id: 'link-1' });
+    });
+
+    /**
+     * ⚠️ 변환 실패는 **행이 없는 게 아니라 null 이어야** 알아볼 수 있다 —
+     * "변환할 게 없던 도메인" 과 "변환하려다 실패한 노출" 이 DB 에서 갈려야 한다.
+     */
+    it('변환 실패는 위성 행에 null 로 남는다', async () => {
+      const { service, details } = build();
+
+      await service.render([hotel], HOTEL_CTX, {
+        provider: 'openai',
+        links: new Map<string, ResolvedLink>(),
+      });
+
+      expect(details[0].table).toBe('recommendation_item_hotels');
+      expect(details[0].rows[0]).toHaveProperty('affiliate_link_id', null);
     });
 
     it('빈 Map 은 "변환을 못 했다" 이므로 경고를 남긴다', async () => {

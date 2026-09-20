@@ -112,18 +112,17 @@ export class AttractionService implements SearchDomain<Attraction> {
         title: attraction.name,
         description: listDescription(attraction),
         imageUrl: attraction.imageUrl,
-        // ⚠️ **입장료를 price_from 에 넣지 않는다.** 그 칸은 단위가 원인데 관광지
-        //    입장료는 현지 통화(엔·바트·동)라 비교 불가능한 숫자가 섞인다.
-        //    (0003 마이그레이션 주석 참고)
-        priceFrom: null,
-        // 대신 통화와 함께 recommendation_item_attractions 에 남긴다. 0003 이 막은 건
-        // "원화 칸에 엔을 넣는 것" 이지 입장료를 남기는 것이 아니다. category 는 2차
-        // 호출의 "카테고리를 섞어라" 지시가 실제로 값을 하는지 보려고 같이 담는다.
+        // ⚠️ **원화 가격 칸이 아예 없는 테이블로 간다.** 관광지 입장료는 현지 통화
+        //    (엔·바트·동)라 원 단위 칸에 넣으면 비교 불가능한 숫자가 섞인다 —
+        //    통화를 함께 남기는 것이 유일하게 맞는 방법이다 (0003 주석 참고).
+        //    category 는 2차 호출의 "카테고리를 섞어라" 지시가 실제로 값을 하는지
+        //    보려고 같이 담는다.
         detail: {
           admission_fee: attraction.admissionFee,
           admission_currency: attraction.admissionCurrency,
           duration_minutes: attraction.durationMinutes,
           category: attraction.category,
+          image_url: attraction.imageUrl,
         },
       })),
       ctx,
