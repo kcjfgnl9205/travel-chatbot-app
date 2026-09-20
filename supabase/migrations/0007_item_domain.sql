@@ -61,6 +61,11 @@ comment on column public.recommendation_items.domain is
     '도메인별로 거르고, 어느 위성 테이블에 상세가 있는지 가리킨다. '
     '부모가 진실이고 이 값은 행이 만들어질 때 한 번 정해진다.';
 
+-- 이 파일은 도메인 값을 item_meta jsonb 한 칸에 담는 모양으로 먼저 쓰였다가
+-- 도메인 테이블로 바뀌었다. 그 버전을 이미 돌린 DB 가 있으므로 여기서 치운다
+-- (그 칸을 쓰는 코드는 배포된 적이 없어 지워도 잃을 데이터가 없다).
+alter table public.recommendation_items drop column if exists item_meta;
+
 -- ------------------------------------------------ hotel_name → item_name
 -- 0002 는 이 칸에 항공편명이 들어가는 걸 알면서도 이름을 그대로 뒀다. 그때는
 -- 개명만을 위한 마이그레이션이 위험 대비 실익이 없었기 때문이고, 이제 어차피
