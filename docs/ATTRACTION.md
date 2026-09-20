@@ -307,10 +307,16 @@ mapUrl = mapsUrl(관광지명, 도시명)
 | `recommendation_items.source_url` | `mapUrl` |
 | `recommendation_items.target_url` | `mapUrl` (변환 없음) |
 | `recommendation_item_attractions.admission_fee` · `admission_currency` | 입장료와 **현지 통화** |
+| `recommendation_item_attractions.free` | **3상태** — `true`(무료) · `false`(유료) · `null`(모름) |
 | `recommendation_item_attractions.duration_minutes` · `category` | 소요 시간 · 카테고리 |
+| `recommendation_item_attractions.area` · `description` | 위치(주오구) · 한 줄 소개 |
 | `recommendation_item_attractions.image_url` | 위키백과 사진 (없을 수 있다) |
 
 > ⚠️ **관광지 테이블에는 원화 가격 칸이 아예 없다.** 입장료는 현지 통화(엔·바트·동)라 원 단위 칸에 넣으면 비교 불가능한 숫자가 섞인다 — 통화와 함께 남기는 것이 유일하게 맞는 방법이다. (0003·0007 마이그레이션 주석 참고)
+
+> ⚠️ **무료 여부는 `free` 로 본다.** `admission_fee` 가 null 인 경우는 "진짜 무료" 와 "금액을 확인 못 함" 두 가지라, 금액만으로는 구분할 수 없다.
+
+> **`description` 은 카드에 안 나가지만 저장한다.** 40자 한 줄에서 잘려 문장이 끊기기 때문에 카드에서 뺐는데, 나중에 그 관광지가 뭐였는지 알아보려면 이름만으로는 부족하다.
 
 > ⚠️ **판매처·제휴 링크 칸도 없다.** 관광지는 우리가 파는 게 아니라 장소라서 변환할 주소가 없다 — 칸이 없는 것이 곧 이 도메인의 정체다.
 

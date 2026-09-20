@@ -120,8 +120,14 @@ export class AttractionService implements SearchDomain<Attraction> {
         detail: {
           admission_fee: attraction.admissionFee,
           admission_currency: attraction.admissionCurrency,
+          // ⚠️ admission_fee 가 null 이어도 무료인지 모르는지는 이 값만 안다.
+          free: attraction.free,
           duration_minutes: attraction.durationMinutes,
           category: attraction.category,
+          area: attraction.area,
+          // 카드에는 안 나가지만(40자에서 잘린다) 남겨둔다 — 나중에 이 관광지가
+          // 뭐였는지 알아보려면 이름만으로는 부족하다.
+          description: attraction.description,
           image_url: attraction.imageUrl,
         },
       })),

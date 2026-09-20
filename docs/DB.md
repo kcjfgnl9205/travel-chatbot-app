@@ -447,8 +447,9 @@ from affiliate_links;
 recommendation_items                 id · recommendation_id · domain · position
                                      click_id · item_name · source_url · target_url
                                      click_count · first/last_clicked_at · created_at
-  ├─ recommendation_item_attractions admission_fee · admission_currency
-  │                                  duration_minutes · category · image_url
+  ├─ recommendation_item_attractions admission_fee · admission_currency · free
+  │                                  duration_minutes · category · area
+  │                                  description · image_url
   ├─ recommendation_item_hotels      star_rating · review_score · price_per_night
   │                                  merchant · affiliate_link_id · image_url
   └─ recommendation_item_flights     airline · stops · cabin · duration_minutes
@@ -483,12 +484,24 @@ recommendation_items                 id · recommendation_id · domain · positi
 > 하나 추가한 날부터 기록이 안 남는데 아무도 모르는 게 최악이다. 숫자 범위(성급 1~5,
 > 평점 0~10, 경유 0~5)는 물리적으로 안 늘어나므로 걸어뒀다.
 
+> ⚠️ **무료 여부는 `free` 로 본다. `admission_fee is null` 이 아니다.** 금액이 없는 경우는
+> "진짜 무료" 와 "확인 못 함" 두 가지인데, 카드는 그 둘을 `무료` / 빈칸으로 갈라 보여준다.
+> `free` 는 3상태다 — `true`(무료) · `false`(유료, 금액은 모를 수 있음) · `null`(모름).
+
 > ⚠️ **변환 실패는 행이 없는 게 아니라 `affiliate_link_id` 가 null 로 남는다.** 제휴를
 > 타는 도메인(호텔·항공권)은 변환에 실패해도 위성 행을 만든다 — 안 그러면 수수료가
 > 새는 노출이 집계에서 통째로 빠진다. 관광지 테이블에는 그 칸이 **아예 없는 것**이
 > "제휴를 안 타는 도메인" 이라는 뜻이다.
 
 ```sql
+-- 관광지: 무료가 더 눌리나
+select a.free,
+       count(*)                                  as 노출,
+       count(*) filter (where i.click_count > 0) as 클릭된줄
+from recommendation_items i
+join recommendation_item_attractions a on a.item_id = i.id
+group by 1;
+
 -- 관광지: 카테고리별 CTR (2차 호출의 "카테고리를 섞어라" 가 값을 하는지)
 select a.category,
        count(*)                                  as 노출,

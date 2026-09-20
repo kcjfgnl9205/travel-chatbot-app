@@ -134,6 +134,16 @@ alter table public.recommendation_item_attractions
         check (duration_minutes is null or duration_minutes > 0),
     -- 역사/문화 · 자연/공원 · 테마파크 · 거리/쇼핑 · 전망 · 미술관/박물관 · 음식/시장 · 체험
     add column if not exists category text,
+    -- ⚠️ **입장료가 없는 곳인가. admission_fee is null 로는 이걸 알 수 없다** —
+    --    거기엔 "진짜 무료" 와 "금액을 확인 못 함" 이 같이 들어온다. 카드는 둘을
+    --    '무료' / '' 로 갈라 보여주는데 DB 에만 그 구분이 없었다.
+    --    true=무료, false=유료(금액은 모를 수 있음), null=모름.
+    add column if not exists free boolean,
+    -- 도시 안에서의 위치 (주오구, 우메다). 카드 설명에 실제로 찍히는 값이다.
+    add column if not exists area text,
+    -- 한 줄 소개. 카드에는 안 쓴다 — 40자에서 잘려 문장이 끊기기 때문이다.
+    -- 그래서 원래부터 "DB 에만 남긴다" 가 의도였는데 남길 칸이 없었다.
+    add column if not exists description text,
     -- 위키백과에서 찾은 사진. 열에 아홉은 아니다(실측 87%).
     add column if not exists image_url text;
 
