@@ -129,15 +129,6 @@ export class AttractionService implements SearchDomain<Attraction> {
           // 뭐였는지 알아보려면 이름만으로는 부족하다.
           description: attraction.description,
           image_url: attraction.imageUrl,
-          // 여기부터는 모델이 아니라 구글 Places 가 준 사실이다. 키가 없으면 전부 null.
-          place_id: attraction.placeId,
-          address: attraction.address,
-          lat: attraction.lat,
-          lng: attraction.lng,
-          rating: attraction.rating,
-          user_rating_count: attraction.userRatingCount,
-          opening_hours: attraction.openingHours,
-          website: attraction.website,
         },
       })),
       ctx,

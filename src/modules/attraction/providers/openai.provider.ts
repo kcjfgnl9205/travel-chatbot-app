@@ -6,7 +6,6 @@ import { AppConfig, CONFIG } from '../../../config/app.config';
 import { OpenAiService } from '../../openai/openai.service';
 import { TwoStageSearch, newTwoStageTrace } from '../../openai/two-stage';
 import { FoundImage, findAttractionImage } from '../attraction-image';
-import { FoundPlace, findPlace } from '../attraction-place';
 import { Attraction, AttractionProvider, AttractionQuery } from '../attraction.types';
 
 /**
@@ -362,113 +361,54 @@ export class OpenAiAttractionProvider
     if (!candidates) return [];
 
     const picks = await this.rank<RawPick>(query, candidates, trace);
-    return this.enrich(this.toAttractions(picks, query), query);
+    return this.withImages(this.toAttractions(picks, query), query);
   }
 
-  // --------------------------------------------- 3차: 사진 + 사실 데이터
+  // ------------------------------------------------------ 3차: 대표 이미지
   /**
-   * 모델이 고른 곳들에 **사진과 사실 데이터를 채운다.**
+   * 카드에 넣을 사진을 위키백과에서 찾는다.
    *
-   *   사진      위키백과 ([attraction-image.ts](../attraction-image.ts)) — 무료
-   *   사실      구글 Places ([attraction-place.ts](../attraction-place.ts)) — 유료
+   * 모델에게 이미지 주소를 묻지 않는다 — 호텔에서 확인했듯 그럴듯한 CDN 주소를
+   * 지어내고, 그건 카드에 깨진 자리만 남긴다. 구조화된 API 에서 받아오면
+   * 지어낼 자리가 없다(지도 링크를 우리가 만드는 것과 같은 이유다).
    *
-   * 둘 다 **모델에게 안 묻는 값**이라는 점이 같다. 모델은 이미지 주소도 좌표도
-   * 그럴듯하게 지어내는데, 구조화된 API 에서 받아오면 지어낼 자리가 없다 —
-   * 지도 링크를 우리가 만드는 것과 같은 이유다.
+   * 콜백 경로에서만 도는 코드라 5초 예산과 무관하다. 5곳을 **동시에** 찾고,
+   * 결과는 검색 캐시에 같이 저장되므로 같은 도시를 다시 물어도 API 를 또 치지 않는다.
    *
-   * ⚠️ **한 관광지에 대해 두 호출을 나란히 태운다.** 단계로 나눠 돌리면 대기 시간이
-   *    두 배가 된다. 콜백 경로라 5초 예산과는 무관하지만, 사용자는 그만큼 더 기다린다.
-   *
-   * ⚠️ 실패는 조용히 넘긴다. 사진도 주소도 있으면 좋은 것이지 없으면 안 되는 것이
-   *    아니다 — 위키백과나 구글이 느리다고 관광지 추천이 통째로 실패하면 안 된다.
-   *
-   * **Places 에도 사진이 있지만 위키백과를 쓴다.** 구글 사진은 받아오는 호출이 따로
-   * 과금되는데, 위키백과는 공짜이고 실측 커버리지가 87% 다.
+   * ⚠️ 실패는 조용히 넘긴다. 사진은 있으면 좋은 것이지 없으면 안 되는 것이 아니다 —
+   *    위키백과가 느리다고 관광지 추천이 통째로 실패하면 안 된다.
    */
-  private async enrich(
+  private async withImages(
     attractions: Attraction[],
     query: AttractionQuery,
   ): Promise<Attraction[]> {
-    const images = this.config.attractionImages;
-    // 키가 없으면 0곳 — 설정으로 끄는 스위치를 따로 두지 않는다. 키가 곧 스위치다.
-    const placeLimit = this.config.googlePlacesApiKey ? this.config.googlePlacesLimit : 0;
-    if (!images && !placeLimit) return attractions;
+    if (!this.config.attractionImages || !attractions.length) return attractions;
 
     // 영어판 검색어에 쓸 도시명. 슬러그가 이미 영문이다 (ho-chi-minh → ho chi minh).
     const cityNameEn = query.citySlug.replace(/-/g, ' ');
 
     return Promise.all(
-      attractions.map(async (attraction, index) => {
-        const [image, place] = await Promise.all([
-          images ? this.imageFor(attraction, query.cityName, cityNameEn) : null,
-          // ⚠️ 상위 N 곳만 조회한다. 평점·운영시간을 켜면 티어가 올라가 무료 한도가
-          //    훨씬 작아지므로, 건수를 줄이는 손잡이가 여기다.
-          index < placeLimit ? this.placeFor(attraction, query.cityName) : null,
-        ]);
+      attractions.map(async (attraction) => {
+        const found: FoundImage | null = await findAttractionImage(
+          attraction.name,
+          attraction.nameEn,
+          query.cityName,
+          cityNameEn,
+          this.config.attractionImageTimeoutMs,
+        );
+        if (!found) {
+          this.logger.log(`no image attraction=${attraction.name}`);
+          return attraction;
+        }
 
-        return {
-          ...attraction,
-          imageUrl: image ?? attraction.imageUrl,
-          ...(place && {
-            placeId: place.placeId,
-            address: place.address,
-            lat: place.lat,
-            lng: place.lng,
-            rating: place.rating,
-            userRatingCount: place.userRatingCount,
-            openingHours: place.openingHours,
-            website: place.website,
-            // 신원을 알았으니 이제 검색이 아니라 그 장소를 정확히 연다.
-            mapUrl: mapsUrl(attraction.name, query.cityName, place.placeId),
-          }),
-        };
+        // 어느 언어판에서 건졌는지 남긴다 — 영문명을 받는 게 값을 하는지는
+        // 이 로그의 ko/en 비율로 본다 (실측 커버리지 ko 62% → ko+en 87%).
+        this.logger.log(
+          `image ${found.lang} attraction=${attraction.name} doc=${found.title}`,
+        );
+        return { ...attraction, imageUrl: found.url };
       }),
     );
-  }
-
-  private async imageFor(
-    attraction: Attraction,
-    cityName: string,
-    cityNameEn: string,
-  ): Promise<string | null> {
-    const found: FoundImage | null = await findAttractionImage(
-      attraction.name,
-      attraction.nameEn,
-      cityName,
-      cityNameEn,
-      this.config.attractionImageTimeoutMs,
-    );
-    if (!found) {
-      this.logger.log(`no image attraction=${attraction.name}`);
-      return null;
-    }
-
-    // 어느 언어판에서 건졌는지 남긴다 — 영문명을 받는 게 값을 하는지는
-    // 이 로그의 ko/en 비율로 본다 (실측 커버리지 ko 62% → ko+en 87%).
-    this.logger.log(`image ${found.lang} attraction=${attraction.name} doc=${found.title}`);
-    return found.url;
-  }
-
-  private async placeFor(
-    attraction: Attraction,
-    cityName: string,
-  ): Promise<FoundPlace | null> {
-    const found = await findPlace(attraction.name, cityName, {
-      apiKey: this.config.googlePlacesApiKey,
-      timeoutMs: this.config.googlePlacesTimeoutMs,
-      ratings: this.config.googlePlacesRatings,
-    });
-    if (!found) {
-      // 못 찾는 건 흔하다. 모델이 지어낸 이름이거나, 구글에 없는 소규모 장소다.
-      this.logger.log(`no place attraction=${attraction.name}`);
-      return null;
-    }
-
-    this.logger.log(
-      `place attraction=${attraction.name} id=${found.placeId} ` +
-        `rating=${found.rating ?? '-'} hours=${found.openingHours ? 'y' : 'n'}`,
-    );
-    return found;
   }
 
   // ------------------------------------------------------------ 정규화
