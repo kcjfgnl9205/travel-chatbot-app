@@ -114,38 +114,50 @@ comment on column public.recommendation_items.item_name is
 --    하나 추가한 날부터 기록이 안 남는데 아무도 모르는 게 최악이다.
 --    반면 숫자 범위(성급 1~5)는 물리적으로 안 늘어나므로 걸어둔다.
 
+-- ⚠️ **컬럼을 create table 안이 아니라 add column if not exists 로 붙인다.**
+--    create table if not exists 는 테이블이 있으면 **통째로 건너뛴다** — 이 파일의
+--    앞선 판을 이미 돌린 DB 에서는 나중에 더한 컬럼이 영영 안 생기고, 그 뒤 insert 가
+--    "column does not exist" 로 죽는다. 실제로 그렇게 깨졌다.
+--    컬럼 정의가 한 군데 있으려면 전부 add column 쪽에 두는 수밖에 없다.
+
 create table if not exists public.recommendation_item_attractions (
-    item_id            uuid primary key
-                       references public.recommendation_items (id) on delete cascade,
+    item_id uuid primary key references public.recommendation_items (id) on delete cascade
+);
+alter table public.recommendation_item_attractions
     -- ⚠️ **현지 통화 그대로다.** 원화 환산을 하지 않는다 (0003 주석 참고).
     --    금액이 있으면 통화도 있어야 읽을 수 있다. 원화 칸(price_*)이 아예 없는 게
     --    이 테이블의 요점이다 — 엔·바트·동을 원으로 읽는 사고가 생길 자리가 없다.
-    admission_fee      integer check (admission_fee is null or admission_fee > 0),
-    admission_currency text,
-    duration_minutes   integer check (duration_minutes is null or duration_minutes > 0),
+    add column if not exists admission_fee integer
+        check (admission_fee is null or admission_fee > 0),
+    add column if not exists admission_currency text,
+    add column if not exists duration_minutes integer
+        check (duration_minutes is null or duration_minutes > 0),
     -- 역사/문화 · 자연/공원 · 테마파크 · 거리/쇼핑 · 전망 · 미술관/박물관 · 음식/시장 · 체험
-    category           text,
+    add column if not exists category text,
     -- 위키백과에서 찾은 사진. 열에 아홉은 아니다(실측 87%).
-    image_url          text
-);
+    add column if not exists image_url text;
 
 comment on table public.recommendation_item_attractions is
     '관광지 노출 1건. 판매처·제휴링크·원화 가격 칸이 없는 것이 이 도메인의 정체다 — '
     '관광지는 우리가 파는 게 아니라 장소라서 변환할 주소가 없다.';
 
 create table if not exists public.recommendation_item_hotels (
-    item_id           uuid primary key
-                      references public.recommendation_items (id) on delete cascade,
-    star_rating       numeric(2,1) check (star_rating is null or star_rating between 1 and 5),
-    review_score      numeric(3,1) check (review_score is null or review_score between 0 and 10),
-    -- **1박 최저가(원).** 항공권의 총액과 다른 값이라 이름을 갈랐다.
-    price_per_night   integer check (price_per_night is null or price_per_night > 0),
-    merchant          text,                                   -- agoda | booking | trip …
-    -- 애드픽 변환 결과. ⚠️ **null 이면 수익화가 안 된 노출이다** (변환 실패).
-    affiliate_link_id uuid references public.affiliate_links (id) on delete set null,
-    -- 예약 페이지에서 긁어온 대표 이미지.
-    image_url         text
+    item_id uuid primary key references public.recommendation_items (id) on delete cascade
 );
+alter table public.recommendation_item_hotels
+    add column if not exists star_rating numeric(2,1)
+        check (star_rating is null or star_rating between 1 and 5),
+    add column if not exists review_score numeric(3,1)
+        check (review_score is null or review_score between 0 and 10),
+    -- **1박 최저가(원).** 항공권의 총액과 다른 값이라 이름을 갈랐다.
+    add column if not exists price_per_night integer
+        check (price_per_night is null or price_per_night > 0),
+    add column if not exists merchant text,                   -- agoda | booking | trip …
+    -- 애드픽 변환 결과. ⚠️ **null 이면 수익화가 안 된 노출이다** (변환 실패).
+    add column if not exists affiliate_link_id uuid
+        references public.affiliate_links (id) on delete set null,
+    -- 예약 페이지에서 긁어온 대표 이미지.
+    add column if not exists image_url text;
 
 comment on table public.recommendation_item_hotels is
     '호텔 노출 1건. 평점은 앱이 범위를 검증해서 넣는다 — 모델이 5점 만점을 10점 칸에 '
@@ -153,19 +165,22 @@ comment on table public.recommendation_item_hotels is
     '⚠️ affiliate_link_id 가 null 이면 변환 실패라 수수료가 없는 노출이다.';
 
 create table if not exists public.recommendation_item_flights (
-    item_id           uuid primary key
-                      references public.recommendation_items (id) on delete cascade,
-    airline           text,
-    -- ⚠️ 0 이 유효한 값이다 (직항). null 과 구별해야 한다.
-    stops             integer check (stops is null or stops between 0 and 5),
-    cabin             text,                                   -- economy | premium | business | first
-    duration_minutes  integer check (duration_minutes is null or duration_minutes > 0),
-    -- **1인 총액(원).** ⚠️ 웹 검색으로 얻은 예상가이지 확정 운임이 아니다.
-    price_total       integer check (price_total is null or price_total > 0),
-    merchant          text,                                   -- trip | myrealtrip …
-    affiliate_link_id uuid references public.affiliate_links (id) on delete set null
-    -- 썸네일 칸이 없다. 항공권 카드에는 이미지가 없다.
+    item_id uuid primary key references public.recommendation_items (id) on delete cascade
 );
+alter table public.recommendation_item_flights
+    add column if not exists airline text,
+    -- ⚠️ 0 이 유효한 값이다 (직항). null 과 구별해야 한다.
+    add column if not exists stops integer check (stops is null or stops between 0 and 5),
+    add column if not exists cabin text,        -- economy | premium | business | first
+    add column if not exists duration_minutes integer
+        check (duration_minutes is null or duration_minutes > 0),
+    -- **1인 총액(원).** ⚠️ 웹 검색으로 얻은 예상가이지 확정 운임이 아니다.
+    add column if not exists price_total integer
+        check (price_total is null or price_total > 0),
+    add column if not exists merchant text,                   -- trip | myrealtrip …
+    add column if not exists affiliate_link_id uuid
+        references public.affiliate_links (id) on delete set null;
+    -- 썸네일 칸이 없다. 항공권 카드에는 이미지가 없다.
 
 comment on table public.recommendation_item_flights is
     '항공권 노출 1건. stops 는 0 이 직항이므로 null 과 구별해야 한다. '
