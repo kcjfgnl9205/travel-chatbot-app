@@ -11,6 +11,7 @@ import {
   SearchDomain,
   SearchMeta,
 } from '../search/search.types';
+import { listDescription } from './attraction-card';
 import {
   ATTRACTION_PROVIDER,
   Attraction,
@@ -18,7 +19,6 @@ import {
   AttractionQuery,
   attractionKey,
   isAttraction,
-  listDescription,
 } from './attraction.types';
 
 /**

@@ -1,11 +1,9 @@
 import { mapsUrl } from '../src/common/maps-url';
+import { admissionText, listDescription } from '../src/modules/attraction/attraction-card';
 import {
   Attraction,
-  admissionText,
   attractionKey,
-  durationText,
   isAttraction,
-  listDescription,
 } from '../src/modules/attraction/attraction.types';
 import { dedupe } from '../src/modules/attraction/attraction.service';
 import { area, placeName } from '../src/modules/attraction/providers/openai.provider';
@@ -99,12 +97,6 @@ describe('관광지 카드 문구', () => {
     it('무료인지 유료인지도 모르면 아무 말도 하지 않는다 — 지어내지 않는다', () => {
       expect(admissionText(spot({ free: null, admissionFee: null }))).toBe('');
     });
-  });
-
-  it('소요 시간', () => {
-    expect(durationText(150)).toBe('2시간 30분');
-    expect(durationText(120)).toBe('2시간');
-    expect(durationText(45)).toBe('45분');
   });
 
   describe('listCard 한 줄 (40자)', () => {
