@@ -145,7 +145,36 @@ alter table public.recommendation_item_attractions
     -- 그래서 원래부터 "DB 에만 남긴다" 가 의도였는데 남길 칸이 없었다.
     add column if not exists description text,
     -- 위키백과에서 찾은 사진. 열에 아홉은 아니다(실측 87%).
-    add column if not exists image_url text;
+    add column if not exists image_url text,
+
+    -- ------------------------------------------- 여기부터 구글 Places 가 채운다
+    -- ⚠️ **모델이 준 값이 아니다.** 주소·좌표·평점·운영시간은 장소마다 정답이 하나인
+    --    사실이라 LLM 에게 물으면 그럴듯하게 지어낸다. 구조화 API 에서 받아오므로
+    --    지어낼 자리가 없고, 모르면 그 칸이 비어 온다.
+    --    키(GOOGLE_PLACES_API_KEY)가 없으면 이 칸들은 전부 null 이다 — 정상이다.
+    --
+    -- 구글이 부여한 장소 신원. **이름 표기가 흔들려도 같은 곳으로 묶인다**
+    -- ('오사카성' / '오사카 성'). 지도 링크도 검색이 아니라 정확한 핀이 된다.
+    -- 구글 약관상 영구 저장이 명시적으로 허용되는 거의 유일한 필드이기도 하다.
+    add column if not exists place_id text,
+    add column if not exists address text,
+    -- 좌표는 소수점 이하가 정밀도다. numeric 으로 둬야 반올림되지 않는다.
+    add column if not exists lat numeric(9,6) check (lat is null or lat between -90 and 90),
+    add column if not exists lng numeric(9,6) check (lng is null or lng between -180 and 180),
+    -- ⚠️ 아래 넷은 **더 비싼 티어**(GOOGLE_PLACES_RATINGS)에서만 채워진다.
+    --    그리고 구글 약관이 place_id 외 콘텐츠의 장기 보관을 제한하므로,
+    --    켜기 전에 현재 약관을 확인하라.
+    add column if not exists rating numeric(2,1) check (rating is null or rating between 0 and 5),
+    add column if not exists user_rating_count integer
+        check (user_rating_count is null or user_rating_count >= 0),
+    -- 요일별 영업시간 7줄. 구글이 언어에 맞춰 만들어 준다.
+    add column if not exists opening_hours text[],
+    add column if not exists website text;
+
+-- place_id 로 "이 관광지가 그동안 몇 번 노출됐나" 를 보게 된다. 이름과 달리 표기가
+-- 흔들리지 않아서, 관광지 단위 집계는 앞으로 이 칸이 맡는다.
+create index if not exists recommendation_item_attractions_place_idx
+    on public.recommendation_item_attractions (place_id);
 
 comment on table public.recommendation_item_attractions is
     '관광지 노출 1건. 판매처·제휴링크·원화 가격 칸이 없는 것이 이 도메인의 정체다 — '

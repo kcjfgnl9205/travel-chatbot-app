@@ -59,6 +59,30 @@ export interface Attraction {
    */
   imageUrl?: string | null;
 
+  // ---------------------------------------------- 구글 Places 가 채우는 사실 데이터
+  /**
+   * 구글이 부여한 장소 신원 ([attraction-place.ts](./attraction-place.ts)).
+   *
+   * **이게 있으면 이름 표기가 흔들려도 같은 곳으로 묶인다** — '오사카성' 과
+   * '오사카 성' 이 같은 place_id 를 받는다. 지도 링크도 검색이 아니라 정확한 핀이 된다.
+   *
+   * 구글 약관상 **영구 저장이 명시적으로 허용되는 거의 유일한 필드**이기도 하다.
+   */
+  placeId?: string | null;
+  address?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  /**
+   * ⚠️ 아래 넷은 **모델에게 묻지 않는다.** 구체적 숫자와 영업시간은 LLM 이 가장 잘
+   *    지어내는 종류다. 틀린 운영시간은 사용자를 헛걸음시킨다 — 사진이 없는 것과
+   *    차원이 다른 실패다.
+   */
+  rating?: number | null;
+  userRatingCount?: number | null;
+  /** 요일별 영업시간 7줄. 구글이 언어에 맞춰 만들어 준다. */
+  openingHours?: string[] | null;
+  website?: string | null;
+
   source?: string; // ai | crawler | manual
   tags?: string[];
   raw?: Record<string, unknown> | null;
@@ -85,7 +109,8 @@ export function isAttraction(item: unknown): item is Attraction {
  * 무엇보다 **사용자가 실제로 도착하는 곳**이 같으면 같은 관광지다.
  */
 export function attractionKey(a: Attraction): string {
-  return a.mapUrl;
+  // 구글이 신원을 알려줬으면 그게 가장 정확하다 — 표기가 어떻든 같은 장소는 같은 값이다.
+  return a.placeId ?? a.mapUrl;
 }
 
 export interface AttractionProvider {

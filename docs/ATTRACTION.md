@@ -248,7 +248,7 @@ mapUrl = mapsUrl(관광지명, 도시명)
 
 ## 8. 결과는 어떻게 만들어지나
 
-[`OpenAiAttractionProvider`](../src/modules/attraction/providers/openai.provider.ts) — 2단 구조. 뼈대는 [`TwoStageSearch`](../src/modules/openai/two-stage.ts) 를 공유한다.
+[`OpenAiAttractionProvider`](../src/modules/attraction/providers/openai.provider.ts) — 2단 구조 + 3차 보강(사진·사실 데이터). 뼈대는 [`TwoStageSearch`](../src/modules/openai/two-stage.ts) 를 공유한다.
 
 ```
 1차  web_search 로 후보 30곳 수집             (구조화 JSON)
@@ -311,12 +311,18 @@ mapUrl = mapsUrl(관광지명, 도시명)
 | `recommendation_item_attractions.duration_minutes` · `category` | 소요 시간 · 카테고리 |
 | `recommendation_item_attractions.area` · `description` | 위치(주오구) · 한 줄 소개 |
 | `recommendation_item_attractions.image_url` | 위키백과 사진 (없을 수 있다) |
+| `..._attractions.place_id` · `address` · `lat` · `lng` | **구글 Places** — 신원·주소·좌표 |
+| `..._attractions.rating` · `user_rating_count` · `opening_hours` · `website` | **구글 Places** — 더 비싼 티어라 `GOOGLE_PLACES_RATINGS=true` 일 때만 |
 
 > ⚠️ **관광지 테이블에는 원화 가격 칸이 아예 없다.** 입장료는 현지 통화(엔·바트·동)라 원 단위 칸에 넣으면 비교 불가능한 숫자가 섞인다 — 통화와 함께 남기는 것이 유일하게 맞는 방법이다. (0003·0007 마이그레이션 주석 참고)
 
 > ⚠️ **무료 여부는 `free` 로 본다.** `admission_fee` 가 null 인 경우는 "진짜 무료" 와 "금액을 확인 못 함" 두 가지라, 금액만으로는 구분할 수 없다.
 
 > **`description` 은 카드에 안 나가지만 저장한다.** 40자 한 줄에서 잘려 문장이 끊기기 때문에 카드에서 뺐는데, 나중에 그 관광지가 뭐였는지 알아보려면 이름만으로는 부족하다.
+
+> **주소·좌표·평점·운영시간은 모델에게 묻지 않는다.** 장소마다 정답이 하나인 사실이라 LLM 은 모르는 것도 그럴듯하게 채운다 — 틀린 운영시간은 사용자를 헛걸음시킨다. 구글 Places 에서 받으므로 지어낼 자리가 없고, 모르면 그 칸이 빈다. 키가 없으면 전부 null 이고 나머지는 그대로 돈다.
+
+> `place_id` 가 있으면 **이름 표기가 흔들려도 같은 곳으로 묶인다** (`'오사카성'` / `'오사카 성'`). 중복 제거 키도 이 값을 우선 쓰고([attractionKey](../src/modules/attraction/attraction.types.ts)), 지도 링크도 검색이 아니라 정확한 핀이 된다.
 
 > ⚠️ **판매처·제휴 링크 칸도 없다.** 관광지는 우리가 파는 게 아니라 장소라서 변환할 주소가 없다 — 칸이 없는 것이 곧 이 도메인의 정체다.
 

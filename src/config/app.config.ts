@@ -64,6 +64,10 @@ export interface AppConfig {
   attractionCacheTtlMinutes: number;
   attractionImages: boolean;
   attractionImageTimeoutMs: number;
+  googlePlacesApiKey: string;
+  googlePlacesTimeoutMs: number;
+  googlePlacesRatings: boolean;
+  googlePlacesLimit: number;
 
   moreButtonStyle: 'block' | 'message';
   fallbackBlockId: string;
@@ -186,6 +190,16 @@ export function loadConfig(): AppConfig {
     // 콜백 경로에서만 도는 호출이라 5초 예산과 무관하다. 그래도 짧게 끊는 이유는
     // 여러 곳을 동시에 찾기 때문이다 — 하나가 늘어지면 카드 전체가 그만큼 늦는다.
     attractionImageTimeoutMs: Math.round(num('ATTRACTION_IMAGE_TIMEOUT_SECONDS', 3) * 1000),
+
+    // 주소·좌표·평점 같은 **사실**은 모델이 아니라 구글에서 받는다. 키가 없으면
+    // 통째로 건너뛴다 — 사진과 같은 취급이다.
+    googlePlacesApiKey: str('GOOGLE_PLACES_API_KEY', ''),
+    googlePlacesTimeoutMs: Math.round(num('GOOGLE_PLACES_TIMEOUT_SECONDS', 3) * 1000),
+    // ⚠️ 평점·리뷰수·운영시간·홈페이지는 **더 비싼 티어**다. 무료 한도가 훨씬 작으므로
+    //    켤 거면 GOOGLE_PLACES_LIMIT 으로 건수를 줄여야 한다.
+    googlePlacesRatings: bool('GOOGLE_PLACES_RATINGS', false),
+    // 상위 몇 곳까지 조회할지. 20이면 저장하는 전부다 (도시 1곳당 20회·30일에 한 번).
+    googlePlacesLimit: num('GOOGLE_PLACES_LIMIT', 20),
 
     // "더 보기" 버튼 방식. block 이면 clientExtra 로 cache_key·offset 을 실어 보낼 수
     // 있어 서버가 상태를 안 들고도 4페이지까지 간다.
