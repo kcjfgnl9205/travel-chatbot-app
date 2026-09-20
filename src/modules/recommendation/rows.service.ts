@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 
 import { AppConfig, CONFIG, redirectUrl } from '../../config/app.config';
 import { applySubid } from '../adpick/adpick.service';
@@ -10,7 +10,7 @@ import {
   RecommendationsRepository,
 } from '../database/repositories/recommendations.repository';
 import * as t from '../kakao/templates';
-import { RenderContext } from '../search/search.types';
+import { RenderContext, SearchKind } from '../search/search.types';
 
 /**
  * 한 페이지를 listCard 줄로 만들면서 **노출을 기록하고 클릭 링크를 발급한다.**
@@ -46,15 +46,17 @@ export interface ItemRow {
   priceFrom?: number | null;
   merchant?: string | null;
   /**
-   * 공통 칸에 안 들어가는 도메인 고유 값. `recommendation_items.item_meta` 로 간다.
+   * 도메인별 위성 테이블에 남길 한 행 (recommendation_item_attractions 등).
    *
    * 세 도메인이 남길 게 같지 않아서 있다 — 관광지 입장료는 현지 통화라 price_from
    * (단위: 원)에 못 넣고, 항공편의 경유 횟수나 호텔 평점은 담을 칸이 아예 없었다.
    *
+   * ⚠️ **키는 DB 컬럼명(snake_case)이다.** 여기서 이름을 바꾸지 않고 그대로 넣는다 —
+   *    중간에 매핑을 두면 컬럼을 추가할 때마다 고칠 자리가 하나 더 생긴다.
    * ⚠️ **읽을 계획이 있는 값만 넣는다.** 채우기만 하고 아무도 안 보는 칸은 나중에
-   *    값이 틀어져도 알 수가 없다. 키는 도메인 타입의 필드명을 그대로 쓴다.
+   *    값이 틀어져도 알 수가 없다.
    */
-  meta?: Record<string, unknown>;
+  detail?: Record<string, unknown>;
 }
 
 export interface RenderOptions {
@@ -69,6 +71,18 @@ export interface RenderOptions {
    */
   links?: Map<string, ResolvedLink>;
 }
+
+/**
+ * 도메인별 상세가 들어가는 테이블.
+ *
+ * 공통 테이블은 하나이고 여기만 갈린다 — click_id·position·클릭 카운터는 세 도메인이
+ * 똑같이 하는 일이라 쪼갤 이유가 없다 (0007 마이그레이션 주석 참고).
+ */
+const DETAIL_TABLES: Record<SearchKind, string> = {
+  hotel: 'recommendation_item_hotels',
+  flight: 'recommendation_item_flights',
+  attraction: 'recommendation_item_attractions',
+};
 
 @Injectable()
 export class RecommendationRowsService {
@@ -105,6 +119,8 @@ export class RecommendationRowsService {
     const recommendationId = (recommendation?.id as string) ?? null;
 
     const dbRows: Record<string, unknown>[] = [];
+    /** 위성 테이블에 들어갈 행. 상세가 하나도 없는 항목은 아예 안 만든다. */
+    const detailRows: Record<string, unknown>[] = [];
     const listItems: t.Json[] = [];
     /** 제휴 변환이 안 돼 원본 주소로 나가는 줄. 수익화가 안 되는 노출이다. */
     const unconverted: string[] = [];
@@ -125,7 +141,14 @@ export class RecommendationRowsService {
       //    달아봐야 아무도 읽지 않고 링크만 지저분해진다.
       const targetUrl = monetized ? applySubid(destination, clickId, this.config) : destination;
 
+      // id 를 DB 기본값에 맡기지 않고 여기서 만든다. 위성 행이 이 값을 가리켜야 하는데,
+      // insert 응답의 순서를 믿고 되짚는 것보다 미리 정해두는 쪽이 확실하다.
+      const itemId = randomUUID();
+      const detail = compact(item.detail);
+      if (Object.keys(detail).length) detailRows.push({ item_id: itemId, ...detail });
+
       dbRows.push({
+        id: itemId,
         recommendation_id: recommendationId,
         // 부모(recommendations)도 같은 값을 갖는다. 조인 없이 도메인별로 보려고 복사한다.
         domain: ctx.meta.kind,
@@ -139,7 +162,6 @@ export class RecommendationRowsService {
         thumbnail_url: item.imageUrl ?? null,
         source_url: item.sourceUrl,
         target_url: targetUrl,
-        item_meta: compact(item.meta),
       });
 
       // DB 가 없어도 리다이렉트가 동작하도록 인메모리에도 남긴다.
@@ -171,17 +193,26 @@ export class RecommendationRowsService {
       );
     }
 
-    if (recommendationId && dbRows.length) await this.items.createMany(dbRows);
+    if (recommendationId && dbRows.length) {
+      const saved = await this.items.createMany(dbRows);
+      // 공통 행이 안 들어갔으면 위성도 넣지 않는다 — item_id 가 가리킬 행이 없어서
+      // 외래키 위반만 한 번 더 나고, 로그에 원인이 둘로 늘어난다.
+      if (saved && detailRows.length) {
+        await this.items.createDetails(DETAIL_TABLES[ctx.meta.kind], detailRows);
+      }
+    }
     return listItems;
   }
 }
 
 /**
- * 값이 있는 키만 남긴다.
+ * 값이 있는 칼럼만 남긴다.
  *
- * AI 결과는 필드가 비어 오는 게 흔해서 그대로 담으면 `{"stops": null, "cabin": null}`
- * 같은 행이 쌓인다. 집계에서 "키가 없다" 와 "값이 null 이다" 를 구별할 일이 없으므로
- * (둘 다 `->>` 가 null 을 준다) 빈 값은 애초에 넣지 않는다.
+ * AI 결과는 필드가 비어 오는 게 흔하다. 전부 null 인 행까지 위성 테이블에 넣으면
+ * "이 노출은 상세가 없다" 와 "상세가 전부 비었다" 가 같은 뜻인데 행 수만 달라진다.
+ *
+ * ⚠️ **0 과 false 는 남긴다.** 항공권의 `stops: 0` 이 직항이라 비었다고 지우면
+ *    "직항" 이라는 정보가 통째로 사라진다.
  */
 function compact(meta: Record<string, unknown> | undefined): Record<string, unknown> {
   if (!meta) return {};

@@ -146,7 +146,6 @@ erDiagram
         text click_id UK "리다이렉트 키"
         text domain "hotel | flight | attraction"
         text item_name "스냅샷"
-        jsonb item_meta "도메인 고유 스냅샷"
         int price_from "스냅샷"
         text source_url "스냅샷 = 호텔 신원"
         text target_url "스냅샷 = 302 목적지"
@@ -256,7 +255,7 @@ latency_ms = 143          ← 카카오 5초 예산 대비 여유 추적
 
 1. **`click_id`** — 줄 링크(`/r/{click_id}`)의 키. 클릭이 들어오면 여기서 역추적한다.
 2. **스냅샷** — `item_name` / `price_from` / `source_url` / `target_url` / `thumbnail_url` 을 그 시점 값으로 **복사**. 캠페인이 바뀌거나 AI 가 다음번에 다른 값을 줘도 *"그때 사용자가 본 화면"* 이 복원된다.
-5. **도메인별 스냅샷** — 공통 칸에 안 들어가는 값은 `domain` + `item_meta`(jsonb)가 받는다. 아래 참고.
+5. **도메인별 스냅샷** — 공통 칸에 안 들어가는 값은 도메인 테이블이 따로 받는다. 아래 참고.
 3. **노출 로그** — 클릭 안 된 줄도 남는다.
 4. **클릭 카운터** — `click_count` / `first_clicked_at` / `last_clicked_at`.
 
@@ -446,40 +445,56 @@ from affiliate_links;
 
 세 도메인이 **남길 값은 같지 않다.** 관광지 입장료는 현지 통화(엔·바트·동)라 `price_from`
 (단위: 원)에 넣을 수 없고, 항공편의 경유 횟수나 호텔 평점은 담을 칸이 아예 없었다.
-그래서 0007 이 두 칸을 더한다.
+그래서 0007 이 **공통 테이블은 그대로 두고 도메인 테이블을 매단다.**
 
-| 컬럼 | 쓰임 |
-|---|---|
-| `domain` | `recommendations.domain` 의 사본. **조인 없이** 도메인별로 보려고 둔다 |
-| `item_meta` | 도메인 고유 스냅샷 (jsonb). 키는 앱의 필드명(camelCase) 그대로 |
+```
+recommendation_items                 click_id · position · 스냅샷 · 클릭 카운터
+  ├─ recommendation_item_attractions admission_fee · admission_currency
+  │                                  duration_minutes · category
+  ├─ recommendation_item_hotels      star_rating · review_score
+  └─ recommendation_item_flights     airline · stops · cabin · duration_minutes
+```
 
-담기는 값 — `rows()` 가 채운다:
+위성 테이블은 `item_id` 가 곧 기본키이자 외래키다 (노출 1건당 0 또는 1행).
+**없어도 정상이다** — 모델이 그 값을 하나도 못 준 노출은 위성 행이 안 생긴다.
+공통 행을 지우면 `on delete cascade` 로 같이 사라진다.
 
-| 도메인 | `item_meta` |
-|---|---|
-| 관광지 | `admissionFee` · `admissionCurrency` · `durationMinutes` · `category` |
-| 호텔 | `starRating` · `reviewScore` |
-| 항공권 | `airline` · `stops` · `cabin` · `durationMinutes` |
+`recommendation_items.domain` 은 `recommendations.domain` 의 사본이다. 어느 위성
+테이블을 봐야 하는지 가리키고, 조인 없이 도메인별로 거를 때 쓴다.
 
-> **왜 컬럼을 늘리거나 테이블을 나누지 않았나** — 도메인별 컬럼은 나머지 두 도메인에서
-> 항상 null 이 된다(`thumbnail_url` 이 이미 그 모양이다). 도메인별 테이블은 노출 1건당
-> INSERT 가 2번이 되는데, 이 테이블에 쓰는 코드는 **카카오 5초 예산 안에서 돈다**
-> (`rows.service` 가 응답 전에 `await` 한다). 집계가 굳으면 그때 그 필드만 컬럼으로
-> 승격하면 된다.
+> **왜 공통 테이블까지 셋으로 쪼개지 않았나** — `click_id` · `position` · 노출 ·
+> 클릭 카운터는 세 도메인이 **똑같이** 하는 일이다. 쪼개면 그 컬럼과 인덱스가 세 벌이
+> 되고 `register_click()` 도 세 테이블을 뒤져야 하며, 전체 CTR 에 `union` 이 필요해진다.
+> 도메인마다 다른 것만 갈라두면 된다.
 
 > ⚠️ **왜 `search_results` 로는 안 되나** — 거기에 도메인 객체가 통째로 있지만 그건
 > **캐시라서 갱신되면 덮어써진다.** "그때 사용자가 본 입장료" 는 스냅샷에만 남는다.
 
+> ⚠️ **값 목록(카테고리·통화·좌석등급)에는 `check` 를 걸지 않았다.** 저장소가 실패를
+> 삼키는 구조라 제약에 걸린 행은 경고 한 줄만 남기고 조용히 사라진다 — 앱에 카테고리를
+> 하나 추가한 날부터 기록이 안 남는데 아무도 모르는 게 최악이다. 숫자 범위(성급 1~5,
+> 평점 0~10, 경유 0~5)는 물리적으로 안 늘어나므로 걸어뒀다.
+
 ```sql
 -- 관광지: 카테고리별 CTR (2차 호출의 "카테고리를 섞어라" 가 값을 하는지)
-select item_meta->>'category' as category,
-       count(*) as 노출,
-       count(*) filter (where click_count > 0) as 클릭된줄
-from recommendation_items where domain = 'attraction' group by 1 order by 2 desc;
+select a.category,
+       count(*)                                  as 노출,
+       count(*) filter (where i.click_count > 0) as 클릭된줄
+from recommendation_items i
+join recommendation_item_attractions a on a.item_id = i.id
+group by 1 order by 2 desc;
 
 -- 항공권: 직항이 경유보다 얼마나 눌리나
-select (item_meta->>'stops')::int as 경유횟수,
-       count(*) as 노출,
+select f.stops,
+       count(*)                                  as 노출,
+       count(*) filter (where i.click_count > 0) as 클릭된줄
+from recommendation_items i
+join recommendation_item_flights f on f.item_id = i.id
+group by 1 order by 1;
+
+-- 도메인별 전체 CTR (위성 테이블 없이도 된다)
+select domain,
+       count(*)                                as 노출,
        count(*) filter (where click_count > 0) as 클릭된줄
-from recommendation_items where domain = 'flight' group by 1 order by 1;
+from recommendation_items group by 1;
 ```

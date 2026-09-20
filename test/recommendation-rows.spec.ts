@@ -25,20 +25,25 @@ function fakes() {
   const recommendations = {
     create: async () => ({ id: 'rec-1' }),
   } as never;
+  const details: { table: string; rows: Record<string, unknown>[] }[] = [];
   const items = {
     createMany: async (rows: Record<string, unknown>[]) => {
       inserted.push(rows);
-      return [];
+      return rows;
+    },
+    createDetails: async (table: string, rows: Record<string, unknown>[]) => {
+      details.push({ table, rows });
+      return rows;
     },
   } as never;
-  return { inserted, recommendations, items };
+  return { inserted, details, recommendations, items };
 }
 
 function build(over: Partial<AppConfig> = {}) {
-  const { inserted, recommendations, items } = fakes();
+  const { inserted, details, recommendations, items } = fakes();
   const memory = new MemoryStoreService();
   const service = new RecommendationRowsService(config(over), recommendations, items, memory);
-  return { service, inserted, memory };
+  return { service, inserted, details, memory };
 }
 
 const CTX: RenderContext = {
@@ -74,9 +79,9 @@ describe('노출 기록 + 클릭 링크 발급', () => {
     expect(link.endsWith(String(inserted[0][0].click_id))).toBe(true);
   });
 
-  // ------------------------------------------------------- 도메인별 스냅샷
+  // ------------------------------------------------------- 도메인별 위성 테이블
   describe('도메인별로 남는 값', () => {
-    it('행에 domain 이 박힌다 — 집계할 때 부모를 조인하지 않으려고', async () => {
+    it('공통 행에 domain 이 박힌다 — 집계할 때 부모를 조인하지 않으려고', async () => {
       const { service, inserted } = build();
 
       await service.render([item()], CTX, { provider: 'openai' });
@@ -84,54 +89,73 @@ describe('노출 기록 + 클릭 링크 발급', () => {
       expect(inserted[0][0].domain).toBe('attraction');
     });
 
-    it('도메인 고유 값은 item_meta 로 간다', async () => {
-      const { service, inserted } = build();
+    it('도메인 고유 값은 그 도메인 테이블로 간다', async () => {
+      const { service, inserted, details } = build();
 
       await service.render(
-        [item({ meta: { admissionFee: 1200, admissionCurrency: 'JPY', category: '역사/문화' } })],
+        [item({ detail: { admission_fee: 1200, admission_currency: 'JPY', category: '역사/문화' } })],
         CTX,
         { provider: 'openai' },
       );
 
-      expect(inserted[0][0].item_meta).toEqual({
-        admissionFee: 1200,
-        admissionCurrency: 'JPY',
+      expect(details).toHaveLength(1);
+      expect(details[0].table).toBe('recommendation_item_attractions');
+      expect(details[0].rows[0]).toEqual({
+        // 공통 행과 같은 id 를 가리켜야 조인이 된다.
+        item_id: inserted[0][0].id,
+        admission_fee: 1200,
+        admission_currency: 'JPY',
         category: '역사/문화',
       });
     });
 
-    /**
-     * AI 결과는 필드가 비어 오는 게 흔하다. 그대로 담으면 null 만 든 행이 쌓인다.
-     */
-    it('빈 값은 키째로 빠진다', async () => {
-      const { service, inserted } = build();
+    it('항공권은 항공권 테이블로 간다', async () => {
+      const { service, details } = build();
+      const ctx = { ...CTX, meta: { ...CTX.meta, kind: 'flight' as const } };
+
+      await service.render([item({ detail: { airline: '대한항공', stops: 1 } })], ctx, {
+        provider: 'openai',
+        links: new Map(),
+      });
+
+      expect(details[0].table).toBe('recommendation_item_flights');
+    });
+
+    /** AI 결과는 필드가 비어 오는 게 흔하다. 전부 null 인 행을 남길 이유가 없다. */
+    it('빈 값은 칼럼째로 빠진다', async () => {
+      const { service, details } = build();
 
       await service.render(
-        [item({ meta: { admissionFee: null, durationMinutes: undefined, category: '전망' } })],
+        [item({ detail: { admission_fee: null, duration_minutes: undefined, category: '전망' } })],
         CTX,
         { provider: 'openai' },
       );
 
-      expect(inserted[0][0].item_meta).toEqual({ category: '전망' });
+      expect(details[0].rows[0]).toEqual({
+        item_id: expect.any(String),
+        category: '전망',
+      });
     });
 
     /** ⚠️ 직항이 0 이다. 빈 값이라고 지우면 "직항" 이라는 정보가 통째로 사라진다. */
     it('0 과 false 는 값이므로 남는다', async () => {
-      const { service, inserted } = build();
+      const { service, details } = build();
 
-      await service.render([item({ meta: { stops: 0, free: false } })], CTX, {
+      await service.render([item({ detail: { stops: 0, free: false } })], CTX, {
         provider: 'openai',
       });
 
-      expect(inserted[0][0].item_meta).toEqual({ stops: 0, free: false });
+      expect(details[0].rows[0]).toMatchObject({ stops: 0, free: false });
     });
 
-    it('meta 를 안 넘기는 도메인은 빈 객체다', async () => {
-      const { service, inserted } = build();
+    it('남길 값이 하나도 없으면 위성 행을 아예 안 만든다', async () => {
+      const { service, details } = build();
 
-      await service.render([item()], CTX, { provider: 'openai' });
+      await service.render([item(), item({ detail: { category: null } })], CTX, {
+        provider: 'openai',
+      });
 
-      expect(inserted[0][0].item_meta).toEqual({});
+      expect(details).toHaveLength(0);
     });
   });
 
