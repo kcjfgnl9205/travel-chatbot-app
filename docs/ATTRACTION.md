@@ -146,7 +146,7 @@ imageUrl     위키백과 사진 (없을 수 있다)
 link.web     /r/{clickId} → 302 → 구글맵
 ```
 
-[`listDescription()`](../src/modules/attraction/attraction.types.ts) 의 우선순위는 **입장료 → 소요 시간 → 위치**(없으면 카테고리)다.
+[`listDescription()`](../src/modules/attraction/attraction-card.ts) 의 우선순위는 **입장료 → 소요 시간 → 위치**(없으면 카테고리)다.
 
 > **한 줄 소개(description)를 카드에 안 넣는다.** 소개는 40자에서 잘려 문장이 끊기는데, 그러면 세 조각 다 못 보여주고 잘린 문장만 남는다. 소개는 DB 에만 남긴다.
 
@@ -352,6 +352,7 @@ image en attraction=Magellan's Cross doc=Magellan's Cross
 
 ```
 test/attraction-types.spec.ts   카드 문구 (입장료·통화), 중복 제거
+test/attraction-schema.spec.ts  1차·2차 스키마가 어긋나지 않는가
 test/attraction-image.spec.ts   위키백과 ko→en 폴백
 test/two-stage.spec.ts          2단 파이프라인
 test/router.spec.ts             발화 → 응답 전 구간

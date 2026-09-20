@@ -4,7 +4,7 @@ import { mapsUrl } from '../../../common/maps-url';
 import { positiveInt, text } from '../../../common/parse';
 import { AppConfig, CONFIG } from '../../../config/app.config';
 import { OpenAiService } from '../../openai/openai.service';
-import { TwoStageSearch, TwoStageTrace, newTwoStageTrace } from '../../openai/two-stage';
+import { TwoStageSearch, newTwoStageTrace } from '../../openai/two-stage';
 import { FoundImage, findAttractionImage } from '../attraction-image';
 import { Attraction, AttractionProvider, AttractionQuery } from '../attraction.types';
 
@@ -88,6 +88,155 @@ export const CATEGORIES = [
 ];
 
 /**
+ * 두 호출이 주고받는 필드. **여기 한 번만 적는다.**
+ *
+ * ⚠️ 이 표가 있는 이유는 줄 수가 아니다. **1차 스키마에 없는 필드는 2차가 절대 못
+ *    채운다** — 2차는 "후보에 없는 건 null" 규칙을 지키기 때문이다. 스키마를 두 벌
+ *    따로 적으면 한쪽에만 필드를 넣는 일이 생기고, 그러면 그 칸은 영원히 null 로
+ *    나가면서 아무 에러도 내지 않는다. duration_minutes 와 호텔 썸네일이 정확히
+ *    그래서 비어 있었다. 한 곳에서 파생시키면 빠뜨릴 자리가 없다.
+ *
+ * 설명(description)만 단계마다 다르다. 1차는 "웹에서 찾아라", 2차는 "후보에 적힌
+ * 값을 옮겨라" 라고 시켜야 해서다 — 같은 필드에 같은 말을 시키면 2차가 가격을
+ * 새로 지어낸다. 그래서 설명은 두 벌, 필드는 한 벌이다.
+ */
+type Stage = 'candidate' | 'pick';
+
+interface SharedField {
+  /** 두 호출이 똑같이 쓰는 부분 (type·enum). 여기가 갈리면 2차가 후보를 못 읽는다. */
+  base: Record<string, unknown>;
+  /** 단계별 지시문. null 이면 설명 없이 낸다 (카테고리는 enum 이 곧 설명이다). */
+  description: Record<Stage, string | null>;
+}
+
+const SHARED_FIELDS: Record<string, SharedField> = {
+  name: {
+    base: { type: 'string' },
+    description: {
+      candidate: '관광지명 (한국어 표기, 장소 이름만)',
+      pick:
+        '관광지명. **한국어 표기**로 장소 이름만 (20자 이내). 영문명·설명·괄호 금지. ' +
+        '이 값이 그대로 카드 제목이자 구글맵 검색어가 된다',
+    },
+  },
+  name_en: {
+    base: { type: ['string', 'null'] },
+    description: {
+      candidate: '영어 위키백과에 실릴 만한 공식 영문명. 모르면 null',
+      pick:
+        '공식 영문명 (Osaka Castle, Magellan\'s Cross). 카드에는 안 쓰고 ' +
+        '사진 검색에만 쓴다. 후보에 있으면 그 값을, 없으면 아는 대로 채운다. 모르면 null',
+    },
+  },
+  category: {
+    base: { type: ['string', 'null'], enum: [...CATEGORIES, null] },
+    description: { candidate: null, pick: null },
+  },
+  area: {
+    base: { type: ['string', 'null'] },
+    description: {
+      candidate: '가장 가까운 역·번화가 이름 (도시 이름 제외)',
+      pick: '가장 가까운 역·번화가 이름. 도시 이름은 빼고 짧게 (난바, 우메다). 모르면 null',
+    },
+  },
+  free: {
+    base: { type: ['boolean', 'null'] },
+    description: { candidate: '입장료가 없으면 true', pick: '입장료가 없으면 true' },
+  },
+  admission_fee: {
+    base: { type: ['integer', 'null'] },
+    description: {
+      candidate: '성인 1인 입장료. **현지 통화 그대로, 환산 금지.** 무료이거나 모르면 null',
+      pick:
+        '성인 1인 입장료. **현지 통화 그대로 적는다 — 원화로 환산하지 마라.** ' +
+        '무료이거나 확인 못 했으면 null',
+    },
+  },
+  admission_currency: {
+    base: { type: ['string', 'null'], enum: [...CURRENCIES, null] },
+    description: {
+      candidate: 'admission_fee 의 통화 코드. 금액이 있으면 반드시 채운다',
+      pick: 'admission_fee 의 통화 코드 (일본이면 JPY). 금액이 있으면 반드시 채운다',
+    },
+  },
+  duration_minutes: {
+    base: { type: ['integer', 'null'] },
+    description: {
+      candidate: '일반적인 관람 소요 시간(분). 추정해도 된다',
+      pick: '둘러보는 데 걸리는 일반적인 관람 시간(분). 후보에 있으면 그 값을, 없으면 추정해서 채운다',
+    },
+  },
+};
+
+/**
+ * 한쪽 단계에만 있는 필드.
+ *
+ * `note` 는 1차가 후보를 추릴 근거로 적어두는 메모라 카드까지 갈 일이 없고,
+ * `description`·`tags` 는 2차가 고른 다음에야 쓸 수 있다. **공유 필드와 달리
+ * 여기 있는 것들은 한쪽에 없어도 정상이다** — 그래서 위 표와 갈라 둔다.
+ */
+const OWN_FIELDS: Record<string, Record<string, unknown>> = {
+  note: { type: ['string', 'null'], description: '특징 한 줄' },
+  description: { type: ['string', 'null'], description: '한 줄 소개' },
+  tags: {
+    type: 'array',
+    items: { type: 'string' },
+    description: '특징 키워드 (야경, 아이동반, 실내 등)',
+  },
+};
+
+/** 1차가 받는 필드. 순서가 곧 스키마 순서다. */
+const CANDIDATE_FIELDS = [
+  'name',
+  'name_en',
+  'category',
+  'area',
+  'free',
+  'admission_fee',
+  'admission_currency',
+  'duration_minutes',
+  'note',
+] as const;
+
+/** 2차가 받는 필드. 공유 필드는 1차와 같고 note 자리에 description·tags 가 온다. */
+const PICK_FIELDS = [
+  'name',
+  'name_en',
+  'category',
+  'area',
+  'description',
+  'free',
+  'admission_fee',
+  'admission_currency',
+  'duration_minutes',
+  'tags',
+] as const;
+
+/**
+ * 관광지 1건의 스키마. strict 라 **모든 키가 required 여야** 해서 순서 목록이 곧 required 다.
+ */
+function itemSchema(stage: Stage, fields: readonly string[]): Record<string, unknown> {
+  const properties: Record<string, unknown> = {};
+  for (const key of fields) {
+    const shared = SHARED_FIELDS[key];
+    if (!shared) {
+      properties[key] = OWN_FIELDS[key];
+      continue;
+    }
+    // 항상 복사본을 만든다. 두 스키마가 같은 객체를 가리키면 한쪽을 손댄 게
+    // 다른 쪽까지 바꾸는데, 그건 이 파일이 막으려는 바로 그 사고의 역방향이다.
+    const description = shared.description[stage];
+    properties[key] = description ? { ...shared.base, description } : { ...shared.base };
+  }
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: [...fields],
+    properties,
+  };
+}
+
+/**
  * 1차 호출도 구조화 출력을 건다.
  *
  * 자유 텍스트로 두면 모델이 "이렇게 정리해 드리겠습니다. 진행할까요?" 같은 문장을
@@ -102,60 +251,12 @@ export const ATTRACTION_CANDIDATE_SCHEMA = {
     additionalProperties: false,
     required: ['candidates'],
     properties: {
-      candidates: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          required: [
-            'name',
-            'name_en',
-            'category',
-            'area',
-            'free',
-            'admission_fee',
-            'admission_currency',
-            'duration_minutes',
-            'note',
-          ],
-          properties: {
-            name: { type: 'string', description: '관광지명 (한국어 표기, 장소 이름만)' },
-            // ⚠️ **1차에 이 필드가 없으면 2차는 절대 못 채운다.** 2차는 "후보에 없는
-            //    건 null" 규칙을 지키기 때문이다. duration_minutes 와 호텔 썸네일이
-            //    정확히 이 이유로 항상 null 이었다. 새 필드는 두 스키마를 같이 본다.
-            name_en: {
-              type: ['string', 'null'],
-              description: '영어 위키백과에 실릴 만한 공식 영문명. 모르면 null',
-            },
-            category: { type: ['string', 'null'], enum: [...CATEGORIES, null] },
-            area: {
-              type: ['string', 'null'],
-              description: '가장 가까운 역·번화가 이름 (도시 이름 제외)',
-            },
-            free: { type: ['boolean', 'null'], description: '입장료가 없으면 true' },
-            admission_fee: {
-              type: ['integer', 'null'],
-              description:
-                '성인 1인 입장료. **현지 통화 그대로, 환산 금지.** 무료이거나 모르면 null',
-            },
-            admission_currency: {
-              type: ['string', 'null'],
-              enum: [...CURRENCIES, null],
-              description: 'admission_fee 의 통화 코드. 금액이 있으면 반드시 채운다',
-            },
-            duration_minutes: {
-              type: ['integer', 'null'],
-              description: '일반적인 관람 소요 시간(분). 추정해도 된다',
-            },
-            note: { type: ['string', 'null'], description: '특징 한 줄' },
-          },
-        },
-      },
+      candidates: { type: 'array', items: itemSchema('candidate', CANDIDATE_FIELDS) },
     },
   },
 };
 
-/** 2차 호출에 거는 구조화 출력 스키마. strict 라 모든 키가 required 여야 한다. */
+/** 2차 호출에 거는 구조화 출력 스키마. */
 export const ATTRACTION_SCHEMA = {
   type: 'json_schema' as const,
   name: 'attraction_picks',
@@ -165,68 +266,7 @@ export const ATTRACTION_SCHEMA = {
     additionalProperties: false,
     required: ['attractions'],
     properties: {
-      attractions: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          required: [
-            'name',
-            'name_en',
-            'category',
-            'area',
-            'description',
-            'free',
-            'admission_fee',
-            'admission_currency',
-            'duration_minutes',
-            'tags',
-          ],
-          properties: {
-            name: {
-              type: 'string',
-              description:
-                '관광지명. **한국어 표기**로 장소 이름만 (20자 이내). 영문명·설명·괄호 금지. ' +
-                '이 값이 그대로 카드 제목이자 구글맵 검색어가 된다',
-            },
-            name_en: {
-              type: ['string', 'null'],
-              description:
-                '공식 영문명 (Osaka Castle, Magellan\'s Cross). 카드에는 안 쓰고 ' +
-                '사진 검색에만 쓴다. 후보에 있으면 그 값을, 없으면 아는 대로 채운다. 모르면 null',
-            },
-            category: { type: ['string', 'null'], enum: [...CATEGORIES, null] },
-            area: {
-              type: ['string', 'null'],
-              description:
-                '가장 가까운 역·번화가 이름. 도시 이름은 빼고 짧게 (난바, 우메다). 모르면 null',
-            },
-            description: { type: ['string', 'null'], description: '한 줄 소개' },
-            free: { type: ['boolean', 'null'], description: '입장료가 없으면 true' },
-            admission_fee: {
-              type: ['integer', 'null'],
-              description:
-                '성인 1인 입장료. **현지 통화 그대로 적는다 — 원화로 환산하지 마라.** ' +
-                '무료이거나 확인 못 했으면 null',
-            },
-            admission_currency: {
-              type: ['string', 'null'],
-              enum: [...CURRENCIES, null],
-              description: 'admission_fee 의 통화 코드 (일본이면 JPY). 금액이 있으면 반드시 채운다',
-            },
-            duration_minutes: {
-              type: ['integer', 'null'],
-              description:
-                '둘러보는 데 걸리는 일반적인 관람 시간(분). 후보에 있으면 그 값을, 없으면 추정해서 채운다',
-            },
-            tags: {
-              type: 'array',
-              items: { type: 'string' },
-              description: '특징 키워드 (야경, 아이동반, 실내 등)',
-            },
-          },
-        },
-      },
+      attractions: { type: 'array', items: itemSchema('pick', PICK_FIELDS) },
     },
   },
 };
@@ -245,22 +285,6 @@ const RANK_INSTRUCTIONS = [
   '처음 가는 사람 기준으로, 그 도시에 갔으면 봐야 할 곳을 앞에 둔다.',
   '**요청한 개수를 반드시 채워라.** 후보가 그만큼 없으면 있는 것을 전부 낸다 — 임의로 줄이지 마라.',
 ].join(' ');
-
-/**
- * 검색 한 번에 대한 계측. 공통 필드는 [TwoStageTrace](../../openai/two-stage.ts) 에 있다.
- *
- * ⚠️ **지금 이 값을 읽는 코드가 없다.** 주석이 가리키던 /api/v1/debug/attraction-search 는
- *    컨트롤러가 /debug/search 하나로 합쳐지면서 사라졌고, 로그에 찍히는 건 trace 가
- *    아니라 respond() 의 반환값이다. 남겨둔 이유와 정리 방향은 TwoStageTrace 주석 참고.
- */
-export type AttractionSearchTrace = TwoStageTrace;
-
-export interface TracedAttractionSearch {
-  attractions: Attraction[];
-  trace: AttractionSearchTrace;
-  /** 1차 호출의 원문. 모델이 뭘 긁어왔는지 눈으로 봐야 할 때가 있다. */
-  candidates: string | null;
-}
 
 interface RawPick {
   name?: unknown;
@@ -318,29 +342,26 @@ export class OpenAiAttractionProvider
     ].join('\n');
   }
 
+  /**
+   * 1차(후보) → 2차(선별) → 3차(사진). 한 단계라도 빈손이면 거기서 끝낸다.
+   *
+   * 호텔·항공권에는 이것 말고 `searchTraced()` 가 하나 더 있는데(테스트가 썸네일
+   * 계측을 읽는다), 관광지에는 **읽는 쪽이 없어서 두지 않는다.** 계측은
+   * TwoStageSearch 가 로그로 남기므로 trace 는 두 단계에 넘기기만 한다.
+   */
   async search(query: AttractionQuery): Promise<Attraction[]> {
-    return (await this.searchTraced(query)).attractions;
-  }
-
-  /** search() 와 같은 흐름이되 단계별 소요 시간을 같이 돌려준다. */
-  async searchTraced(query: AttractionQuery): Promise<TracedAttractionSearch> {
-    const trace: AttractionSearchTrace = newTwoStageTrace();
-    const done = (
-      attractions: Attraction[],
-      candidates: string | null,
-    ): TracedAttractionSearch => ({ attractions, trace, candidates });
-
     if (!this.openai.enabled) {
       this.logger.warn('OPENAI_API_KEY 가 없어 관광지 검색을 건너뛴다');
-      return done([], null);
+      return [];
     }
 
+    const trace = newTwoStageTrace();
     const candidates = await this.findCandidates(query, trace);
-    if (!candidates) return done([], null);
+    // 후보가 없으면 2차를 부르지 않는다 — 빈손에서 고르라고 하면 모델이 지어낸다.
+    if (!candidates) return [];
 
     const picks = await this.rank<RawPick>(query, candidates, trace);
-    const attractions = this.toAttractions(picks, query);
-    return done(await this.withImages(attractions, query), candidates);
+    return this.withImages(this.toAttractions(picks, query), query);
   }
 
   // ------------------------------------------------------ 3차: 대표 이미지
