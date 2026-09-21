@@ -1,7 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import { AppConfig, CONFIG } from '../../config/app.config';
-import { AttractionPlacesRepository } from '../database/repositories/attraction-places.repository';
 import { PlacesRepository } from '../database/repositories/places.repository';
 import { SearchResultsRepository } from '../database/repositories/search-results.repository';
 import { CITY_TABLE } from '../places/city-table';
@@ -35,7 +34,6 @@ export class CatalogService {
     @Inject(CONFIG) private readonly config: AppConfig,
     private readonly places: PlacesService,
     private readonly placesRepo: PlacesRepository,
-    private readonly catalog: AttractionPlacesRepository,
     private readonly searchResults: SearchResultsRepository,
     private readonly search: SearchService,
   ) {}
@@ -48,12 +46,14 @@ export class CatalogService {
    * 씨를 뿌린다. **모델을 부르지 않는다** — 사전에 있는 도시는 표준명이 이미 있다.
    */
   async seed(): Promise<{ seeded: number }> {
-    let seeded = 0;
-    for (const city of seedCities()) {
-      const place = await this.places.resolve(city.nameKo);
-      if (place) seeded += 1;
-    }
-    this.logger.log(`seeded cities=${seeded}`);
+    // ⚠️ **한 곳씩 순차로 돌리면 안 된다.** 도시마다 DB 왕복이 두 번(별칭 조회 +
+    //    upsert)이라 112곳이면 224번이고, 그게 프록시 타임아웃(100초)을 넘겼다.
+    //    도시끼리는 서로를 모르므로 나눠 돌려도 결과가 같다.
+    const results = await inBatches(seedCities(), SEED_CONCURRENCY, (city) =>
+      this.places.resolve(city.nameKo),
+    );
+    const seeded = results.filter(Boolean).length;
+    this.logger.log(`seeded cities=${seeded}/${results.length}`);
     return { seeded };
   }
 
@@ -63,10 +63,19 @@ export class CatalogService {
    * ⚠️ **한 도시가 실패해도 나머지를 계속한다.** 구글이 잠깐 흔들렸다고 그날 배치가
    *    통째로 멈추면, 다음날까지 그 도시들이 비어 있게 된다.
    */
-  async refreshDue(limit: number): Promise<{ refreshed: string[]; failed: string[] }> {
+  async startRefresh(limit: number): Promise<{ started: string[] }> {
     const olderThan = new Date(Date.now() - this.config.attractionRefreshDays * 86_400_000);
     const cities = await this.placesRepo.dueForAttractions(olderThan, limit);
 
+    // ⚠️ **응답을 기다리게 하지 않는다.** 도시 하나에 구글 6회 + 모델 2회 + 사진
+    //    최대 60회가 돌아 30초~2분이다. 크론은 본문을 읽지 않고, 사람이 부를 때도
+    //    진행은 로그로 본다 — 기다리면 프록시 타임아웃(100초)에 걸린다.
+    void this.runRefresh(cities);
+    return { started: cities.map((city) => city.canonicalName) };
+  }
+
+  /** 실제 작업. 요청과 분리돼 돌기 때문에 **여기서 던진 예외는 아무도 못 받는다.** */
+  private async runRefresh(cities: Place[]): Promise<{ refreshed: string[]; failed: string[] }> {
     const refreshed: string[] = [];
     const failed: string[] = [];
     for (const city of cities) {
@@ -81,7 +90,7 @@ export class CatalogService {
 
     // 만료된 관광지 캐시를 지운다. ⚠️ 구글 콘텐츠라 30일이 지나면 실제로 지워야 한다 —
     // 다른 도메인과 달리 "만료돼도 보여주기" 를 쓰지 않는 이유이기도 하다.
-    const purged = await this.searchResults.purgeExpired('attraction');
+    const purged = await this.searchResults.purgeExpired('attraction').catch(() => null);
     this.logger.log(
       `batch done refreshed=${refreshed.length} failed=${failed.length} purged=${purged ?? 0}`,
     );
@@ -101,14 +110,34 @@ export class CatalogService {
       return 0;
     }
 
-    await this.catalog.replaceCity(
-      city.id,
-      attractions.map((a) => a.placeId),
-    );
+    // place_id 목록은 도메인이 저장한다(AttractionService.search) — 사용자가 물어서
+    // 찾은 도시와 배치가 찾은 도시가 같은 상태가 되게 하려는 것이다. 여기서 또 쓰면
+    // 같은 일을 두 곳에서 하게 된다.
     await this.placesRepo.markAttractionsRefreshed(city.id);
     this.logger.log(`refreshed city=${city.canonicalName} places=${attractions.length}`);
     return attractions.length;
   }
+}
+
+/** 씨앗 등록 동시 실행 수. DB 를 두들기지 않으면서 112곳이 10초대에 끝나는 선. */
+const SEED_CONCURRENCY = 8;
+
+/**
+ * 몇 개씩 나눠 돌린다.
+ *
+ * Promise.all 로 112개를 한꺼번에 던지면 DB 연결을 그만큼 잡는다. 순차로 돌리면
+ * 타임아웃이 난다. 그 사이를 고른다.
+ */
+async function inBatches<T, R>(
+  items: T[],
+  size: number,
+  run: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const out: R[] = [];
+  for (let i = 0; i < items.length; i += size) {
+    out.push(...(await Promise.all(items.slice(i, i + size).map(run))));
+  }
+  return out;
 }
 
 /**

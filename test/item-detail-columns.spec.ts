@@ -74,6 +74,9 @@ function capture() {
 /** 링크 해석을 타지 않게 빈 Map 을 넘긴다 (변환은 이 테스트의 관심사가 아니다). */
 const noAffiliate = { resolve: async () => new Map() } as never;
 
+/** 이 테스트는 rows() 만 본다 — 목록 저장은 search() 쪽 일이라 여기선 안 탄다. */
+const noCatalog = { replaceCity: async () => [] } as never;
+
 describe('detail 키가 실제 컬럼과 맞는가', () => {
   it('관광지', async () => {
     const { rows, renderer } = capture();
@@ -89,7 +92,7 @@ describe('detail 키가 실제 컬럼과 맞는가', () => {
       imageUrl: 'https://img/1.jpg',
     };
 
-    await new AttractionService({ name: 'fake' } as never, renderer).rows(
+    await new AttractionService({ name: 'fake' } as never, renderer, noCatalog).rows(
       [attraction],
       CTX('attraction'),
     );

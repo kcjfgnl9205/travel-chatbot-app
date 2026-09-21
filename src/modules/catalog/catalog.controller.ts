@@ -58,17 +58,19 @@ export class CatalogController {
       '구글에서 목록을 다시 받고 모델이 순서를 정한다.\n\n' +
       '⚠️ **캐시 TTL(30일)보다 짧은 주기로 돌아야 한다.** 만료된 뒤에 갱신하면 그 도시의 ' +
       '첫 질문이 다시 대기를 타므로 미리 채워두는 의미가 없다.\n\n' +
+      '⚠️ **바로 돌아온다.** 도시 하나에 30초~2분이 걸려서 기다리면 프록시 타임아웃에 ' +
+      '걸린다. 응답은 "무엇을 시작했는지" 이고, 진행은 로그로 본다.\n\n' +
       '한 도시가 실패해도 나머지는 계속한다. 만료된 관광지 캐시도 같이 지운다 — ' +
       '구글 콘텐츠라 30일이 지나면 실제로 지워야 한다.',
   })
-  @ApiResponse({ status: 201, description: '갱신한 도시와 실패한 도시' })
+  @ApiResponse({ status: 201, description: '작업을 시작한 도시 목록' })
   async refresh(
     @Body() body: { limit?: number },
     @Headers('x-debug-token') token?: string,
-  ): Promise<{ refreshed: string[]; failed: string[] }> {
+  ): Promise<{ started: string[] }> {
     this.authorize(token);
     // 하루치 기본값. 도시 112곳을 28일에 나누면 하루 4곳이다.
-    return this.catalog.refreshDue(body?.limit ?? 4);
+    return this.catalog.startRefresh(body?.limit ?? 4);
   }
 
   private authorize(token?: string): void {

@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import { dedupeBy } from '../../common/dedupe';
+import { AttractionPlacesRepository } from '../database/repositories/attraction-places.repository';
 import * as cards from '../kakao/cards';
 import * as t from '../kakao/templates';
 import { RecommendationRowsService } from '../recommendation/rows.service';
@@ -57,6 +58,7 @@ export class AttractionService implements SearchDomain<Attraction> {
   constructor(
     @Inject(ATTRACTION_PROVIDER) private readonly provider: AttractionProvider,
     private readonly renderer: RecommendationRowsService,
+    private readonly catalog: AttractionPlacesRepository,
   ) {}
 
   /** 실제로 붙어 있는 데이터 소스. 설정값이 아니라 주입된 구현이 답이다 (/health). */
@@ -72,7 +74,21 @@ export class AttractionService implements SearchDomain<Attraction> {
   /** ⚠️ 느리다(7~30초, 사진까지 찾으면 더). 백그라운드에서만 부른다. */
   async search(ctx: SearchContext): Promise<Attraction[]> {
     const attractions = await this.provider.search(queryOf(ctx));
-    return dedupe(attractions, this.logger).slice(0, ctx.limit);
+    const picked = dedupe(attractions, this.logger).slice(0, ctx.limit);
+
+    // **목록의 영구 신원을 여기서 남긴다.** 배치 경로에만 두면 두 경로가 달라진다 —
+    // 사용자가 물어서 찾은 도시는 30일 캐시에만 있고, 그 캐시가 비면 목록을 처음부터
+    // 다시 만들어야 한다(모델 재호출). place_id 가 남아 있으면 구글에 다시 물어
+    // 살만 채우면 된다.
+    //
+    // ⚠️ 요청 경로가 아니라 백그라운드에서만 도는 코드다(카카오 5초 예산 밖).
+    if (picked.length) {
+      await this.catalog.replaceCity(
+        ctx.place.id,
+        picked.map((attraction) => attraction.placeId),
+      );
+    }
+    return picked;
   }
 
   isItem(item: unknown): item is Attraction {

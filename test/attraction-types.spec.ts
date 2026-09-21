@@ -1,6 +1,6 @@
 import { mapsUrl } from '../src/common/maps-url';
 import { listDescription, ratingText } from '../src/modules/attraction/attraction-card';
-import { dedupe } from '../src/modules/attraction/attraction.service';
+import { AttractionService, dedupe } from '../src/modules/attraction/attraction.service';
 import { Attraction, attractionKey, isAttraction } from '../src/modules/attraction/attraction.types';
 
 /**
@@ -93,5 +93,61 @@ describe('캐시에서 살려낸 값', () => {
   it('배포로 필드가 바뀌어 모양이 깨지면 버린다', () => {
     expect(isAttraction({ name: '오사카성' })).toBe(false);
     expect(isAttraction(null)).toBe(false);
+  });
+});
+
+describe('목록의 영구 신원', () => {
+  /**
+   * ⚠️ **배치 경로에만 두면 두 경로가 달라진다.** 사용자가 물어서 찾은 도시는 30일
+   *    캐시에만 있고, 그 캐시가 비면 목록을 처음부터 다시 만들어야 한다(모델 재호출).
+   *    place_id 가 남아 있으면 구글에 다시 물어 살만 채우면 된다.
+   */
+  it('검색하면 place_id 를 도시별로 저장한다', async () => {
+    const saved: { cityId: number; placeIds: string[] }[] = [];
+    const provider = {
+      name: 'fake',
+      search: async () => [spot({ placeId: 'ChIJ_1' }), spot({ placeId: 'ChIJ_2' })],
+    } as never;
+    const catalog = {
+      replaceCity: async (cityId: number, placeIds: string[]) => {
+        saved.push({ cityId, placeIds });
+        return [];
+      },
+    } as never;
+
+    await new AttractionService(provider, {} as never, catalog).search({
+      kind: 'attraction',
+      place: { id: 42, canonicalName: '오사카', slug: 'osaka', kind: 'city',
+               countryCode: 'JP', iata: 'KIX', parentId: null },
+      parent: null,
+      from: null,
+      tripType: 'rt',
+      limit: 20,
+    });
+
+    expect(saved).toEqual([{ cityId: 42, placeIds: ['ChIJ_1', 'ChIJ_2'] }]);
+  });
+
+  it('빈손이면 저장하지 않는다 — 목록을 지워버리면 안 된다', async () => {
+    let called = false;
+    const provider = { name: 'fake', search: async () => [] } as never;
+    const catalog = {
+      replaceCity: async () => {
+        called = true;
+        return [];
+      },
+    } as never;
+
+    await new AttractionService(provider, {} as never, catalog).search({
+      kind: 'attraction',
+      place: { id: 42, canonicalName: '오사카', slug: 'osaka', kind: 'city',
+               countryCode: 'JP', iata: 'KIX', parentId: null },
+      parent: null,
+      from: null,
+      tripType: 'rt',
+      limit: 20,
+    });
+
+    expect(called).toBe(false);
   });
 });
