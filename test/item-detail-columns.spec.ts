@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { loadConfig } from '../src/config/app.config';
@@ -23,17 +23,32 @@ import { RenderContext } from '../src/modules/search/search.types';
  * 그래서 마이그레이션 파일을 직접 읽어서 대조한다. DB 없이 도는 테스트다.
  */
 
-const MIGRATION = readFileSync(
-  join(__dirname, '../supabase/migrations/0007_item_domain.sql'),
-  'utf8',
-);
-
-/** `alter table public.<이름> ... add column if not exists <컬럼>` 을 긁는다. */
+/**
+ * 마이그레이션 전부를 순서대로 읽어 **최종 컬럼 목록**을 만든다.
+ *
+ * 한 파일만 보면 안 된다 — 0007 이 만든 칸을 0008 이 지우기도 하기 때문이다.
+ * add 와 drop 을 파일 순서대로 적용해야 지금 DB 와 같은 결과가 나온다.
+ */
 function columnsOf(table: string): string[] {
-  const block = MIGRATION.split(`alter table public.${table}`)[1];
-  if (!block) throw new Error(`마이그레이션에 ${table} 이 없다`);
-  const statement = block.split(';')[0];
-  return [...statement.matchAll(/add column if not exists\s+(\w+)/g)].map((m) => m[1]);
+  const dir = join(__dirname, '../supabase/migrations');
+  const columns = new Set<string>();
+
+  for (const file of readdirSync(dir).sort()) {
+    const sql = readFileSync(join(dir, file), 'utf8');
+    // 한 파일 안에 같은 테이블을 여러 번 alter 할 수 있다.
+    for (const block of sql.split(`alter table public.${table}`).slice(1)) {
+      const statement = block.split(';')[0];
+      for (const [, name] of statement.matchAll(/add column if not exists\s+(\w+)/g)) {
+        columns.add(name);
+      }
+      for (const [, name] of statement.matchAll(/drop column if exists\s+(\w+)/g)) {
+        columns.delete(name);
+      }
+    }
+  }
+
+  if (!columns.size) throw new Error(`마이그레이션에 ${table} 컬럼이 없다`);
+  return [...columns];
 }
 
 const CTX = (kind: 'hotel' | 'flight' | 'attraction'): RenderContext => ({
@@ -63,16 +78,14 @@ describe('detail 키가 실제 컬럼과 맞는가', () => {
   it('관광지', async () => {
     const { rows, renderer } = capture();
     const attraction: Attraction = {
+      placeId: 'ChIJ_osaka_castle',
       name: '오사카성',
       citySlug: 'osaka',
       mapUrl: 'https://maps/1',
       category: '역사/문화',
       area: '주오구',
-      description: '도요토미 히데요시가 지은 성',
-      free: false,
-      admissionFee: 1200,
-      admissionCurrency: 'JPY',
-      durationMinutes: 120,
+      rating: 4.4,
+      userRatingCount: 61234,
       imageUrl: 'https://img/1.jpg',
     };
 

@@ -112,22 +112,13 @@ export class AttractionService implements SearchDomain<Attraction> {
         title: attraction.name,
         description: listDescription(attraction),
         imageUrl: attraction.imageUrl,
-        // ⚠️ **원화 가격 칸이 아예 없는 테이블로 간다.** 관광지 입장료는 현지 통화
-        //    (엔·바트·동)라 원 단위 칸에 넣으면 비교 불가능한 숫자가 섞인다 —
-        //    통화를 함께 남기는 것이 유일하게 맞는 방법이다 (0003 주석 참고).
-        //    category 는 2차 호출의 "카테고리를 섞어라" 지시가 실제로 값을 하는지
-        //    보려고 같이 담는다.
+        // ⚠️ **평점·리뷰수는 여기 없다.** 구글 콘텐츠라 영구 보관하지 않는다 —
+        //    30일 캐시(search_results)에만 살고, 노출 스냅샷에는 구글이 영구 저장을
+        //    허용하는 place_id 와 우리가 만든 값만 남긴다.
         detail: {
-          admission_fee: attraction.admissionFee,
-          admission_currency: attraction.admissionCurrency,
-          // ⚠️ admission_fee 가 null 이어도 무료인지 모르는지는 이 값만 안다.
-          free: attraction.free,
-          duration_minutes: attraction.durationMinutes,
+          place_id: attraction.placeId,
           category: attraction.category,
           area: attraction.area,
-          // 카드에는 안 나가지만(40자에서 잘린다) 남겨둔다 — 나중에 이 관광지가
-          // 뭐였는지 알아보려면 이름만으로는 부족하다.
-          description: attraction.description,
           image_url: attraction.imageUrl,
         },
       })),

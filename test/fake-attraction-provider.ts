@@ -52,42 +52,45 @@ function sleep(ms: number): Promise<void> {
  * 금액은 **환산하지 않은 현지 통화**다 (일본이라 JPY). 진짜 provider 도 그렇게 준다 —
  * 모델에게 환율 계산을 시키면 틀린 가격이 카드에 찍힌다.
  */
-const SPOTS: [string, string, string, boolean, number | null, number][] = [
-  ['테스트성', '역사/문화', '주오구', false, 1200, 120],
-  ['테스트 거리', '거리/쇼핑', '난바', true, null, 120],
-  ['테스트 전망대', '전망', '우메다', false, 1500, 60],
-  ['테스트 공원', '자연/공원', '기타구', true, null, 90],
-  ['테스트 수족관', '테마파크', '미나토구', false, 2700, 180],
-  ['테스트 시장', '음식/시장', '난바', true, null, 60],
+const SPOTS: [string, string, string, number | null, number | null][] = [
+  ['테스트성', '역사/문화', '주오구', 4.4, 61234],
+  ['테스트 거리', '거리/쇼핑', '난바', 4.2, 30120],
+  ['테스트 전망대', '관광명소', '우메다', 4.5, 21000],
+  ['테스트 공원', '자연/공원', '기타구', 4.1, 8300],
+  ['테스트 수족관', '테마파크', '미나토구', 4.3, 45000],
+  ['테스트 시장', '거리/쇼핑', '난바', null, null],
 ];
 
 /**
  * 사진이 **일부만** 채워진다 (6곳 중 4곳).
  *
- * 진짜 provider 도 그렇다 — 위키백과에 문서가 없는 관광지가 있어서 실측 87%다.
- * 전부 채워 두면 "사진 없는 줄이 섞여도 카드가 나간다" 를 테스트가 못 잡는다.
+ * 진짜 provider 도 그렇다 — 위키미디어에 사진이 없는 관광지가 있다. 전부 채워 두면
+ * "사진 없는 줄이 섞여도 카드가 나간다" 를 테스트가 못 잡는다.
  */
 const NO_IMAGE = new Set(['테스트 공원', '테스트 시장']);
 
 /** 5줄 제한을 넘겨서 자르기까지 검증되도록 6곳을 준다. */
 export function defaultAttractions(query: AttractionQuery): Attraction[] {
-  return SPOTS.map(([name, category, area, free, fee, minutes]) => ({
-    name: `${query.cityName} ${name}`,
-    nameEn: `${query.citySlug} ${name}`,
-    citySlug: query.citySlug,
-    category,
-    area,
-    description: '테스트용 관광지',
-    free,
-    admissionFee: fee,
-    admissionCurrency: fee ? 'JPY' : null,
-    durationMinutes: minutes,
-    // provider 가 직접 만든다 — 실제 provider 와 같은 방식이라야 링크 검증이 의미 있다.
-    mapUrl: mapsUrl(`${query.cityName} ${name}`, query.cityName),
-    imageUrl: NO_IMAGE.has(name)
-      ? null
-      : `https://upload.wikimedia.org/wikipedia/commons/a/a1/${encodeURIComponent(name)}.jpg`,
-    source: 'ai',
-    tags: ['테스트'],
-  }));
+  return SPOTS.map(([name, category, area, rating, reviews], index) => {
+    const fullName = `${query.cityName} ${name}`;
+    // 진짜 provider 처럼 구글 신원이 있다고 본다. 지도 링크도 그걸로 만든다.
+    const placeId = `ChIJ_${query.citySlug}_${index}`;
+    return {
+      placeId,
+      name: fullName,
+      nameEn: `${query.citySlug} ${name}`,
+      citySlug: query.citySlug,
+      category,
+      area,
+      address: `${query.cityName} ${area} 1-1`,
+      lat: 34.6 + index / 100,
+      lng: 135.5 + index / 100,
+      rating,
+      userRatingCount: reviews,
+      mapUrl: mapsUrl(fullName, query.cityName, placeId),
+      imageUrl: NO_IMAGE.has(name)
+        ? null
+        : `https://upload.wikimedia.org/wikipedia/commons/a/a1/${encodeURIComponent(name)}.jpg`,
+    };
+  });
 }

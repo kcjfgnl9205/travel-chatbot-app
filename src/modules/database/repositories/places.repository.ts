@@ -85,6 +85,41 @@ export class PlacesRepository extends BaseRepository {
   }
 
   /** (slug, kind) 가 같으면 같은 지역으로 본다. 있으면 그 행을, 없으면 새 행을 준다. */
+  /**
+   * 관광지 목록을 갱신할 때가 된 도시들.
+   *
+   * 아직 채운 적 없는 도시(null)가 먼저다 — 그 도시는 지금 질문이 오면 사용자가
+   * 기다려야 하기 때문이다. 그다음이 오래된 순서다.
+   *
+   * ⚠️ **캐시 TTL 보다 짧은 주기로 불러야 한다.** 만료된 뒤에 갱신하면 그 도시의
+   *    첫 질문이 다시 대기를 타므로 미리 채워두는 의미가 없다.
+   */
+  async dueForAttractions(olderThan: Date, limit: number): Promise<Place[]> {
+    const rows = await this.run(
+      (t) =>
+        t
+          .select(COLUMNS)
+          .eq('kind', 'city')
+          .or(`attractions_refreshed_at.is.null,attractions_refreshed_at.lt.${olderThan.toISOString()}`)
+          .order('attractions_refreshed_at', { ascending: true, nullsFirst: true })
+          .limit(limit),
+      'due for attractions',
+    );
+    return (rows ?? []).map(toPlace);
+  }
+
+  /** 갱신 시각 도장. 실패해도 예외를 올리지 않는다 — 다음 배치가 다시 집는다. */
+  async markAttractionsRefreshed(placeId: number): Promise<void> {
+    await this.run(
+      (t) =>
+        t
+          .update({ attractions_refreshed_at: new Date().toISOString() })
+          .eq('id', placeId)
+          .select('id'),
+      'mark attractions refreshed',
+    );
+  }
+
   async upsert(draft: PlaceDraft): Promise<Place | null> {
     const row = await this.runOne(
       (t) =>

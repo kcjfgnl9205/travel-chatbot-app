@@ -34,6 +34,29 @@ export class SearchResultsRepository extends BaseRepository {
     super(supabase);
   }
 
+  /**
+   * 만료된 행을 **실제로 지운다.**
+   *
+   * ⚠️ 기본 동작은 정반대다 — 0004 는 "만료돼도 지우지 않는다" 로 두었다. AI 검색이
+   *    실패했을 때 예전 값이라도 보여주려는 것이고, 호텔·항공권에는 그게 맞다.
+   *
+   * **관광지만 예외다.** 그 행에는 구글 콘텐츠(이름·평점)가 들어 있고, 구글 약관은
+   * place_id 외의 콘텐츠를 오래 보관하는 걸 제한한다. 목록을 잃는 것도 아니다 —
+   * place_id 는 attraction_places 에 영구로 남아 있어 다시 물으면 채워진다.
+   */
+  async purgeExpired(kind: string): Promise<number | null> {
+    const rows = await this.run(
+      (t) =>
+        t
+          .delete()
+          .eq('kind', kind)
+          .lt('expires_at', new Date().toISOString())
+          .select('cache_key'),
+      'purge expired',
+    );
+    return rows ? rows.length : null;
+  }
+
   async get(cacheKey: string): Promise<SearchRow | null> {
     const row = await this.runOne(
       (t) => t.select(COLUMNS).eq('cache_key', cacheKey).limit(1),

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { AppConfigModule } from './config/config.module';
+import { CatalogModule } from './modules/catalog/catalog.module';
 import { DatabaseModule } from './modules/database/database.module';
 import { DebugModule } from './modules/debug/debug.module';
 import { HealthModule } from './modules/health/health.module';
@@ -14,6 +15,14 @@ import { RedirectModule } from './modules/redirect/redirect.module';
  * 나머지는 진입점(controller)을 가진 모듈만 여기에 올린다.
  */
 @Module({
-  imports: [AppConfigModule, DatabaseModule, KakaoModule, DebugModule, RedirectModule, HealthModule],
+  imports: [
+    AppConfigModule,
+    DatabaseModule,
+    KakaoModule,
+    DebugModule,
+    CatalogModule,
+    RedirectModule,
+    HealthModule,
+  ],
 })
 export class AppModule {}
