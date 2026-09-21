@@ -18,6 +18,7 @@ function build(over: {
   resolve?: (name: string) => Promise<Place | null>;
   due?: Place[];
   warm?: (kind: string, place: Place) => Promise<unknown[]>;
+  stored?: number | null;
 } = {}) {
   const marked: number[] = [];
   const places = {
@@ -28,6 +29,7 @@ function build(over: {
     markAttractionsRefreshed: async (id: number) => {
       marked.push(id);
     },
+    countCities: async () => ('stored' in over ? over.stored : 0),
   } as never;
   const searchResults = { purgeExpired: async () => 0 } as never;
   const search = {
@@ -84,6 +86,27 @@ describe('씨앗 등록', () => {
     const { service } = build({ resolve: async () => null });
 
     expect((await service.seed()).seeded).toBe(0);
+  });
+
+  /**
+   * ⚠️ **운영에서 한 시간을 잃은 자리다.** 지역 해석은 DB 가 꺼져 있어도 메모리로
+   *    폴백해서 Place 를 돌려준다(지명 인식이 DB 장애로 멈추면 안 되니까). 그래서
+   *    DB 가 통째로 안 잡힌 상태에서도 "112곳 완료" 가 나왔고, 응답만으로는 아무도
+   *    몰랐다. 실제로 심겼는지는 DB 를 세어봐야 안다.
+   */
+  it('DB 에 안 들어갔으면 stored 로 드러난다', async () => {
+    const { service } = build({ stored: 0 });
+
+    const result = await service.seed();
+
+    expect(result.seeded).toBeGreaterThan(100);
+    expect(result.stored).toBe(0);
+  });
+
+  it('DB 가 꺼져 있으면 stored 가 null 이다', async () => {
+    const { service } = build({ stored: null });
+
+    expect((await service.seed()).stored).toBeNull();
   });
 });
 

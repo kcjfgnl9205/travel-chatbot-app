@@ -85,6 +85,25 @@ export class PlacesRepository extends BaseRepository {
   }
 
   /** (slug, kind) 가 같으면 같은 지역으로 본다. 있으면 그 행을, 없으면 새 행을 준다. */
+  /** 실제로 DB 에 들어간 도시 수. 씨앗이 정말 심겼는지 보는 데 쓴다. */
+  async countCities(): Promise<number | null> {
+    const client = this.table();
+    if (!client) return null;
+    try {
+      const { count, error } = await client
+        .select('id', { count: 'exact', head: true })
+        .eq('kind', 'city');
+      if (error) {
+        this.logger.warn(`supabase count failed on places: ${error.message}`);
+        return null;
+      }
+      return count ?? 0;
+    } catch (err) {
+      this.logger.warn(`supabase count threw on places: ${err}`);
+      return null;
+    }
+  }
+
   /**
    * 관광지 목록을 갱신할 때가 된 도시들.
    *

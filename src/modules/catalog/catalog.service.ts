@@ -45,7 +45,7 @@ export class CatalogService {
    * 아무도 안 물은 도시는 행이 없다. 미리 채우려면 대상 목록이 있어야 해서 사전에서
    * 씨를 뿌린다. **모델을 부르지 않는다** — 사전에 있는 도시는 표준명이 이미 있다.
    */
-  async seed(): Promise<{ seeded: number }> {
+  async seed(): Promise<{ seeded: number; stored: number | null }> {
     // ⚠️ **한 곳씩 순차로 돌리면 안 된다.** 도시마다 DB 왕복이 두 번(별칭 조회 +
     //    upsert)이라 112곳이면 224번이고, 그게 프록시 타임아웃(100초)을 넘겼다.
     //    도시끼리는 서로를 모르므로 나눠 돌려도 결과가 같다.
@@ -53,8 +53,15 @@ export class CatalogService {
       this.places.resolve(city.nameKo),
     );
     const seeded = results.filter(Boolean).length;
-    this.logger.log(`seeded cities=${seeded}/${results.length}`);
-    return { seeded };
+
+    // ⚠️ **seeded 만으로는 심겼는지 알 수 없다.** 지역 해석은 DB 가 꺼져 있거나
+    //    흔들려도 계속돼야 해서(지명 인식이 DB 장애로 멈추면 안 된다) 메모리로
+    //    폴백하고 Place 를 돌려준다 — 그래서 DB 가 통째로 안 잡힌 상태에서도
+    //    "112곳 완료" 가 나온다. 실제로 그렇게 한 시간을 잃었다.
+    //    그래서 DB 를 직접 세서 같이 돌려준다. stored 가 0 이면 자격증명 문제다.
+    const stored = await this.placesRepo.countCities();
+    this.logger.log(`seeded cities=${seeded}/${results.length} stored=${stored ?? 'DB 꺼짐'}`);
+    return { seeded, stored };
   }
 
   /**
@@ -64,7 +71,9 @@ export class CatalogService {
    *    통째로 멈추면, 다음날까지 그 도시들이 비어 있게 된다.
    */
   async startRefresh(limit: number): Promise<{ started: string[] }> {
-    const olderThan = new Date(Date.now() - this.config.attractionRefreshDays * 86_400_000);
+    const olderThan = new Date(
+      Date.now() - this.config.attractionRefreshDays * 86_400_000,
+    );
     const cities = await this.placesRepo.dueForAttractions(olderThan, limit);
 
     // ⚠️ **응답을 기다리게 하지 않는다.** 도시 하나에 구글 6회 + 모델 2회 + 사진
@@ -75,7 +84,9 @@ export class CatalogService {
   }
 
   /** 실제 작업. 요청과 분리돼 돌기 때문에 **여기서 던진 예외는 아무도 못 받는다.** */
-  private async runRefresh(cities: Place[]): Promise<{ refreshed: string[]; failed: string[] }> {
+  private async runRefresh(
+    cities: Place[],
+  ): Promise<{ refreshed: string[]; failed: string[] }> {
     const refreshed: string[] = [];
     const failed: string[] = [];
     for (const city of cities) {
@@ -83,14 +94,18 @@ export class CatalogService {
         await this.refreshCity(city);
         refreshed.push(city.canonicalName);
       } catch (err) {
-        this.logger.error(`refresh failed city=${city.canonicalName} err=${err}`);
+        this.logger.error(
+          `refresh failed city=${city.canonicalName} err=${err}`,
+        );
         failed.push(city.canonicalName);
       }
     }
 
     // 만료된 관광지 캐시를 지운다. ⚠️ 구글 콘텐츠라 30일이 지나면 실제로 지워야 한다 —
     // 다른 도메인과 달리 "만료돼도 보여주기" 를 쓰지 않는 이유이기도 하다.
-    const purged = await this.searchResults.purgeExpired('attraction').catch(() => null);
+    const purged = await this.searchResults
+      .purgeExpired('attraction')
+      .catch(() => null);
     this.logger.log(
       `batch done refreshed=${refreshed.length} failed=${failed.length} purged=${purged ?? 0}`,
     );
@@ -114,7 +129,9 @@ export class CatalogService {
     // 찾은 도시와 배치가 찾은 도시가 같은 상태가 되게 하려는 것이다. 여기서 또 쓰면
     // 같은 일을 두 곳에서 하게 된다.
     await this.placesRepo.markAttractionsRefreshed(city.id);
-    this.logger.log(`refreshed city=${city.canonicalName} places=${attractions.length}`);
+    this.logger.log(
+      `refreshed city=${city.canonicalName} places=${attractions.length}`,
+    );
     return attractions.length;
   }
 }
