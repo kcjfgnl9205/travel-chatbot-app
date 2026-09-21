@@ -13,6 +13,11 @@ COPY test ./test
 #    깨진다 — 실제로 그 상태로 배포가 한 번 막혔다.
 #    실값 .env 는 절대 복사하지 않는다. 시크릿은 런타임에 env_file 로만 들어온다.
 COPY .env.example ./
+# ⚠️ **테스트가 이 파일들도 읽는다.** rls.spec.ts 는 "새 테이블에 RLS 가 켜졌나" 를,
+#    item-detail-columns.spec.ts 는 "코드가 쓰는 컬럼이 마이그레이션에 있나" 를
+#    SQL 파일과 직접 대조한다. 둘 다 타입 검사도 린트도 못 잡는 종류의 사고라
+#    테스트로 막는 것이고, 그러려면 이미지 안에 파일이 있어야 한다.
+COPY supabase/migrations ./supabase/migrations
 
 # 테스트를 빌드 게이트로 쓴다.
 #

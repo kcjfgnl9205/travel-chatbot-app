@@ -19,6 +19,10 @@ coverage
 # 이미지에 필요 없는 것들. 빌드 컨텍스트만 커진다.
 deploy
 docs
-supabase
 README.md
 travelmate-spec.md
+
+# ⚠️ supabase/migrations 는 빼지 않는다. **테스트가 읽는다** —
+#    rls.spec.ts(모든 테이블에 RLS 가 켜졌나)와 item-detail-columns.spec.ts(코드가
+#    쓰는 컬럼이 실제로 있나)가 SQL 파일을 직접 대조한다. 빼면 로컬 `npm test` 는
+#    통과하는데 도커 빌드만 깨진다 — .env.example 로 한 번, 여기서 또 한 번 겪었다.
