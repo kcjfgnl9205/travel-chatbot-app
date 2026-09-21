@@ -102,8 +102,9 @@ describe('목록의 영구 신원', () => {
    *    캐시에만 있고, 그 캐시가 비면 목록을 처음부터 다시 만들어야 한다(모델 재호출).
    *    place_id 가 남아 있으면 구글에 다시 물어 살만 채우면 된다.
    */
-  it('검색하면 place_id 를 도시별로 저장한다', async () => {
+  it('검색하면 place_id 와 갱신 도장을 남긴다', async () => {
     const saved: { cityId: number; placeIds: string[] }[] = [];
+    const stamped: number[] = [];
     const provider = {
       name: 'fake',
       search: async () => [spot({ placeId: 'ChIJ_1' }), spot({ placeId: 'ChIJ_2' })],
@@ -114,8 +115,13 @@ describe('목록의 영구 신원', () => {
         return [];
       },
     } as never;
+    const places = {
+      markAttractionsRefreshed: async (id: number) => {
+        stamped.push(id);
+      },
+    } as never;
 
-    await new AttractionService(provider, {} as never, catalog).search({
+    await new AttractionService(provider, {} as never, catalog, places).search({
       kind: 'attraction',
       place: { id: 42, canonicalName: '오사카', slug: 'osaka', kind: 'city',
                countryCode: 'JP', iata: 'KIX', parentId: null },
@@ -126,10 +132,14 @@ describe('목록의 영구 신원', () => {
     });
 
     expect(saved).toEqual([{ cityId: 42, placeIds: ['ChIJ_1', 'ChIJ_2'] }]);
+    // ⚠️ 도장을 안 찍으면 배치가 "아직 채운 적 없는 도시" 로 보고 한 시간 뒤에
+    //    같은 데이터를 구글 6회 + 모델 2회로 다시 산다.
+    expect(stamped).toEqual([42]);
   });
 
-  it('빈손이면 저장하지 않는다 — 목록을 지워버리면 안 된다', async () => {
+  it('빈손이면 저장도 도장도 안 한다 — 목록을 지우거나 굳히면 안 된다', async () => {
     let called = false;
+    let stamped = false;
     const provider = { name: 'fake', search: async () => [] } as never;
     const catalog = {
       replaceCity: async () => {
@@ -137,8 +147,13 @@ describe('목록의 영구 신원', () => {
         return [];
       },
     } as never;
+    const places = {
+      markAttractionsRefreshed: async () => {
+        stamped = true;
+      },
+    } as never;
 
-    await new AttractionService(provider, {} as never, catalog).search({
+    await new AttractionService(provider, {} as never, catalog, places).search({
       kind: 'attraction',
       place: { id: 42, canonicalName: '오사카', slug: 'osaka', kind: 'city',
                countryCode: 'JP', iata: 'KIX', parentId: null },
@@ -149,5 +164,7 @@ describe('목록의 영구 신원', () => {
     });
 
     expect(called).toBe(false);
+    // 도장을 찍으면 빈손인 채로 28일을 굳힌다. 다음 배치가 다시 집어야 한다.
+    expect(stamped).toBe(false);
   });
 });

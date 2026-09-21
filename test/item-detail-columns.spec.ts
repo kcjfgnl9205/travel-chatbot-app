@@ -76,6 +76,7 @@ const noAffiliate = { resolve: async () => new Map() } as never;
 
 /** 이 테스트는 rows() 만 본다 — 목록 저장은 search() 쪽 일이라 여기선 안 탄다. */
 const noCatalog = { replaceCity: async () => [] } as never;
+const noPlaces = { markAttractionsRefreshed: async () => undefined } as never;
 
 describe('detail 키가 실제 컬럼과 맞는가', () => {
   it('관광지', async () => {
@@ -92,7 +93,7 @@ describe('detail 키가 실제 컬럼과 맞는가', () => {
       imageUrl: 'https://img/1.jpg',
     };
 
-    await new AttractionService({ name: 'fake' } as never, renderer, noCatalog).rows(
+    await new AttractionService({ name: 'fake' } as never, renderer, noCatalog, noPlaces).rows(
       [attraction],
       CTX('attraction'),
     );

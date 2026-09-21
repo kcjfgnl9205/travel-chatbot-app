@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import { dedupeBy } from '../../common/dedupe';
 import { AttractionPlacesRepository } from '../database/repositories/attraction-places.repository';
+import { PlacesRepository } from '../database/repositories/places.repository';
 import * as cards from '../kakao/cards';
 import * as t from '../kakao/templates';
 import { RecommendationRowsService } from '../recommendation/rows.service';
@@ -59,6 +60,7 @@ export class AttractionService implements SearchDomain<Attraction> {
     @Inject(ATTRACTION_PROVIDER) private readonly provider: AttractionProvider,
     private readonly renderer: RecommendationRowsService,
     private readonly catalog: AttractionPlacesRepository,
+    private readonly places: PlacesRepository,
   ) {}
 
   /** 실제로 붙어 있는 데이터 소스. 설정값이 아니라 주입된 구현이 답이다 (/health). */
@@ -76,10 +78,14 @@ export class AttractionService implements SearchDomain<Attraction> {
     const attractions = await this.provider.search(queryOf(ctx));
     const picked = dedupe(attractions, this.logger).slice(0, ctx.limit);
 
-    // **목록의 영구 신원을 여기서 남긴다.** 배치 경로에만 두면 두 경로가 달라진다 —
-    // 사용자가 물어서 찾은 도시는 30일 캐시에만 있고, 그 캐시가 비면 목록을 처음부터
-    // 다시 만들어야 한다(모델 재호출). place_id 가 남아 있으면 구글에 다시 물어
-    // 살만 채우면 된다.
+    // **목록의 영구 신원과 갱신 시각을 여기서 남긴다.** 배치 경로에만 두면 두 경로가
+    // 달라진다 —
+    //
+    //   · place_id 를 안 남기면: 사용자가 물어서 찾은 도시는 30일 캐시에만 있고,
+    //     캐시가 비면 목록을 처음부터 다시 만들어야 한다(모델 재호출).
+    //   · 도장을 안 찍으면: 방금 채운 도시를 **배치가 한 시간 뒤에 또 채운다.**
+    //     "아직 채운 적 없는 도시" 로 보이기 때문이다. 같은 데이터를 구글 6회 +
+    //     모델 2회로 다시 사는 셈이다.
     //
     // ⚠️ 요청 경로가 아니라 백그라운드에서만 도는 코드다(카카오 5초 예산 밖).
     if (picked.length) {
@@ -87,6 +93,7 @@ export class AttractionService implements SearchDomain<Attraction> {
         ctx.place.id,
         picked.map((attraction) => attraction.placeId),
       );
+      await this.places.markAttractionsRefreshed(ctx.place.id);
     }
     return picked;
   }

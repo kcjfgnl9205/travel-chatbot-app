@@ -20,15 +20,11 @@ function build(over: {
   warm?: (kind: string, place: Place) => Promise<unknown[]>;
   stored?: number | null;
 } = {}) {
-  const marked: number[] = [];
   const places = {
     resolve: over.resolve ?? (async (name: string) => city(1, name)),
   } as never;
   const placesRepo = {
     dueForAttractions: async () => over.due ?? [],
-    markAttractionsRefreshed: async (id: number) => {
-      marked.push(id);
-    },
     countCities: async () => ('stored' in over ? over.stored : 0),
   } as never;
   const searchResults = { purgeExpired: async () => 0 } as never;
@@ -37,7 +33,6 @@ function build(over: {
   } as never;
 
   return {
-    marked,
     service: new CatalogService(loadConfig(), places, placesRepo, searchResults, search),
   };
 }
@@ -130,9 +125,16 @@ describe('갱신 배치', () => {
     expect(finished).toBe(false);
   });
 
+  /**
+   * 구글이 잠깐 흔들렸다고 그날 배치가 멈추면, 나머지 도시들이 다음 차례까지 빈다.
+   *
+   * ⚠️ 갱신 도장(attractions_refreshed_at)은 여기서 안 찍는다 — 도메인이 찍는다
+   *    ([attraction.service.ts] search). 사용자가 물어서 찾은 도시와 배치가 찾은
+   *    도시가 같은 상태여야 하기 때문이고, 그 검증은 attraction-types.spec 에 있다.
+   */
   it('한 도시가 터져도 나머지를 계속한다', async () => {
     const seen: string[] = [];
-    const { service, marked } = build({
+    const { service } = build({
       due: [city(1, '도쿄'), city(2, '오사카')],
       warm: async (_kind, place) => {
         seen.push(place.canonicalName);
@@ -145,16 +147,5 @@ describe('갱신 배치', () => {
     await new Promise((r) => setTimeout(r, 20));
 
     expect(seen).toEqual(['도쿄', '오사카']);
-    // 성공한 도시만 도장을 찍는다 — 실패한 도시는 다음 배치가 다시 집어야 한다.
-    expect(marked).toEqual([2]);
-  });
-
-  it('빈손이면 도장을 찍지 않는다 — 다음 배치가 다시 집는다', async () => {
-    const { service, marked } = build({ due: [city(1, '도쿄')], warm: async () => [] });
-
-    await service.startRefresh(1);
-    await new Promise((r) => setTimeout(r, 20));
-
-    expect(marked).toEqual([]);
   });
 });

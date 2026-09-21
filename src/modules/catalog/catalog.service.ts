@@ -125,10 +125,9 @@ export class CatalogService {
       return 0;
     }
 
-    // place_id 목록은 도메인이 저장한다(AttractionService.search) — 사용자가 물어서
-    // 찾은 도시와 배치가 찾은 도시가 같은 상태가 되게 하려는 것이다. 여기서 또 쓰면
-    // 같은 일을 두 곳에서 하게 된다.
-    await this.placesRepo.markAttractionsRefreshed(city.id);
+    // place_id 목록과 갱신 도장은 도메인이 남긴다(AttractionService.search) —
+    // 사용자가 물어서 찾은 도시와 배치가 찾은 도시가 같은 상태가 되게 하려는 것이다.
+    // 여기서 또 쓰면 같은 일을 두 곳에서 하게 된다.
     this.logger.log(
       `refreshed city=${city.canonicalName} places=${attractions.length}`,
     );
