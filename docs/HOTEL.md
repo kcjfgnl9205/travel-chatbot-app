@@ -276,7 +276,8 @@ AI 는 같은 호텔을 이름만 다르게 여러 번 준다('호텔 그란비�
 
 ```
 recommendations        추천 1회 (도메인·지역·provider·소요시간·캐시히트 여부)
-recommendation_items   노출된 줄 (호텔명·가격·clickId·원본주소·최종목적지)
+recommendation_items   노출된 줄 (호텔명·clickId·원본주소·최종목적지·클릭 카운터)
+recommendation_item_hotels  호텔 고유 (1박가·성급·평점·판매처·제휴링크·썸네일)
 affiliate_links        sourceUrl → 커미션 링크 (30일 캐시)
 messages               발화 원문
 ```

@@ -277,15 +277,17 @@ flight:{출발 place_id}>{도착 place_id}:{rt|ow}
 
 ## 8. DB 에 남는 것
 
-호텔과 같은 테이블을 쓴다. **도메인별 컬럼을 늘리지 않는다.**
+노출 한 줄은 호텔과 같은 공통 테이블에 들어가고, 항공권 고유 값은 `recommendation_item_flights` 로 간다 (0007).
 
 | 컬럼 | 호텔 | 항공권 |
 |---|---|---|
 | `recommendations.city_slug` | 도시 | **도착지** |
-| `recommendation_items.hotel_name` | 호텔명 | **`대한항공 KE723 ICN→KIX`** |
-| `recommendation_items.thumbnail_url` | 썸네일 | `null` |
+| `recommendation_items.item_name` | 항목명 | **`대한항공 KE723 ICN→KIX`** |
+| 가격 | `..._hotels.price_per_night` (1박) | `..._flights.price_total` (**1인 총액**) |
+| 썸네일 | `..._hotels.image_url` | 칸이 없다 (카드에 이미지가 없다) |
+| 항공권 고유 | — | `airline` · `stops` · `cabin` · `duration_minutes` |
 
-`hotel_name` 컬럼이지만 담기는 건 "노출된 항목의 이름"이다(0002 마이그레이션 주석 참고). 나중에 로그에서 알아볼 수 있게 항공사·편명·구간을 합쳐 넣는다.
+담기는 건 "노출된 항목의 이름"이다. 나중에 로그에서 알아볼 수 있게 항공사·편명·구간을 합쳐 넣는다 (0007 전에는 `hotel_name` 이었다).
 
 ---
 

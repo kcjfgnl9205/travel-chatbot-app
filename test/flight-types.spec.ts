@@ -2,7 +2,6 @@ import { Flight } from '../src/modules/flight/flight.types';
 import {
   cabinText,
   dateLabel,
-  durationText,
   flightKey,
   isFlight,
   isoDate,
@@ -84,12 +83,6 @@ describe('항공권 카드 문구', () => {
       // Date 가 3월 2일로 조용히 굴려버리는 값이다.
       expect(isoDate('2026-02-30')).toBeNull();
       expect(isoDate('내일')).toBeNull();
-    });
-
-    it('소요 시간', () => {
-      expect(durationText(145)).toBe('2시간 25분');
-      expect(durationText(120)).toBe('2시간');
-      expect(durationText(45)).toBe('45분');
     });
 
     it('경유', () => {

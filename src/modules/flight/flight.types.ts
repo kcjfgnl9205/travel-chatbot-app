@@ -1,3 +1,5 @@
+import { durationText } from '../../common/duration';
+
 /**
  * 편도/왕복.
  *
@@ -132,14 +134,6 @@ export function flightKey(f: Flight): string {
 export function priceText(f: Flight): string {
   if (!f.priceFrom) return '가격 문의';
   return `${f.priceFrom.toLocaleString('ko-KR')}원`;
-}
-
-/** 145 → '2시간 25분'. 60분 미만이면 분만. */
-export function durationText(minutes: number): string {
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  if (!h) return `${m}분`;
-  return m ? `${h}시간 ${m}분` : `${h}시간`;
 }
 
 /** 0 → '직항', 1 → '1회 경유 (홍콩)'. */

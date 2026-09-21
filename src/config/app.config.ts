@@ -64,6 +64,9 @@ export interface AppConfig {
   attractionCacheTtlMinutes: number;
   attractionImages: boolean;
   attractionImageTimeoutMs: number;
+  googlePlacesApiKey: string;
+  googlePlacesTimeoutMs: number;
+  attractionRefreshDays: number;
 
   moreButtonStyle: 'block' | 'message';
   fallbackBlockId: string;
@@ -186,6 +189,15 @@ export function loadConfig(): AppConfig {
     // 콜백 경로에서만 도는 호출이라 5초 예산과 무관하다. 그래도 짧게 끊는 이유는
     // 여러 곳을 동시에 찾기 때문이다 — 하나가 늘어지면 카드 전체가 그만큼 늦는다.
     attractionImageTimeoutMs: Math.round(num('ATTRACTION_IMAGE_TIMEOUT_SECONDS', 3) * 1000),
+
+    // 관광지 후보와 사실 데이터의 출처. **없으면 관광지 검색이 통째로 안 된다** —
+    // 모델만으로는 없는 곳을 섞기 때문에 그 구성을 지원하지 않는다.
+    googlePlacesApiKey: str('GOOGLE_PLACES_API_KEY', ''),
+    // 도시 하나에 타입별로 여러 번 부른다. 하나가 늘어지면 그만큼 늦으므로 짧게 끊는다.
+    googlePlacesTimeoutMs: Math.round(num('GOOGLE_PLACES_TIMEOUT_SECONDS', 5) * 1000),
+    // ⚠️ **캐시 TTL(30일)보다 짧아야 한다.** 만료된 뒤에 갱신하면 그 도시의 첫 질문이
+    //    다시 대기를 타므로 미리 채워두는 의미가 없어진다.
+    attractionRefreshDays: num('ATTRACTION_REFRESH_DAYS', 28),
 
     // "더 보기" 버튼 방식. block 이면 clientExtra 로 cache_key·offset 을 실어 보낼 수
     // 있어 서버가 상태를 안 들고도 4페이지까지 간다.

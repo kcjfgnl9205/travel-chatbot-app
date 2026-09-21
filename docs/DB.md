@@ -141,18 +141,15 @@ erDiagram
     recommendation_items {
         uuid id PK
         uuid recommendation_id FK
-        uuid affiliate_link_id FK
         int position "줄 순서"
         text click_id UK "리다이렉트 키"
-        text hotel_name "스냅샷"
-        int price_from "스냅샷"
-        text source_url "스냅샷 = 호텔 신원"
+        text domain "hotel | flight | attraction"
+        text item_name "스냅샷"
+        text source_url "스냅샷 = 항목 신원"
         text target_url "스냅샷 = 302 목적지"
         int click_count "클릭 횟수"
         timestamptz first_clicked_at
         timestamptz last_clicked_at
-        text thumbnail_url
-        text merchant
     }
 ```
 
@@ -244,7 +241,7 @@ latency_ms = 143          ← 카카오 5초 예산 대비 여유 추적
 
 3번째 줄을 3번 눌렀다면:
 
-| position | click_id | hotel_name | source_url | click_count | last_clicked_at |
+| position | click_id | item_name | source_url | click_count | last_clicked_at |
 |---|---|---|---|---|---|
 | 0 | `38JR4yL5V` | 호텔 한큐 리스파이어 | `agoda.com/…/555` | 0 | — |
 | 1 | `fZuJ2sSV4` | 칸데오 호텔 남바 | `agoda.com/…/777` | 0 | — |
@@ -253,7 +250,8 @@ latency_ms = 143          ← 카카오 5초 예산 대비 여유 추적
 4가지를 동시에 한다:
 
 1. **`click_id`** — 줄 링크(`/r/{click_id}`)의 키. 클릭이 들어오면 여기서 역추적한다.
-2. **스냅샷** — `hotel_name` / `price_from` / `source_url` / `target_url` / `thumbnail_url` 을 그 시점 값으로 **복사**. 캠페인이 바뀌거나 AI 가 다음번에 다른 값을 줘도 *"그때 사용자가 본 화면"* 이 복원된다.
+2. **스냅샷** — `item_name` / `source_url` / `target_url` 을 그 시점 값으로 **복사** (가격·썸네일 등은 도메인 테이블에). 캠페인이 바뀌거나 AI 가 다음번에 다른 값을 줘도 *"그때 사용자가 본 화면"* 이 복원된다.
+5. **도메인별 스냅샷** — 한두 도메인만 쓰는 값은 전부 도메인 테이블이 받는다. 아래 참고.
 3. **노출 로그** — 클릭 안 된 줄도 남는다.
 4. **클릭 카운터** — `click_count` / `first_clicked_at` / `last_clicked_at`.
 
@@ -372,17 +370,19 @@ select utterance, count(*) from messages
 where parsed_city is null group by 1 order by 2 desc limit 50;
 
 -- 호텔별 노출 대비 클릭률(CTR)
--- ⚠️ hotel_name 으로 묶으면 안 된다. AI 가 표기를 매번 다르게 준다.
+-- ⚠️ item_name 으로 묶으면 안 된다. AI 가 표기를 매번 다르게 준다.
 --    source_url 이 호텔의 유일한 신원이다.
 -- 노출과 클릭이 같은 행에 있어서 join 이 없다.
 select source_url,
-       max(hotel_name) as 표시명,
+       max(item_name) as 표시명,
        count(*)        as 노출,
        count(*) filter (where click_count > 0) as 클릭된줄,
        sum(click_count)                        as 총클릭,
        round(100.0 * count(*) filter (where click_count > 0) / count(*), 1) as ctr
 from recommendation_items
+where domain = 'hotel'
 group by 1 order by ctr desc;
+-- 가격·판매처까지 보려면 recommendation_item_hotels 를 join 한다.
 
 -- 줄 순서가 클릭에 미치는 영향 → 정렬 로직 튜닝 근거
 select position,
@@ -391,7 +391,7 @@ select position,
 from recommendation_items group by 1 order by 1;
 
 -- 재클릭이 많은 호텔 (총클릭 / 클릭된줄 이 크면 반복 조회)
-select hotel_name, click_count, first_clicked_at, last_clicked_at
+select item_name, click_count, first_clicked_at, last_clicked_at
 from recommendation_items where click_count > 1 order by click_count desc limit 20;
 
 -- 애드픽 변환 실패 (수익 누수 지점)
@@ -436,4 +436,96 @@ from affiliate_links;
 `users` · `messages` · `recommendations` · `recommendation_items` · `affiliate_links` 를 그대로 쓴다.
 (`affiliate_links` 는 `source_url → affiliate_url` 매핑이라 도메인 중립적이다.)
 
-`recommendation_items.hotel_name` 만 도메인 중립적인 이름(`item_name`)으로 바꾸면 더 깔끔하다.
+`recommendation_items.hotel_name` 은 0007 에서 `item_name` 으로 바꿨다.
+
+### 도메인별로 다르게 남기기 (0007)
+
+세 도메인이 **남길 값은 같지 않다.** 그래서 0007 이 **공통에는 세 도메인이 전부 쓰는 것만
+남기고 나머지를 전부 도메인 테이블로 내렸다.**
+
+```
+recommendation_items                 id · recommendation_id · domain · position
+                                     click_id · item_name · source_url · target_url
+                                     click_count · first/last_clicked_at · created_at
+  ├─ recommendation_item_attractions place_id · category · area · image_url
+  ├─ recommendation_item_hotels      star_rating · review_score · price_per_night
+  │                                  merchant · affiliate_link_id · image_url
+  └─ recommendation_item_flights     airline · stops · cabin · duration_minutes
+                                     price_total · merchant · affiliate_link_id
+```
+
+위성 테이블은 `item_id` 가 곧 기본키이자 외래키다 (노출 1건당 0 또는 1행).
+남길 값이 하나도 없는 노출은 행이 안 생기고, 공통 행을 지우면 `on delete cascade` 로
+같이 사라진다.
+
+**내려간 것들은 원래 한두 도메인만 쓰던 칸이다.** 관광지 행에는 `price_from` ·
+`merchant` · `affiliate_link_id` 가 늘 null 이었고, 항공권 행에는 `thumbnail_url` 이
+늘 null 이었다.
+
+> ⚠️ **`price_from` 은 이름까지 갈랐다** (`price_per_night` / `price_total`). 호텔은
+> 1박 최저가, 항공권은 1인 총액이라 **같은 칸에 있으면 안 되는 값**이었다. 0003 이
+> "domain 없이 평균을 내면 안 된다" 고 경고로만 막고 있었는데, 테이블이 갈리면 경고가
+> 필요 없다.
+
+> **왜 공통 테이블을 아예 없애지 않았나** — `click_id` · `target_url` · `click_count`
+> **셋은 반드시 한 테이블에 같이 있어야 한다.** `/r/{clickId}` 요청이 들고 오는 건
+> `click_id` 하나뿐이고, 거기서 목적지를 찾아 카운터를 올리는 걸 `register_click()` 이
+> 왕복 1회·원자적으로 끝낸다. 그 셋을 공통에 두는 이상 `position` · `item_name` ·
+> `source_url` 처럼 세 도메인이 똑같이 쓰는 값도 같이 두는 게 맞다 — 내려봐야 세 벌이
+> 될 뿐이다.
+
+> ⚠️ **왜 `search_results` 로는 안 되나** — 거기에 도메인 객체가 통째로 있지만 그건
+> **캐시라서 갱신되면 덮어써진다.** "그때 사용자가 본 입장료" 는 스냅샷에만 남는다.
+
+> ⚠️ **값 목록(카테고리·통화·좌석등급)에는 `check` 를 걸지 않았다.** 저장소가 실패를
+> 삼키는 구조라 제약에 걸린 행은 경고 한 줄만 남기고 조용히 사라진다 — 앱에 카테고리를
+> 하나 추가한 날부터 기록이 안 남는데 아무도 모르는 게 최악이다. 숫자 범위(성급 1~5,
+> 평점 0~10, 경유 0~5)는 물리적으로 안 늘어나므로 걸어뒀다.
+
+> ⚠️ **관광지의 평점·주소는 여기 없다.** 구글 콘텐츠라 영구 보관하지 않고 30일 캐시
+> (`search_results`)에만 둔다. 영구로 남는 건 `place_id` 뿐이다 — 구글 약관이 명시적으로
+> 허용하는 값이고, 관광지 단위 집계도 이 칸으로 한다 (0008 참고).
+
+> ⚠️ **변환 실패는 행이 없는 게 아니라 `affiliate_link_id` 가 null 로 남는다.** 제휴를
+> 타는 도메인(호텔·항공권)은 변환에 실패해도 위성 행을 만든다 — 안 그러면 수수료가
+> 새는 노출이 집계에서 통째로 빠진다. 관광지 테이블에는 그 칸이 **아예 없는 것**이
+> "제휴를 안 타는 도메인" 이라는 뜻이다.
+
+```sql
+-- 관광지: 어떤 장소가 반복해서 노출·클릭되나 (이름이 아니라 place_id 로 묶는다)
+select a.place_id, max(i.item_name) as 표시명,
+       count(*)                                  as 노출,
+       count(*) filter (where i.click_count > 0) as 클릭된줄
+from recommendation_items i
+join recommendation_item_attractions a on a.item_id = i.id
+group by 1 order by 3 desc;
+
+-- 관광지: 카테고리별 CTR (2차 호출의 "카테고리를 섞어라" 가 값을 하는지)
+select a.category,
+       count(*)                                  as 노출,
+       count(*) filter (where i.click_count > 0) as 클릭된줄
+from recommendation_items i
+join recommendation_item_attractions a on a.item_id = i.id
+group by 1 order by 2 desc;
+
+-- 항공권: 직항이 경유보다 얼마나 눌리나
+select f.stops,
+       count(*)                                  as 노출,
+       count(*) filter (where i.click_count > 0) as 클릭된줄
+from recommendation_items i
+join recommendation_item_flights f on f.item_id = i.id
+group by 1 order by 1;
+
+-- 수익화 누수 — 제휴를 타는 두 도메인만 본다 (관광지는 애초에 대상이 아니다)
+select 'hotel' as domain, count(*) as 변환실패_노출
+  from recommendation_item_hotels where affiliate_link_id is null
+union all
+select 'flight', count(*)
+  from recommendation_item_flights where affiliate_link_id is null;
+
+-- 도메인별 CTR · 줄 순서의 영향 (위성 테이블 없이 공통만으로 된다)
+select domain, position,
+       count(*)                                as 노출,
+       count(*) filter (where click_count > 0) as 클릭된줄
+from recommendation_items group by 1, 2 order by 1, 2;
+```

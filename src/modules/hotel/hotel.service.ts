@@ -126,8 +126,16 @@ export class HotelService implements SearchDomain<Hotel> {
         title: hotel.name,
         description: listDescription(hotel),
         imageUrl: hotel.thumbnailUrl,
-        priceFrom: hotel.priceFrom,
-        merchant: hotel.merchant,
+        // 가격은 **1박 최저가**라 항공권의 총액과 같은 칸에 둘 수 없다 — 그래서
+        // 컬럼 이름부터 다르다. 평점은 "높은 줄이 더 눌리나" 를 보려면 노출 시점
+        // 값이 있어야 한다 (캐시는 갱신되면 덮어써진다).
+        detail: {
+          star_rating: hotel.starRating,
+          review_score: hotel.reviewScore,
+          price_per_night: hotel.priceFrom,
+          merchant: hotel.merchant,
+          image_url: hotel.thumbnailUrl,
+        },
       })),
       ctx,
       { provider: this.provider.name, links },

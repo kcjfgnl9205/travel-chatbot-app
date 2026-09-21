@@ -4,7 +4,7 @@ import { OpenAiModule } from '../openai/openai.module';
 import { RecommendationModule } from '../recommendation/recommendation.module';
 import { AttractionService } from './attraction.service';
 import { ATTRACTION_PROVIDER } from './attraction.types';
-import { OpenAiAttractionProvider } from './providers/openai.provider';
+import { GooglePlacesAttractionProvider } from './providers/places.provider';
 
 /**
  * 관광지 도메인.
@@ -17,8 +17,8 @@ import { OpenAiAttractionProvider } from './providers/openai.provider';
 @Module({
   imports: [OpenAiModule, RecommendationModule],
   providers: [
-    OpenAiAttractionProvider,
-    { provide: ATTRACTION_PROVIDER, useExisting: OpenAiAttractionProvider },
+    GooglePlacesAttractionProvider,
+    { provide: ATTRACTION_PROVIDER, useExisting: GooglePlacesAttractionProvider },
     AttractionService,
   ],
   exports: [AttractionService],

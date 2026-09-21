@@ -89,8 +89,14 @@ export class SearchService {
     // 저장된 결과가 있다 — 만료됐어도 그대로 보여주고 **뒤에서 조용히 새로 찾는다.**
     // 사용자에게 "예전 정보" 라고 알리지 않는다: 할 수 있는 일이 없는 사정이고,
     // 다음 질문에는 새 결과가 나간다.
-    if (row && row.items.length && row.status !== 'pending') {
-      const stale = isExpired(row);
+    //
+    // ⚠️ **관광지만 예외다.** 그 행에는 구글 콘텐츠(이름·평점)가 들어 있고, 구글 약관은
+    //    place_id 외의 콘텐츠를 오래 보관하는 걸 제한한다. 그래서 만료된 관광지 값은
+    //    보여주지 않고 다시 찾는다 — 잃는 것도 없다. 목록(place_id)은
+    //    attraction_places 에 영구로 남아 있어 다시 물으면 채워진다.
+    const stale = row ? isExpired(row) : false;
+    const usable = row && row.items.length && row.status !== 'pending' && !(stale && kind === 'attraction');
+    if (usable) {
       if (stale) void this.refresh(parsed, place, parent, from, meta, cacheKey, row, req);
       this.logger.log(`cache ${stale ? 'stale' : 'hit'} key=${cacheKey} items=${row.items.length}`);
       return this.respond(row.items, meta, 0, cacheKey, req, {
@@ -149,6 +155,62 @@ export class SearchService {
     return t.callbackAck(`${cards.withObjectParticle(cards.subject(meta))} 찾고 있어요. 잠시만요 🔍`);
   }
 
+  /**
+   * **배치가 캐시를 미리 채운다.** 요청 경로와 같은 키·같은 저장소를 쓴다.
+   *
+   * 미리 채워두면 그 도시의 첫 질문부터 카드가 즉시 나간다 — 지금은 "찾고 있어요" 를
+   * 보내고 콜백을 기다려야 한다. 배치용 파이프라인을 따로 만들지 않는 이유는 진단
+   * 컨트롤러와 같다: 따로 만들면 실제 응답을 데우는 게 아니라 비슷한 걸 하나 더
+   * 만드는 것이다.
+   *
+   * ⚠️ **선점을 거쳐 간다.** 마침 사용자가 같은 도시를 물어 검색이 돌고 있으면 배치는
+   *    물러난다. 같은 도시를 두 번 찾으면 그만큼 API 요금이다.
+   */
+  async warm(kind: SearchKind, place: Place): Promise<unknown[]> {
+    const cacheKey = cacheKeyOf(kind, place, null, 'rt');
+    const row = await this.store.get(cacheKey);
+    if (row && this.store.isBusy(row)) return [];
+
+    const meta: SearchMeta = {
+      kind,
+      placeName: place.canonicalName,
+      placeSlug: place.slug,
+    };
+    const claimed = await this.store.claim(
+      {
+        cacheKey,
+        kind,
+        placeId: place.id,
+        fromPlaceId: null,
+        toPlaceId: null,
+        tripType: null,
+        meta,
+      },
+      row,
+    );
+    if (!claimed) return [];
+
+    try {
+      const items = await this.domainOf(kind).search({
+        kind,
+        place,
+        parent: await this.places.parentOf(place),
+        from: null,
+        tripType: 'rt',
+        limit: this.config.resultMaxItems,
+      });
+      if (!items.length) {
+        // 빈손을 캐시로 굳히지 않는다. 짧은 TTL 이면 다음 배치가 다시 집는다.
+        await this.store.fail(cacheKey, 'empty result', 1, meta);
+        return [];
+      }
+      await this.store.complete(cacheKey, items, this.ttlOf(kind), meta);
+      return items;
+    } catch (err) {
+      await this.store.fail(cacheKey, String(err), this.config.failedTtlMinutes, meta);
+      throw err;
+    }
+  }
   /**
    * "더 보기". **AI 를 부르지 않는다** — 저장된 행에서 offset 만큼 잘라 보낸다.
    */

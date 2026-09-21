@@ -11,6 +11,7 @@ import {
   SearchDomain,
   SearchMeta,
 } from '../search/search.types';
+import { listDescription } from './attraction-card';
 import {
   ATTRACTION_PROVIDER,
   Attraction,
@@ -18,7 +19,6 @@ import {
   AttractionQuery,
   attractionKey,
   isAttraction,
-  listDescription,
 } from './attraction.types';
 
 /**
@@ -112,10 +112,15 @@ export class AttractionService implements SearchDomain<Attraction> {
         title: attraction.name,
         description: listDescription(attraction),
         imageUrl: attraction.imageUrl,
-        // ⚠️ **입장료를 price_from 에 넣지 않는다.** 그 칸은 단위가 원인데 관광지
-        //    입장료는 현지 통화(엔·바트·동)라 비교 불가능한 숫자가 섞인다.
-        //    (0003 마이그레이션 주석 참고)
-        priceFrom: null,
+        // ⚠️ **평점·리뷰수는 여기 없다.** 구글 콘텐츠라 영구 보관하지 않는다 —
+        //    30일 캐시(search_results)에만 살고, 노출 스냅샷에는 구글이 영구 저장을
+        //    허용하는 place_id 와 우리가 만든 값만 남긴다.
+        detail: {
+          place_id: attraction.placeId,
+          category: attraction.category,
+          area: attraction.area,
+          image_url: attraction.imageUrl,
+        },
       })),
       ctx,
       { provider: this.provider.name },

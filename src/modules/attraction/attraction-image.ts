@@ -1,5 +1,5 @@
 /**
- * 관광지 대표 이미지를 위키백과에서 찾는다.
+ * 관광지 대표 이미지를 위키미디어에서 찾는다.
  *
  * **왜 호텔처럼 페이지를 긁지 않나** — 호텔은 예약 페이지가 있어서 거기서 og:image 를
  * 읽었다([thumbnail.ts](../hotel/thumbnail.ts)). 관광지는 긁어올 페이지 자체가 없다.
@@ -14,8 +14,13 @@
  *   |---|---|---|
  *   | ko 만 | 62% | 일본·유럽 100%, 동남아 0~40% |
  *   | ko → en | **87%** | 한국어 문서가 없는 동남아를 영문명이 메운다 |
+ *   | ko → en → commons | 측정 예정 | 문서가 아예 없는 장소를 커먼즈가 줍는다 |
  *
- * 그래서 영문명(nameEn)을 모델에게 같이 받는다. 없으면 한국어로만 찾는다.
+ * 그래서 영문명(nameEn)을 같이 받는다. 없으면 한국어로만 찾는다.
+ *
+ * ⚠️ **구글 Places 사진을 쓰지 않는 이유**도 여기 있다. 그쪽이 커버리지는 더 높지만
+ *    이미지 주소가 **만료된다.** 카카오 카드는 단톡방에 영구히 남아서 사람들이 나중에
+ *    스크롤해 다시 보는데, 그때 깨진 자리가 남는다. 위키미디어 주소는 안 죽는다.
  *
  * ⚠️ **이미지가 없는 줄이 섞인다.** 카카오 listCard 는 imageUrl 이 없는 항목을
  *    사진 없이 그린다 — 호텔도 썸네일을 못 구하면 같은 모양이 되므로 새로운 상태는
@@ -29,8 +34,19 @@
 
 import { fetchWithTimeout } from '../../common/fetch';
 
-/** 이미지를 찾을 언어판. 순서가 곧 우선순위다. */
-const WIKIS = ['ko', 'en'] as const;
+/**
+ * 어디서 찾을지. 순서가 곧 우선순위다.
+ *
+ *   ko        한국어 문서가 있으면 그게 한국인에게 익숙한 장소라는 뜻이다
+ *   en        한국어 문서가 없는 곳(동남아에 특히 많다)을 영문명이 메운다
+ *   commons   **문서가 아예 없어도 사진은 있는 경우**를 줍는다
+ *
+ * 커먼즈를 더한 이유 — 위키백과는 "문서가 있는 장소" 만 커버한다. 작은 사원이나
+ * 전망대는 문서가 없어도 커먼즈에 사진이 올라와 있다. 같은 API 계열이라 코드가
+ * 그대로 돌고, 무엇보다 **주소가 죽지 않는다** (구글 Places 사진을 안 쓰는 이유다 —
+ * 그쪽 주소는 만료되는데 카카오 카드는 단톡방에 영구히 남는다).
+ */
+const WIKIS = ['ko', 'en', 'commons'] as const;
 export type WikiLang = (typeof WIKIS)[number];
 
 export interface FoundImage {
@@ -71,13 +87,24 @@ export function normalizeTitle(value: string): string {
  */
 export function titleMatches(name: string, title: string, cityName: string): boolean {
   const n = normalizeTitle(name);
-  const t = normalizeTitle(title);
+  // 커먼즈 결과는 'File:Osaka Castle 02.jpg' 처럼 온다. 접두사와 확장자·일련번호를
+  // 걷어내야 관광지 이름과 견줄 수 있다.
+  const t = normalizeTitle(stripFilePrefix(title));
   if (!n || !t) return false;
 
   // 도시 문서 그 자체는 관광지 사진이 아니다. 검색이 관광지를 못 찾았다는 뜻이다.
   if (t === normalizeTitle(cityName)) return false;
 
   return n.includes(t) || t.includes(n);
+}
+
+/** 'File:Osaka Castle 02.jpg' → 'Osaka Castle'. 커먼즈 파일 제목을 이름과 견주려고. */
+export function stripFilePrefix(title: string): string {
+  return title
+    .replace(/^(File|파일):/i, '')
+    .replace(/\.(jpe?g|png|gif|webp|tiff?|svg)$/i, '')
+    .replace(/[\s_-]*\d+$/, '')
+    .trim();
 }
 
 /** 주소가 사진으로 쓸 만한가. 지도·로고·SVG 를 걸러낸다. */
@@ -148,6 +175,8 @@ function numberOr(value: unknown, fallback: number): number {
  * 도시 이름을 검색어에 붙이는 이유는 지도 링크와 같다 — "중앙공원" 은 전 세계에 있다.
  */
 export function searchUrl(lang: WikiLang, name: string, cityName: string): string {
+  // 커먼즈는 언어판이 아니라 미디어 저장소라 호스트가 다르다.
+  const host = lang === 'commons' ? 'commons.wikimedia.org' : `${lang}.wikipedia.org`;
   const params = new URLSearchParams({
     action: 'query',
     format: 'json',
@@ -160,7 +189,7 @@ export function searchUrl(lang: WikiLang, name: string, cityName: string): strin
     // 카카오 카드 썸네일은 작지만, 원본이 크면 기기에 따라 선명하게 나온다.
     pithumbsize: '800',
   });
-  return `https://${lang}.wikipedia.org/w/api.php?${params.toString()}`;
+  return `https://${host}/w/api.php?${params.toString()}`;
 }
 
 /**
@@ -196,11 +225,12 @@ async function fetchPages(url: string, timeoutMs: number): Promise<WikiPage[]> {
 /**
  * 관광지 하나의 대표 이미지를 찾는다. 못 찾으면 null.
  *
- * ko → en 순서로 본다. 한국어 문서가 있으면 그게 한국인에게 익숙한 장소라는 뜻이라
- * 먼저 보고, 없을 때만 영문명으로 영어판을 본다 (동남아가 여기서 메워진다).
+ * ko → en → commons 순서로 본다. 한국어 문서가 있으면 그게 한국인에게 익숙한 장소라는
+ * 뜻이라 먼저 보고, 없을 때 영문명으로 영어판을, 그래도 없으면 커먼즈를 본다
+ * (문서가 없는 작은 장소가 여기서 메워진다).
  *
- * @param nameEn 모델이 준 영문·현지 공식명. 없으면 영어판은 건너뛴다 —
- *               영어판에 한국어를 넣어봐야 아무것도 안 나온다.
+ * @param nameEn 영문·현지 공식명. 없으면 영어판은 건너뛴다 — 영어판에 한국어를
+ *               넣어봐야 아무것도 안 나온다.
  */
 export async function findAttractionImage(
   name: string,
@@ -210,7 +240,9 @@ export async function findAttractionImage(
   timeoutMs: number,
 ): Promise<FoundImage | null> {
   for (const lang of WIKIS) {
-    const term = lang === 'ko' ? name : nameEn;
+    // 커먼즈는 영문 파일명이 압도적으로 많다. 영문명이 없으면 한국어로라도 찾아본다 —
+    // 영어판과 달리 여기서는 한국어 파일명이 걸리는 경우가 있다.
+    const term = lang === 'ko' ? name : lang === 'en' ? nameEn : (nameEn ?? name);
     const city = lang === 'ko' ? cityName : (cityNameEn ?? cityName);
     if (!term) continue;
 

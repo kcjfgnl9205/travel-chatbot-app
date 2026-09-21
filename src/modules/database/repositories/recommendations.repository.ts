@@ -53,6 +53,21 @@ export class RecommendationItemsRepository extends BaseRepository {
   }
 
   /**
+   * 도메인별 위성 테이블에 상세를 남긴다 (recommendation_item_attractions 등).
+   *
+   * 공통 행이 먼저 들어가 있어야 한다 — item_id 가 그 행을 가리키는 외래키다.
+   * 실패해도 예외를 올리지 않는 건 다른 기록과 같다. 상세가 빠져도 노출·클릭은
+   * 이미 공통 테이블에 남아 있으므로 잃는 건 분석용 값뿐이다.
+   */
+  async createDetails(
+    tableName: string,
+    rows: Record<string, unknown>[],
+  ): Promise<Record<string, any>[] | null> {
+    if (!rows.length) return [];
+    return this.runOn(tableName, (t) => t.insert(rows).select('item_id'), `insert ${tableName}`);
+  }
+
+  /**
    * 클릭 1회를 기록하고 리다이렉트 목적지를 돌려준다.
    *
    * 조회 + 카운터 증가 + 목적지 반환을 DB 왕복 **한 번**에 처리한다.
