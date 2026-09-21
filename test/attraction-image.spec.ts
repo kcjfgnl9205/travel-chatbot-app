@@ -3,6 +3,7 @@ import {
   normalizeTitle,
   pickImage,
   searchUrl,
+  stripFilePrefix,
   titleMatches,
 } from '../src/modules/attraction/attraction-image';
 
@@ -149,5 +150,30 @@ describe('관광지 대표 이미지', () => {
     it('언어판이 주소에 반영된다', () => {
       expect(new URL(searchUrl('en', 'Kawasan Falls', 'Cebu')).host).toBe('en.wikipedia.org');
     });
+  });
+});
+
+describe('커먼즈 검색', () => {
+  /**
+   * ⚠️ **실측에서 커먼즈 적중이 0건이었다.** 폴백이 있는 줄 알았는데 작동을 안 하고
+   *    있었다 — generator=search 의 기본 네임스페이스가 0(문서)이라, 사진이 있는
+   *    6(File:)을 아예 안 뒤졌기 때문이다.
+   */
+  it('File 네임스페이스를 지정한다 — 안 하면 아무것도 못 찾는다', () => {
+    const url = searchUrl('commons', 'Hakata Port Tower', 'Fukuoka');
+
+    expect(url).toContain('commons.wikimedia.org');
+    expect(url).toContain('gsrnamespace=6');
+  });
+
+  it('위키백과는 네임스페이스를 지정하지 않는다 — 문서가 기본이다', () => {
+    expect(searchUrl('ko', '후쿠오카 타워', '후쿠오카')).not.toContain('gsrnamespace');
+    expect(searchUrl('en', 'Fukuoka Tower', 'Fukuoka')).not.toContain('gsrnamespace');
+  });
+
+  /** 파일 제목은 'File:Osaka Castle 02.jpg' 처럼 온다. 이름과 견주려면 벗겨야 한다. */
+  it('파일 제목에서 접두사·확장자·일련번호를 걷어낸다', () => {
+    expect(stripFilePrefix('File:Hakata Port Tower 01.jpg')).toBe('Hakata Port Tower');
+    expect(stripFilePrefix('File:Rakusui-en.JPG')).toBe('Rakusui-en');
   });
 });

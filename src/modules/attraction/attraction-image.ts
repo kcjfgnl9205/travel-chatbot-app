@@ -176,19 +176,27 @@ function numberOr(value: unknown, fallback: number): number {
  */
 export function searchUrl(lang: WikiLang, name: string, cityName: string): string {
   // 커먼즈는 언어판이 아니라 미디어 저장소라 호스트가 다르다.
-  const host = lang === 'commons' ? 'commons.wikimedia.org' : `${lang}.wikipedia.org`;
+  const commons = lang === 'commons';
+  const host = commons ? 'commons.wikimedia.org' : `${lang}.wikipedia.org`;
   const params = new URLSearchParams({
     action: 'query',
     format: 'json',
     formatversion: '1',
     generator: 'search',
     gsrsearch: `${name} ${cityName}`.trim(),
-    gsrlimit: '3',
+    gsrlimit: commons ? '5' : '3',
     prop: 'pageimages',
     piprop: 'thumbnail',
     // 카카오 카드 썸네일은 작지만, 원본이 크면 기기에 따라 선명하게 나온다.
     pithumbsize: '800',
   });
+
+  // ⚠️ **커먼즈에서는 네임스페이스를 지정해야 한다.** generator=search 는 기본이
+  //    네임스페이스 0(문서)인데, 커먼즈의 사진은 6(File:)에 있다. 이걸 빼먹으면
+  //    검색이 거의 아무것도 못 찾는다 — 실제로 후쿠오카 실측에서 커먼즈 적중이
+  //    **0건**이었고, 폴백이 있는 줄 알았지 작동은 안 하고 있었다.
+  if (commons) params.set('gsrnamespace', '6');
+
   return `https://${host}/w/api.php?${params.toString()}`;
 }
 
