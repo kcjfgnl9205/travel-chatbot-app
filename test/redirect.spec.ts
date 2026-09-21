@@ -4,8 +4,9 @@ import { MemoryStoreService } from '../src/modules/database/memory-store.service
 /**
  * 클릭 리다이렉트. **사용자가 302 를 기다리는 유일한 경로다.**
  *
- * ⚠️ 실측에서 register_click() 왕복 하나가 **1.4초**였다(운영 서버 → Supabase).
- *    목적지를 이미 아는데도 그걸 기다리면 사용자는 그만큼 흰 화면을 본다.
+ * 실측(운영 서버 → Supabase)은 따뜻한 연결 ~90ms, **콜드 연결 ~730ms** 다.
+ * 목적지를 이미 아는데 그걸 기다릴 이유가 없다 — 특히 배포 직후 첫 클릭들이
+ * 콜드 비용을 낸다.
  */
 
 function fakeRes() {
