@@ -43,6 +43,12 @@ comment on column public.attraction_places.rank is
     '모델이 정한 추천 순서(0이 첫째). 구글 순서는 인기·거리 기준이라 "처음 가는 '
     '한국인에게 뭘 먼저 보여줄까" 를 못 한다 — 그 판단만 모델이 한다.';
 
+-- 서버는 service_role 키로만 접근한다 (0001 과 같다).
+-- ⚠️ **새 테이블을 만들 때마다 이 줄을 같이 써야 한다.** 정책 없이 RLS 만 켜두면
+--    anon / authenticated 는 전부 차단되는데, 안 켜면 그 키로 통째로 읽힌다.
+--    실제로 이 파일에서 한 번 빠뜨렸고 Supabase 편집기 경고로 발견했다.
+alter table public.attraction_places enable row level security;
+
 -- ------------------------------------------------------- 도시별 갱신 시각
 -- 배치가 "마지막 갱신이 오래된 도시" 를 고르는 기준이다.
 --
