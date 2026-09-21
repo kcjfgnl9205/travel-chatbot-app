@@ -11,8 +11,16 @@ import { RecommendationItemsRepository } from '../database/repositories/recommen
  * 카카오 listCard 의 줄 링크가 가리키는 곳. 여기를 한 번 거쳐야
  * "사용자가 어떤 호텔을 눌렀는지"를 DB에 남길 수 있다.
  *
- * DB 왕복은 **한 번**이다. register_click() 함수가 조회·카운터 증가·목적지 반환을
- * 동시에 한다. 사용자가 302 를 기다리는 경로라 왕복 수가 곧 체감 지연이다.
+ * ⚠️ **사용자가 302 를 기다리는 경로다.** 여기서 쓰는 시간이 곧 "링크가 느리다" 다.
+ *
+ * 그래서 **DB 를 기다리지 않는 길을 먼저 본다.** 방금 나간 카드의 목적지는 이미
+ * 인메모리에 있으므로, 있으면 즉시 302 를 보내고 카운터는 뒤에서 올린다.
+ * 실측에서 register_click() 왕복 하나가 **1.4초**였다 — 그대로 두면 사용자가 그만큼
+ * 흰 화면을 본다.
+ *
+ * 메모리에 없으면(배포로 비었거나 오래된 카드) 지금처럼 DB 를 기다린다. 목적지를
+ * 모르는 채로 보낼 수는 없기 때문이다. DB 왕복은 그때도 **한 번**이다 —
+ * register_click() 이 조회·증가·목적지 반환을 동시에 한다.
  */
 const EXPIRED_HTML = `<!doctype html>
 <html lang="ko"><head><meta charset="utf-8">
@@ -44,13 +52,23 @@ export class RedirectController {
   @ApiResponse({ status: 302, description: '애드픽 커미션 링크로 이동' })
   @ApiResponse({ status: 404, description: '없거나 만료된 clickId' })
   async redirect(@Param('clickId') clickId: string, @Res() res: Response): Promise<void> {
-    // DB 가 없거나 실패하면 인메모리 폴백으로 떨어진다 (로컬 개발용).
-    const row = await this.items.registerClick(clickId);
-    const fallback = row ? null : this.memory.registerClick(clickId);
+    // ① 빠른 길 — 목적지를 이미 알고 있으면 DB 를 기다리지 않는다.
+    const cached = this.memory.registerClick(clickId);
+    if (cached) {
+      res.redirect(302, cached.targetUrl);
+      // 카운터는 사용자를 보낸 뒤에 올린다. 실패해도 기록 한 건을 잃을 뿐이고,
+      // 그것 때문에 사용자를 1초 넘게 붙잡아 둘 이유는 없다.
+      void this.items
+        .registerClick(clickId)
+        .catch((err) => this.logger.warn(`click count failed clickId=${clickId} err=${err}`));
+      this.logger.log(`click clickId=${clickId} item=${cached.itemName} via=memory`);
+      return;
+    }
 
-    const targetUrl = (row?.target_url as string) ?? fallback?.targetUrl ?? null;
-    const itemName = (row?.item_name as string) ?? fallback?.itemName ?? null;
-    const clickCount = (row?.click_count as number) ?? fallback?.clickCount ?? null;
+    // ② 느린 길 — 목적지를 모르니 DB 를 기다릴 수밖에 없다.
+    //    배포로 메모리가 비었거나, 단톡방에 오래 남아 있던 카드를 누른 경우다.
+    const row = await this.items.registerClick(clickId);
+    const targetUrl = (row?.target_url as string) ?? null;
 
     if (!targetUrl) {
       this.logger.warn(`unknown clickId=${clickId}`);
@@ -58,7 +76,10 @@ export class RedirectController {
       return;
     }
 
-    this.logger.log(`click clickId=${clickId} item=${itemName} count=${clickCount}`);
+    this.logger.log(
+      `click clickId=${clickId} item=${row?.item_name as string} ` +
+        `count=${row?.click_count as number} via=db`,
+    );
     res.redirect(302, targetUrl);
   }
 }
