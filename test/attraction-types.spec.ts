@@ -1,68 +1,54 @@
 import { mapsUrl } from '../src/common/maps-url';
-import { listDescription, ratingText } from '../src/modules/attraction/attraction-card';
-import { AttractionService, dedupe } from '../src/modules/attraction/attraction.service';
-import { Attraction, attractionKey, isAttraction } from '../src/modules/attraction/attraction.types';
+import { listDescription } from '../src/modules/attraction/attraction-card';
+import { dedupe } from '../src/modules/attraction/attraction.service';
+import { toAttraction, httpsOnly } from '../src/modules/attraction/providers/db.provider';
+import {
+  Attraction,
+  AttractionQuery,
+  attractionKey,
+  isAttraction,
+} from '../src/modules/attraction/attraction.types';
 
 /**
  * 관광지 카드 문구와 중복 판정.
  *
- * 입장료·소요시간이 있던 자리에 **구글 평점**이 들어왔다. 구글이 입장료를 주지 않고
- * 모델은 지어내서 아예 안 모으기로 했기 때문이다 — 틀린 가격은 없는 가격보다 나쁘다.
+ * **0009 에서 카드 한 줄이 위치 하나로 줄었다.** 평점·카테고리는 구글 콘텐츠였고,
+ * `rating` 을 요청하면 Text Search 가 Enterprise SKU 가 되는데 그 무료 한도가 월
+ * 1,000회뿐이라 API 자체를 끊었다. 남은 건 사람이 관리 화면에서 넣는 값뿐이다.
  */
 
 function spot(over: Partial<Attraction> = {}): Attraction {
   return {
-    placeId: 'ChIJ_osaka_castle',
+    id: 1,
     name: '오사카성',
     citySlug: 'osaka',
-    category: '역사/문화',
     area: '주오구',
-    rating: 4.4,
-    userRatingCount: 61234,
-    mapUrl: mapsUrl('오사카성', '오사카', 'ChIJ_osaka_castle'),
+    mapUrl: mapsUrl('오사카성', '오사카'),
     ...over,
   };
 }
 
-describe('평점 표기', () => {
-  /** 평점 4.8 에 리뷰 3개는 4.3 에 리뷰 5만 개보다 못 믿는다. 둘을 같이 보여준다. */
-  it('별점과 리뷰 수를 같이 낸다', () => {
-    expect(ratingText(spot())).toBe('★ 4.4 (61,234)');
-  });
-
-  it('리뷰 수를 모르면 별점만', () => {
-    expect(ratingText(spot({ userRatingCount: null }))).toBe('★ 4.4');
-  });
-
-  it('평점이 없으면 빈 문자열 — 그 조각을 통째로 뺀다', () => {
-    expect(ratingText(spot({ rating: null }))).toBe('');
-  });
-
-  it('소수점 한 자리로 고정한다', () => {
-    expect(ratingText(spot({ rating: 4, userRatingCount: 12 }))).toBe('★ 4.0 (12)');
-  });
-});
-
 describe('listCard 한 줄 (40자)', () => {
-  it('평점 · 카테고리 · 위치 순으로 넣는다', () => {
-    expect(listDescription(spot())).toBe('★ 4.4 (61,234) · 역사/문화 · 주오구');
+  it('위치를 넣는다 — 지금 넣을 게 이것뿐이다', () => {
+    expect(listDescription(spot())).toBe('주오구');
   });
 
-  it('없는 조각은 건너뛴다', () => {
-    expect(listDescription(spot({ rating: null, area: null }))).toBe('역사/문화');
+  it('위치가 없으면 빈 줄 — 카드는 이름만으로도 나간다', () => {
+    expect(listDescription(spot({ area: null }))).toBe('');
+    expect(listDescription(spot({ area: undefined }))).toBe('');
   });
 
-  it('전부 없으면 빈 줄 — 카드는 이름만으로도 나간다', () => {
-    expect(listDescription(spot({ rating: null, category: null, area: null }))).toBe('');
+  it('공백만 있는 위치도 빈 줄로 본다', () => {
+    expect(listDescription(spot({ area: '   ' }))).toBe('');
   });
 });
 
 describe('중복 판정', () => {
   /**
-   * 이름으로 판정하면 '오사카성' / '오사카 성' / 'Osaka Castle' 이 전부 다른 값이 된다.
-   * place_id 는 구글이 부여한 신원이라 표기와 무관하게 같다.
+   * 이름으로 판정하면 관리 화면에서 표기를 고치는 순간 다른 곳이 된다.
+   * DB id 는 그대로다.
    */
-  it('표기가 달라도 place_id 가 같으면 같은 곳이다', () => {
+  it('표기가 달라도 id 가 같으면 같은 곳이다', () => {
     const a = spot({ name: '오사카성' });
     const b = spot({ name: '오사카 성', mapUrl: 'https://다른주소' });
 
@@ -70,16 +56,13 @@ describe('중복 판정', () => {
     expect(dedupe([a, b])).toHaveLength(1);
   });
 
-  it('place_id 가 다르면 이름이 같아도 다른 곳이다', () => {
-    const a = spot({ placeId: 'ChIJ_1' });
-    const b = spot({ placeId: 'ChIJ_2' });
-
-    expect(dedupe([a, b])).toHaveLength(2);
+  it('id 가 다르면 이름이 같아도 다른 곳이다', () => {
+    expect(dedupe([spot({ id: 1 }), spot({ id: 2 })])).toHaveLength(2);
   });
 
-  it('먼저 온 것을 남긴다 — 추천 순서가 곧 우선순위다', () => {
-    const first = spot({ placeId: 'ChIJ_1', name: '첫째' });
-    const second = spot({ placeId: 'ChIJ_2', name: '둘째' });
+  it('먼저 온 것을 남긴다 — 노출 순서가 곧 우선순위다', () => {
+    const first = spot({ id: 1, name: '첫째' });
+    const second = spot({ id: 2, name: '둘째' });
 
     expect(dedupe([first, second, first]).map((a) => a.name)).toEqual(['첫째', '둘째']);
   });
@@ -96,75 +79,56 @@ describe('캐시에서 살려낸 값', () => {
   });
 });
 
-describe('목록의 영구 신원', () => {
-  /**
-   * ⚠️ **배치 경로에만 두면 두 경로가 달라진다.** 사용자가 물어서 찾은 도시는 30일
-   *    캐시에만 있고, 그 캐시가 비면 목록을 처음부터 다시 만들어야 한다(모델 재호출).
-   *    place_id 가 남아 있으면 구글에 다시 물어 살만 채우면 된다.
-   */
-  it('검색하면 place_id 와 갱신 도장을 남긴다', async () => {
-    const saved: { cityId: number; placeIds: string[] }[] = [];
-    const stamped: number[] = [];
-    const provider = {
-      name: 'fake',
-      search: async () => [spot({ placeId: 'ChIJ_1' }), spot({ placeId: 'ChIJ_2' })],
-    } as never;
-    const catalog = {
-      replaceCity: async (cityId: number, placeIds: string[]) => {
-        saved.push({ cityId, placeIds });
-        return [];
-      },
-    } as never;
-    const places = {
-      markAttractionsRefreshed: async (id: number) => {
-        stamped.push(id);
-      },
-    } as never;
+describe('DB 행 → 카드 값', () => {
+  const query: AttractionQuery = {
+    cityId: 42,
+    citySlug: 'osaka',
+    cityName: '오사카',
+    limit: 20,
+  };
 
-    await new AttractionService(provider, {} as never, catalog, places).search({
-      kind: 'attraction',
-      place: { id: 42, canonicalName: '오사카', slug: 'osaka', kind: 'city',
-               countryCode: 'JP', iata: 'KIX', parentId: null },
-      parent: null,
-      from: null,
-      tripType: 'rt',
-      limit: 20,
+  it('평범한 행을 옮긴다', () => {
+    expect(
+      toAttraction(
+        { id: 7, name: '오사카성', area: '주오구', image_url: 'https://cdn/a.jpg', rank: 0 },
+        query,
+      ),
+    ).toEqual({
+      id: 7,
+      name: '오사카성',
+      citySlug: 'osaka',
+      area: '주오구',
+      imageUrl: 'https://cdn/a.jpg',
+      mapUrl: mapsUrl('오사카성', '오사카'),
     });
-
-    expect(saved).toEqual([{ cityId: 42, placeIds: ['ChIJ_1', 'ChIJ_2'] }]);
-    // ⚠️ 도장을 안 찍으면 배치가 "아직 채운 적 없는 도시" 로 보고 한 시간 뒤에
-    //    같은 데이터를 구글 6회 + 모델 2회로 다시 산다.
-    expect(stamped).toEqual([42]);
   });
 
-  it('빈손이면 저장도 도장도 안 한다 — 목록을 지우거나 굳히면 안 된다', async () => {
-    let called = false;
-    let stamped = false;
-    const provider = { name: 'fake', search: async () => [] } as never;
-    const catalog = {
-      replaceCity: async () => {
-        called = true;
-        return [];
-      },
-    } as never;
-    const places = {
-      markAttractionsRefreshed: async () => {
-        stamped = true;
-      },
-    } as never;
+  it('⚠️ 이름이 없으면 버린다 — 제목이 빈 줄은 카드에 못 쓴다', () => {
+    expect(toAttraction({ id: 7, name: '  ', area: '주오구' }, query)).toBeNull();
+    expect(toAttraction({ id: 7, name: null }, query)).toBeNull();
+  });
 
-    await new AttractionService(provider, {} as never, catalog, places).search({
-      kind: 'attraction',
-      place: { id: 42, canonicalName: '오사카', slug: 'osaka', kind: 'city',
-               countryCode: 'JP', iata: 'KIX', parentId: null },
-      parent: null,
-      from: null,
-      tripType: 'rt',
-      limit: 20,
-    });
+  it('위치·사진은 없어도 된다', () => {
+    const a = toAttraction({ id: 7, name: '오사카성' }, query);
+    expect(a?.area).toBeNull();
+    expect(a?.imageUrl).toBeNull();
+  });
+});
 
-    expect(called).toBe(false);
-    // 도장을 찍으면 빈손인 채로 28일을 굳힌다. 다음 배치가 다시 집어야 한다.
-    expect(stamped).toBe(false);
+describe('사진 주소 검사', () => {
+  /**
+   * ⚠️ **카카오는 http 이미지를 그리지 않는다.** 통과시키면 카드에 깨진 자리가
+   *    남으므로 "사진 없음" 으로 떨어뜨린다.
+   */
+  it('https 만 받는다', () => {
+    expect(httpsOnly('https://cdn.example.com/a.jpg')).toBe('https://cdn.example.com/a.jpg');
+    expect(httpsOnly('http://cdn.example.com/a.jpg')).toBeNull();
+  });
+
+  it('주소가 아니면 없는 것으로 친다', () => {
+    expect(httpsOnly('그냥 글자')).toBeNull();
+    expect(httpsOnly('')).toBeNull();
+    expect(httpsOnly(null)).toBeNull();
+    expect(httpsOnly(undefined)).toBeNull();
   });
 });

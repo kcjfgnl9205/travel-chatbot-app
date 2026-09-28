@@ -5,6 +5,7 @@ import { createServer, Server } from 'node:http';
 import request from 'supertest';
 
 import { AppModule } from '../src/app.module';
+import { AttractionBackfillService } from '../src/modules/attraction/attraction-backfill';
 import { ATTRACTION_PROVIDER } from '../src/modules/attraction/attraction.types';
 import { FLIGHT_PROVIDER } from '../src/modules/flight/flight.types';
 import { HOTEL_PROVIDER } from '../src/modules/hotel/hotel.types';
@@ -20,11 +21,39 @@ import { FakeOpenAiService } from './fake-openai';
 /** **유일한 진입점.** 호텔·항공권·관광지가 전부 여기로 온다. */
 export const ROUTER = '/api/v1/kakao/router';
 
+/**
+ * 빈 도시를 모델이 채우는 단계.
+ *
+ * 진짜 서비스는 Supabase 와 OpenAI 가 둘 다 있어야 `enabled` 라, 테스트에서는 늘
+ * 꺼져 있다. 그러면 **빈 도시가 느린 경로로 넘어가는지**를 영영 못 본다.
+ */
+export class FakeBackfillService {
+  /** 켜져 있으면 빈 도시가 느린 경로(모델 채우기)로 간다. */
+  enabled = true;
+  /** 어떤 도시를 채우라고 했는지. */
+  readonly calls: { cityId: number; cityName: string }[] = [];
+  /** 채운 뒤 DB 에 무엇이 생기는가 — provider 의 응답을 바꿔 흉내 낸다. */
+  onFill: (() => void) | null = null;
+
+  async fill(cityId: number, cityName: string) {
+    this.calls.push({ cityId, cityName });
+    this.onFill?.();
+    return { inserted: 0, proposed: 0 };
+  }
+
+  reset(): void {
+    this.enabled = true;
+    this.calls.length = 0;
+    this.onFill = null;
+  }
+}
+
 export interface TestApp {
   app: INestApplication;
   provider: FakeHotelProvider;
   flightProvider: FakeFlightProvider;
   attractionProvider: FakeAttractionProvider;
+  backfill: FakeBackfillService;
   openai: FakeOpenAiService;
   /** 캐시·별칭·의도 메모리를 한 번에 비운다. 테스트끼리 안 섞이게 하는 스위치. */
   reset(): void;
@@ -34,6 +63,7 @@ export async function createApp(): Promise<TestApp> {
   const provider = new FakeHotelProvider();
   const flightProvider = new FakeFlightProvider();
   const attractionProvider = new FakeAttractionProvider();
+  const backfill = new FakeBackfillService();
   const openai = new FakeOpenAiService();
 
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
@@ -44,6 +74,8 @@ export async function createApp(): Promise<TestApp> {
     .useValue(flightProvider)
     .overrideProvider(ATTRACTION_PROVIDER)
     .useValue(attractionProvider)
+    .overrideProvider(AttractionBackfillService)
+    .useValue(backfill)
     .overrideProvider(OpenAiService)
     .useValue(openai)
     .compile();
@@ -62,8 +94,10 @@ export async function createApp(): Promise<TestApp> {
     provider,
     flightProvider,
     attractionProvider,
+    backfill,
     openai,
     reset() {
+      backfill.reset();
       search.clearMemory();
       places.clearMemory();
       intent.clearMemory();

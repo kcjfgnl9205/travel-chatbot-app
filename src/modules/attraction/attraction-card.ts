@@ -9,32 +9,21 @@
 import { Attraction } from './attraction.types';
 
 /**
- * 평점 표기. '★ 4.4 (61,234)' / '★ 4.4' / '' (모름).
+ * listCard 한 줄 설명. **40자 1줄**인데 지금 넣을 게 하나뿐이다.
  *
- * 리뷰 수를 같이 보여주는 이유 — 평점 4.8 이 리뷰 3개면 4.3 에 리뷰 5만 개보다
- * 못 믿는다. 별점만 보여주면 그 차이가 지워진다.
+ * 이 자리는 계속 줄어들었다 —
  *
- * ⚠️ **구글이 준 값이다.** 화면에 보여주는 이상 출처를 밝혀야 하므로 카드 하단
- *    버튼에 표시가 붙는다(사진 출처와 같은 자리다).
- */
-export function ratingText(a: Attraction): string {
-  if (!a.rating) return '';
-  const stars = `★ ${a.rating.toFixed(1)}`;
-  if (!a.userRatingCount) return stars;
-  return `${stars} (${a.userRatingCount.toLocaleString('ko-KR')})`;
-}
-
-/**
- * listCard 한 줄 설명. **40자 1줄**이라 넣을 수 있는 게 세 조각뿐이다.
+ *   입장료 · 소요시간   구글이 주지 않고 모델은 지어냈다. 틀린 가격은 없는 가격보다 나쁘다
+ *   평점 · 리뷰수       구글 콘텐츠다. `rating` 을 요청하면 Enterprise SKU 가 되고
+ *                       무료 한도가 월 1,000회뿐이라 API 자체를 끊었다
+ *   카테고리            구글 타입에서 파생된 값이라 같이 걷어냈다
  *
- * 우선순위: 평점 → 카테고리 → 위치.
+ * 남은 건 **사람이 직접 넣은 위치**뿐이다. 비어 있으면 빈 문자열을 돌려주고,
+ * 렌더러가 description 없이 제목만 그린다.
  *
- * 입장료와 소요 시간이 있던 자리다. 그 둘은 구글이 주지 않고 모델은 지어내서
- * 뺐다 — 틀린 가격은 없는 가격보다 나쁘다. 대신 들어온 평점은 **사용자가 고르는 데
- * 실제로 쓰는 값**이고, 지도로 넘어가면 같은 숫자가 다시 보여 앞뒤가 맞는다.
- *
- * 값이 비어 올 수 있으므로 있는 것만 이어 붙인다.
+ * ⚠️ 카테고리를 다시 넣고 싶어지면 여기가 아니라 `attractions` 테이블부터다 —
+ *    카드에 찍을 값은 전부 DB 에 있어야 한다는 게 이 판의 규칙이다.
  */
 export function listDescription(a: Attraction): string {
-  return [ratingText(a), a.category, a.area].filter(Boolean).join(' · ');
+  return (a.area ?? '').trim();
 }

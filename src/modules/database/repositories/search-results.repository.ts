@@ -40,9 +40,9 @@ export class SearchResultsRepository extends BaseRepository {
    * ⚠️ 기본 동작은 정반대다 — 0004 는 "만료돼도 지우지 않는다" 로 두었다. AI 검색이
    *    실패했을 때 예전 값이라도 보여주려는 것이고, 호텔·항공권에는 그게 맞다.
    *
-   * **관광지만 예외다.** 그 행에는 구글 콘텐츠(이름·평점)가 들어 있고, 구글 약관은
-   * place_id 외의 콘텐츠를 오래 보관하는 걸 제한한다. 목록을 잃는 것도 아니다 —
-   * place_id 는 attraction_places 에 영구로 남아 있어 다시 물으면 채워진다.
+   * ⚠️ **관광지에는 이제 쓰지 않는다.** 0008 시절에는 그 행에 구글 콘텐츠가 들어
+   *    있어서 약관 때문에 실제로 지워야 했는데, 0009 부터 관광지 목록은 우리 DB 에서
+   *    오므로 보관 제한이 없다. 지금 이 함수를 부르는 건 호텔·항공권뿐이다.
    */
   async purgeExpired(kind: string): Promise<number | null> {
     const rows = await this.run(

@@ -1,13 +1,14 @@
 import { CatalogService } from '../src/modules/catalog/catalog.service';
 import { Place } from '../src/modules/places/places.types';
-import { loadConfig } from '../src/config/app.config';
 
 /**
- * 배치가 **응답을 붙잡지 않는가**, 그리고 씨앗이 **한 곳씩 순차로 돌지 않는가.**
+ * 씨앗이 **한 곳씩 순차로 돌지 않는가.**
  *
- * ⚠️ 둘 다 운영에서 504 로 드러난 사고다. 씨앗은 도시마다 DB 왕복이 두 번이라
- *    112곳을 순차로 돌면 프록시 타임아웃(100초)을 넘겼고, 갱신은 도시 하나가
- *    30초~2분이라 기다리면 같은 곳에서 끊긴다.
+ * ⚠️ 운영에서 504 로 드러난 사고다. 도시마다 DB 왕복이 두 번이라 112곳을 순차로
+ *    돌면 프록시 타임아웃(100초)을 넘긴다.
+ *
+ * 갱신 배치 검증은 0009 에서 같이 사라졌다 — 관광지 목록이 우리 DB 로 오면서
+ * 미리 채울 것이 없어졌고, `startRefresh` 도 없어졌다.
  */
 
 function city(id: number, name: string): Place {
@@ -16,25 +17,16 @@ function city(id: number, name: string): Place {
 
 function build(over: {
   resolve?: (name: string) => Promise<Place | null>;
-  due?: Place[];
-  warm?: (kind: string, place: Place) => Promise<unknown[]>;
   stored?: number | null;
 } = {}) {
   const places = {
     resolve: over.resolve ?? (async (name: string) => city(1, name)),
   } as never;
   const placesRepo = {
-    dueForAttractions: async () => over.due ?? [],
     countCities: async () => ('stored' in over ? over.stored : 0),
   } as never;
-  const searchResults = { purgeExpired: async () => 0 } as never;
-  const search = {
-    warm: over.warm ?? (async () => []),
-  } as never;
 
-  return {
-    service: new CatalogService(loadConfig(), places, placesRepo, searchResults, search),
-  };
+  return { service: new CatalogService(places, placesRepo) };
 }
 
 describe('씨앗 등록', () => {
@@ -102,50 +94,5 @@ describe('씨앗 등록', () => {
     const { service } = build({ stored: null });
 
     expect((await service.seed()).stored).toBeNull();
-  });
-});
-
-describe('갱신 배치', () => {
-  /** 도시 하나가 30초~2분이다. 기다리면 프록시가 끊는다. */
-  it('작업을 기다리지 않고 바로 돌아온다', async () => {
-    let finished = false;
-    const { service } = build({
-      due: [city(1, '도쿄')],
-      warm: async () => {
-        await new Promise((r) => setTimeout(r, 50));
-        finished = true;
-        return [];
-      },
-    });
-
-    const result = await service.startRefresh(1);
-
-    expect(result).toEqual({ started: ['도쿄'] });
-    // 응답이 돌아온 시점에 작업은 아직 안 끝나 있어야 한다.
-    expect(finished).toBe(false);
-  });
-
-  /**
-   * 구글이 잠깐 흔들렸다고 그날 배치가 멈추면, 나머지 도시들이 다음 차례까지 빈다.
-   *
-   * ⚠️ 갱신 도장(attractions_refreshed_at)은 여기서 안 찍는다 — 도메인이 찍는다
-   *    ([attraction.service.ts] search). 사용자가 물어서 찾은 도시와 배치가 찾은
-   *    도시가 같은 상태여야 하기 때문이고, 그 검증은 attraction-types.spec 에 있다.
-   */
-  it('한 도시가 터져도 나머지를 계속한다', async () => {
-    const seen: string[] = [];
-    const { service } = build({
-      due: [city(1, '도쿄'), city(2, '오사카')],
-      warm: async (_kind, place) => {
-        seen.push(place.canonicalName);
-        if (place.canonicalName === '도쿄') throw new Error('구글이 흔들림');
-        return [{ placeId: 'ChIJ_1', name: '오사카성', mapUrl: 'https://m/1' }];
-      },
-    });
-
-    await service.startRefresh(2);
-    await new Promise((r) => setTimeout(r, 20));
-
-    expect(seen).toEqual(['도쿄', '오사카']);
   });
 });

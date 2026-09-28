@@ -62,11 +62,8 @@ export interface AppConfig {
   flightDefaultOriginCode: string;
 
   attractionCacheTtlMinutes: number;
-  attractionImages: boolean;
-  attractionImageTimeoutMs: number;
-  googlePlacesApiKey: string;
-  googlePlacesTimeoutMs: number;
-  attractionRefreshDays: number;
+  attractionBackfill: boolean;
+  attractionBackfillCount: number;
 
   moreButtonStyle: 'block' | 'message';
   fallbackBlockId: string;
@@ -181,23 +178,17 @@ export function loadConfig(): AppConfig {
     flightDefaultOriginName: str('FLIGHT_DEFAULT_ORIGIN_NAME', '서울'),
     flightDefaultOriginCode: str('FLIGHT_DEFAULT_ORIGIN_CODE', 'ICN'),
 
-    // 호텔 요금·항공 운임과 달리 **오사카의 볼거리는 어제와 오늘이 같다.**
-    // 짧게 잡을수록 같은 답을 다시 사는 셈이라 30일로 둔다.
-    attractionCacheTtlMinutes: num('ATTRACTION_CACHE_TTL_MINUTES', 43200),
-    // 카드 썸네일을 위키백과에서 찾을지. 끄면 사진 없는 카드로 돌아간다.
-    attractionImages: bool('ATTRACTION_IMAGES', true),
-    // 콜백 경로에서만 도는 호출이라 5초 예산과 무관하다. 그래도 짧게 끊는 이유는
-    // 여러 곳을 동시에 찾기 때문이다 — 하나가 늘어지면 카드 전체가 그만큼 늦는다.
-    attractionImageTimeoutMs: Math.round(num('ATTRACTION_IMAGE_TIMEOUT_SECONDS', 3) * 1000),
-
-    // 관광지 후보와 사실 데이터의 출처. **없으면 관광지 검색이 통째로 안 된다** —
-    // 모델만으로는 없는 곳을 섞기 때문에 그 구성을 지원하지 않는다.
-    googlePlacesApiKey: str('GOOGLE_PLACES_API_KEY', ''),
-    // 도시 하나에 타입별로 여러 번 부른다. 하나가 늘어지면 그만큼 늦으므로 짧게 끊는다.
-    googlePlacesTimeoutMs: Math.round(num('GOOGLE_PLACES_TIMEOUT_SECONDS', 5) * 1000),
-    // ⚠️ **캐시 TTL(30일)보다 짧아야 한다.** 만료된 뒤에 갱신하면 그 도시의 첫 질문이
-    //    다시 대기를 타므로 미리 채워두는 의미가 없어진다.
-    attractionRefreshDays: num('ATTRACTION_REFRESH_DAYS', 28),
+    // ⚠️ **관광지는 캐시를 읽지 않는다** (0009). 질문마다 DB 를 보고, 이 값은
+    //    저장된 행의 수명일 뿐이다 — "더 보기" 가 그 행에서 다음 페이지를 자르므로
+    //    한 사람이 카드를 보고 페이지를 넘기는 동안만 살아 있으면 된다.
+    attractionCacheTtlMinutes: num('ATTRACTION_CACHE_TTL_MINUTES', 60),
+    // 아무도 안 넣은 도시를 모델이 채울지. 끄면 그 도시는 빈손으로 남는다.
+    // ⚠️ 모델은 폐관한 곳을 그럴듯하게 섞는다. 채워진 행은 source='ai' 로 표시되니
+    //    가끔 훑어보는 것을 전제로 켠다.
+    attractionBackfill: bool('ATTRACTION_BACKFILL', true),
+    // 한 도시에 몇 곳을 채울지. RESULT_MAX_ITEMS(20)에 맞춘다 — 더 받아봐야
+    // 저장은 되지만 카드로는 안 나가고, 모델이 억지로 채우면서 품질만 떨어진다.
+    attractionBackfillCount: num('ATTRACTION_BACKFILL_COUNT', 20),
 
     // "더 보기" 버튼 방식. block 이면 clientExtra 로 cache_key·offset 을 실어 보낼 수
     // 있어 서버가 상태를 안 들고도 4페이지까지 간다.

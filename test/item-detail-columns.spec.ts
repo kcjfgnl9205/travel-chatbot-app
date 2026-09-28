@@ -74,26 +74,22 @@ function capture() {
 /** 링크 해석을 타지 않게 빈 Map 을 넘긴다 (변환은 이 테스트의 관심사가 아니다). */
 const noAffiliate = { resolve: async () => new Map() } as never;
 
-/** 이 테스트는 rows() 만 본다 — 목록 저장은 search() 쪽 일이라 여기선 안 탄다. */
-const noCatalog = { replaceCity: async () => [] } as never;
-const noPlaces = { markAttractionsRefreshed: async () => undefined } as never;
+/** 이 테스트는 rows() 만 본다 — 백필은 search() 쪽 일이라 여기선 안 탄다. */
+const noBackfill = { enabled: false, fill: async () => ({ inserted: 0, proposed: 0 }) } as never;
 
 describe('detail 키가 실제 컬럼과 맞는가', () => {
   it('관광지', async () => {
     const { rows, renderer } = capture();
     const attraction: Attraction = {
-      placeId: 'ChIJ_osaka_castle',
+      id: 7,
       name: '오사카성',
       citySlug: 'osaka',
       mapUrl: 'https://maps/1',
-      category: '역사/문화',
       area: '주오구',
-      rating: 4.4,
-      userRatingCount: 61234,
       imageUrl: 'https://img/1.jpg',
     };
 
-    await new AttractionService({ name: 'fake' } as never, renderer, noCatalog, noPlaces).rows(
+    await new AttractionService({ name: 'fake' } as never, renderer, noBackfill).rows(
       [attraction],
       CTX('attraction'),
     );

@@ -33,11 +33,18 @@ import {
 /**
  * 검색 오케스트레이션. **라우터의 거의 전부가 여기 있다.**
  *
- *   캐시 조회 → (히트) 1페이지 즉시 반환
- *            → (미스) pending 선점 → 대기 응답 → 백그라운드 AI 검색 → 저장 → 콜백 푸시
+ * 경로가 둘이다. `domain.peek()` 이 즉시 답하느냐로 갈린다.
  *
- * ⚠️ **provider 를 요청 경로에서 부르지 않는다.** 카카오는 5초 안에 응답을 받아야
- *    하는데 AI 검색은 7~30초다. 요청 경로에서 도는 건 저장소 조회까지다.
+ *   즉시 경로 (관광지 — DB 에 목록이 있을 때)
+ *     peek → 저장 → 1페이지 즉시 반환
+ *
+ *   느린 경로 (호텔·항공권 · 관광지의 빈 도시)
+ *     캐시 조회 → (히트) 1페이지 즉시 반환
+ *              → (미스) pending 선점 → 대기 응답 → 백그라운드 AI → 저장 → 콜백 푸시
+ *
+ * ⚠️ **느린 경로는 provider 를 요청 경로에서 부르지 않는다.** 카카오는 5초 안에
+ *    응답을 받아야 하는데 AI 검색은 7~30초다. 거기서 도는 건 저장소 조회까지다.
+ *    `peek` 은 DB 쿼리 하나라 그 제약이 없다 (0009).
  *
  * **도메인을 모른다.** 호텔이 오는지 항공권이 오는지는 [SearchDomain](./search.types.ts)
  * 구현이 알고, 여기는 캐시 키·페이지·고지·콜백만 다룬다. 네 번째 도메인이 생겨도
@@ -83,6 +90,38 @@ export class SearchService {
     };
     const cacheKey = cacheKeyOf(kind, place, from, parsed.tripType);
     const messageId = await this.logMessage(req, kind, place.slug);
+    const domain = this.domainOf(kind);
+
+    // ⚠️ **즉시 답할 수 있으면 캐시도 선점도 거치지 않는다** (관광지).
+    //
+    //    캐시는 비싼 호출을 아끼려고 있는 것인데, DB 목록이 있으면 인덱스 하나 타는
+    //    쿼리라 아낄 것이 없다. 오히려 캐시를 두면 관리 화면에서 방금 고친 것이 TTL
+    //    동안 안 보이고, 운영자는 "저장이 안 됐나" 를 의심한다.
+    //
+    //    null 이 오면 즉시 못 정한다는 뜻이라 아래 느린 경로로 흘러간다
+    //    (빈 도시 → 모델이 채워야 하고, 그건 7~30초다).
+    if (domain.peek && domain.ready) {
+      // ⚠️ **터져도 여기서 멈추지 않는다.** 던지게 두면 라우터의 일반 오류 처리로
+      //    새서 "일시적인 문제" 같은 뭉뚱그린 말풍선이 나간다. DB 가 1초 흔들린
+      //    것뿐일 수 있으므로 아래 느린 경로로 흘려보낸다 — 거기에는 캐시도 있고
+      //    도메인별 실패 문구도 있다.
+      const instant = await domain
+        .peek(ctx(kind, place, parent, from, parsed, this.config))
+        .catch((err) => {
+          this.logger.warn(`peek failed key=${cacheKey} err=${err}`);
+          return null;
+        });
+      if (instant) {
+        if (!instant.length) return cards.emptyText(meta);
+        await this.store.complete(cacheKey, instant, this.ttlOf(kind), meta);
+        this.logger.log(`instant key=${cacheKey} items=${instant.length}`);
+        return this.respond(instant, meta, 0, cacheKey, req, {
+          ignored: parsed.ignored,
+          messageId,
+          cacheHit: false,
+        });
+      }
+    }
 
     const row = await this.store.get(cacheKey);
 
@@ -90,12 +129,11 @@ export class SearchService {
     // 사용자에게 "예전 정보" 라고 알리지 않는다: 할 수 있는 일이 없는 사정이고,
     // 다음 질문에는 새 결과가 나간다.
     //
-    // ⚠️ **관광지만 예외다.** 그 행에는 구글 콘텐츠(이름·평점)가 들어 있고, 구글 약관은
-    //    place_id 외의 콘텐츠를 오래 보관하는 걸 제한한다. 그래서 만료된 관광지 값은
-    //    보여주지 않고 다시 찾는다 — 잃는 것도 없다. 목록(place_id)은
-    //    attraction_places 에 영구로 남아 있어 다시 물으면 채워진다.
+    // 0008 에는 관광지 예외가 있었다 — 그 행에 구글 콘텐츠가 들어 있어서 약관상
+    // 만료되면 보여주면 안 됐다. 0009 에서 관광지가 즉시 도메인이 되면서 여기까지
+    // 내려오지 않으므로 예외도 같이 사라졌다.
     const stale = row ? isExpired(row) : false;
-    const usable = row && row.items.length && row.status !== 'pending' && !(stale && kind === 'attraction');
+    const usable = row && row.items.length && row.status !== 'pending';
     if (usable) {
       if (stale) void this.refresh(parsed, place, parent, from, meta, cacheKey, row, req);
       this.logger.log(`cache ${stale ? 'stale' : 'hit'} key=${cacheKey} items=${row.items.length}`);
@@ -136,15 +174,14 @@ export class SearchService {
     );
     if (!claimed) return cards.busyText(meta);
 
-    const ctx: SearchContext = {
-      kind,
-      place,
-      parent,
-      from,
-      tripType: parsed.tripType,
-      limit: this.config.resultMaxItems,
-    };
-    void this.runSearch(ctx, meta, cacheKey, row, req, { ignored: parsed.ignored, messageId });
+    void this.runSearch(
+      ctx(kind, place, parent, from, parsed, this.config),
+      meta,
+      cacheKey,
+      row,
+      req,
+      { ignored: parsed.ignored, messageId },
+    );
 
     if (!req.callbackUrl) {
       // ⚠️ 콜백은 오픈빌더에서 그 블록의 [콜백 사용] 을 켠 경우에만 실린다. 꺼져 있으면
@@ -155,62 +192,6 @@ export class SearchService {
     return t.callbackAck(`${cards.withObjectParticle(cards.subject(meta))} 찾고 있어요. 잠시만요 🔍`);
   }
 
-  /**
-   * **배치가 캐시를 미리 채운다.** 요청 경로와 같은 키·같은 저장소를 쓴다.
-   *
-   * 미리 채워두면 그 도시의 첫 질문부터 카드가 즉시 나간다 — 지금은 "찾고 있어요" 를
-   * 보내고 콜백을 기다려야 한다. 배치용 파이프라인을 따로 만들지 않는 이유는 진단
-   * 컨트롤러와 같다: 따로 만들면 실제 응답을 데우는 게 아니라 비슷한 걸 하나 더
-   * 만드는 것이다.
-   *
-   * ⚠️ **선점을 거쳐 간다.** 마침 사용자가 같은 도시를 물어 검색이 돌고 있으면 배치는
-   *    물러난다. 같은 도시를 두 번 찾으면 그만큼 API 요금이다.
-   */
-  async warm(kind: SearchKind, place: Place): Promise<unknown[]> {
-    const cacheKey = cacheKeyOf(kind, place, null, 'rt');
-    const row = await this.store.get(cacheKey);
-    if (row && this.store.isBusy(row)) return [];
-
-    const meta: SearchMeta = {
-      kind,
-      placeName: place.canonicalName,
-      placeSlug: place.slug,
-    };
-    const claimed = await this.store.claim(
-      {
-        cacheKey,
-        kind,
-        placeId: place.id,
-        fromPlaceId: null,
-        toPlaceId: null,
-        tripType: null,
-        meta,
-      },
-      row,
-    );
-    if (!claimed) return [];
-
-    try {
-      const items = await this.domainOf(kind).search({
-        kind,
-        place,
-        parent: await this.places.parentOf(place),
-        from: null,
-        tripType: 'rt',
-        limit: this.config.resultMaxItems,
-      });
-      if (!items.length) {
-        // 빈손을 캐시로 굳히지 않는다. 짧은 TTL 이면 다음 배치가 다시 집는다.
-        await this.store.fail(cacheKey, 'empty result', 1, meta);
-        return [];
-      }
-      await this.store.complete(cacheKey, items, this.ttlOf(kind), meta);
-      return items;
-    } catch (err) {
-      await this.store.fail(cacheKey, String(err), this.config.failedTtlMinutes, meta);
-      throw err;
-    }
-  }
   /**
    * "더 보기". **AI 를 부르지 않는다** — 저장된 행에서 offset 만큼 잘라 보낸다.
    */
@@ -463,6 +444,21 @@ export class SearchService {
  * ⚠️ **날짜·인원은 넣지 않는다.** 넣으면 캐시가 거의 안 맞아 매 질문이 AI 호출이 된다.
  *    대신 반영하지 않았다는 사실을 카드 아래에 반드시 적는다 (cards.noticeText).
  */
+/**
+ * 검색 한 번의 맥락. **즉시 경로와 느린 경로가 같은 값을 써야 한다** —
+ * 둘이 갈리면 "미리 본 것과 나중에 온 것이 다른" 버그가 된다.
+ */
+function ctx(
+  kind: SearchKind,
+  place: Place,
+  parent: Place | null,
+  from: Place | null,
+  parsed: ParsedIntent,
+  config: AppConfig,
+): SearchContext {
+  return { kind, place, parent, from, tripType: parsed.tripType, limit: config.resultMaxItems };
+}
+
 export function cacheKeyOf(
   kind: SearchKind,
   place: Place,

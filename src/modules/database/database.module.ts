@@ -2,7 +2,7 @@ import { Global, Module } from '@nestjs/common';
 
 import { MemoryStoreService } from './memory-store.service';
 import { AffiliateLinksRepository } from './repositories/affiliate-links.repository';
-import { AttractionPlacesRepository } from './repositories/attraction-places.repository';
+import { AttractionsRepository } from './repositories/attractions.repository';
 import { MessagesRepository } from './repositories/messages.repository';
 import {
   RecommendationItemsRepository,
@@ -25,7 +25,7 @@ const PROVIDERS = [
   RecommendationsRepository,
   RecommendationItemsRepository,
   AffiliateLinksRepository,
-  AttractionPlacesRepository,
+  AttractionsRepository,
   PlacesRepository,
   PlaceAliasesRepository,
   SearchResultsRepository,
