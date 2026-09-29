@@ -46,12 +46,61 @@ import {
  * 이름은 못 믿으므로 sourceUrl(호텔 신원)로 판정한다.
  */
 export function dedupe(hotels: Hotel[], logger?: Logger): Hotel[] {
+  const identity = identityOf(hotels);
   return dedupeBy(hotels, {
     label: 'hotel',
-    keyOf: (hotel) => hotel.sourceUrl || hotel.name,
+    keyOf: identity,
     nameOf: (hotel) => hotel.name,
     logger,
   });
+}
+
+/**
+ * 무엇을 "같은 호텔" 로 볼지 정한다. **주소 하나로는 안 된다.**
+ *
+ * 두 가지 실패가 서로 반대다.
+ *
+ *   주소로만 판정  모델이 호텔마다 다른 예약 페이지를 줘야 하는데, **검색 결과
+ *                  페이지 하나를 여러 곳에 붙이면 전부 같은 키가 되어 한 줄만 남는다.**
+ *                  항공권에서 이미 겪은 실패다(dedupe.ts 주석) — 호텔에서도 났다.
+ *   이름으로만 판정 '호텔 그란비아 오사카' / 'Hotel Granvia Osaka' 가 다른 값이 된다.
+ *                  모델은 같은 호텔을 표기만 바꿔 여러 번 준다.
+ *
+ * 그래서 **주소가 신원 노릇을 하는지 먼저 본다.** 한 주소에 서로 다른 이름이 셋 이상
+ * 달려 있으면 그건 호텔 페이지가 아니라 목록 페이지다 — 그 주소를 쓰는 항목들은
+ * 이름으로 판정한다. 나머지는 지금까지처럼 주소로 판정한다.
+ *
+ * ⚠️ **왜 둘이 아니라 셋인가.** 한 주소에 이름이 둘이면 대개 같은 호텔의 표기 차이다
+ *    ('호텔 그란비아 오사카' / 'Hotel Granvia Osaka'). 한글과 영문은 문자열로 견줄
+ *    수가 없어서 **주소가 그 둘을 잇는 유일한 다리**다. 둘에서 갈라버리면 중복이
+ *    그대로 카드에 나간다. 반면 목록 페이지는 모델이 여러 곳에 같이 붙이므로 셋을
+ *    넘는다 — 실제로 스무 곳 전부에 같은 주소가 붙어 한 줄만 남았다.
+ *
+ * ⚠️ 둘인 경우는 여전히 애매하고, 그때는 **합치는 쪽으로 기운다.** 줄이 하나만 남는
+ *    것보다 같은 호텔이 두 줄 나오는 게 낫지만, 둘 중 하나를 골라야 한다면 더 흔한
+ *    쪽(표기 차이)을 잡는다.
+ */
+const LISTING_PAGE_NAMES = 3;
+export function identityOf(hotels: Hotel[]): (hotel: Hotel) => string {
+  const namesByUrl = new Map<string, Set<string>>();
+  for (const hotel of hotels) {
+    if (!hotel.sourceUrl) continue;
+    const names = namesByUrl.get(hotel.sourceUrl) ?? new Set<string>();
+    names.add(normalizeName(hotel.name));
+    namesByUrl.set(hotel.sourceUrl, names);
+  }
+
+  return (hotel) => {
+    const listing =
+      hotel.sourceUrl && (namesByUrl.get(hotel.sourceUrl)?.size ?? 0) >= LISTING_PAGE_NAMES;
+    if (!hotel.sourceUrl || listing) return `name:${normalizeName(hotel.name)}`;
+    return `url:${hotel.sourceUrl}`;
+  };
+}
+
+/** 표기 흔들림을 지운다. 공백·문장부호 차이로 같은 호텔이 갈리지 않게. */
+function normalizeName(name: string): string {
+  return name.replace(/[\s·・\-–—()[\],.'"`’]/g, '').toLowerCase();
 }
 
 @Injectable()
@@ -80,7 +129,15 @@ export class HotelService implements SearchDomain<Hotel> {
     const hotels = await this.provider.search(queryOf(ctx));
     // 중복 제거를 저장 **전에** 한다. 저장 후에 지우면 20건이 페이지마다 줄고,
     // 2페이지에 1페이지에서 이미 본 호텔이 다시 나온다.
-    return dedupe(hotels, this.logger).slice(0, ctx.limit);
+    const unique = dedupe(hotels, this.logger);
+
+    // ⚠️ **줄이 몇 개나 남았는지 한 줄로 남긴다.** "호텔이 하나만 나온다" 를 만났을 때
+    //    모델이 적게 준 건지 중복으로 접힌 건지 갈라야 하는데, 그 전에는 로그를
+    //    여러 줄 맞춰봐야 알 수 있었다.
+    this.logger.log(
+      `hotel result city=${ctx.place.canonicalName} found=${hotels.length} unique=${unique.length}`,
+    );
+    return unique.slice(0, ctx.limit);
   }
 
   isItem(item: unknown): item is Hotel {

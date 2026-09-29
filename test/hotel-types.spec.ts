@@ -44,3 +44,70 @@ describe('중복 제거', () => {
     expect(a.sourceUrl).toBe(b.sourceUrl);
   });
 });
+
+describe('같은 호텔 판정 — 주소 하나로는 안 된다', () => {
+  /**
+   * ⚠️ **운영에서 "호텔이 한 개만 나온다" 로 드러난 자리다.**
+   *    모델이 호텔마다 다른 예약 페이지를 줘야 하는데, 검색 결과 페이지 하나를
+   *    여러 곳에 붙이면 주소 기준 판정에서 전부 같은 키가 되어 한 줄만 남는다.
+   *    항공권에서 이미 겪은 실패인데(dedupe.ts 주석) 호텔에서도 났다.
+   */
+  it('여러 호텔이 같은 목록 페이지를 가리켜도 접히지 않는다', () => {
+    const LIST = 'https://kr.trip.com/hotels/osaka-list';
+    const result = dedupe([
+      hotel({ name: '호텔 A', sourceUrl: LIST }),
+      hotel({ name: '호텔 B', sourceUrl: LIST }),
+      hotel({ name: '호텔 C', sourceUrl: LIST }),
+    ]);
+
+    expect(result.map((h) => h.name)).toEqual(['호텔 A', '호텔 B', '호텔 C']);
+  });
+
+  /** 그렇다고 원래 하던 일을 잃으면 안 된다 — 같은 호텔 페이지는 여전히 하나다. */
+  it('같은 호텔 페이지는 이름이 달라도 하나로 묶는다', () => {
+    const PAGE = 'https://kr.trip.com/hotels/osaka-detail-1/';
+    const result = dedupe([
+      hotel({ name: '호텔 그란비아 오사카', sourceUrl: PAGE }),
+      hotel({ name: 'Hotel Granvia Osaka', sourceUrl: PAGE }),
+    ]);
+
+    expect(result).toHaveLength(1);
+  });
+
+  it('주소가 없으면 이름으로 판정한다', () => {
+    const result = dedupe([
+      hotel({ name: '호텔 A', sourceUrl: '' }),
+      hotel({ name: '호텔 A', sourceUrl: '' }),
+      hotel({ name: '호텔 B', sourceUrl: '' }),
+    ]);
+
+    expect(result.map((h) => h.name)).toEqual(['호텔 A', '호텔 B']);
+  });
+
+  /** 목록 페이지로 넘어간 뒤에도 표기 차이는 이름 정규화가 받는다. */
+  it('목록 페이지를 공유해도 같은 이름은 한 번만 남는다', () => {
+    const LIST = 'https://kr.trip.com/hotels/osaka-list';
+    const result = dedupe([
+      hotel({ name: '호텔 그란비아', sourceUrl: LIST }),
+      hotel({ name: '호텔그란비아', sourceUrl: LIST }),
+      hotel({ name: '칸데오 호텔', sourceUrl: LIST }),
+      hotel({ name: '다이와 로이넷', sourceUrl: LIST }),
+    ]);
+
+    expect(result.map((h) => h.name)).toEqual(['호텔 그란비아', '칸데오 호텔', '다이와 로이넷']);
+  });
+
+  /**
+   * ⚠️ 한 주소에 이름이 **둘**이면 목록 페이지가 아니라 표기 차이로 본다.
+   *    한글과 영문은 문자열로 견줄 수 없어 주소가 유일한 다리다.
+   */
+  it('이름이 둘뿐이면 같은 호텔의 표기 차이로 본다', () => {
+    const PAGE = 'https://kr.trip.com/hotels/osaka-detail-1/';
+    const result = dedupe([
+      hotel({ name: '호텔 그란비아 오사카', sourceUrl: PAGE }),
+      hotel({ name: 'Hotel Granvia Osaka', sourceUrl: PAGE }),
+    ]);
+
+    expect(result).toHaveLength(1);
+  });
+});
