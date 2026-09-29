@@ -34,11 +34,11 @@ describe('POST /api/v1/kakao/router', () => {
 
   // ------------------------------------------------------------ 1차 필터
   it('여행과 무관한 잡담에는 도움말 카드를 주고 AI 를 아예 부르지 않는다', async () => {
-    const res = await post(ctx.app, kakaoPayload('@여행메이트 안녕 다들 뭐해?'));
+    const res = await post(ctx.app, kakaoPayload('@가자고 안녕 다들 뭐해?'));
 
     expect(res.status).toBe(201);
     const card = listCardOf(res.body);
-    expect(card.header.title).toContain('여행메이트');
+    expect(card.header.title).toContain('가자고');
     expect(card.items).toHaveLength(3);
     // ⚠️ 오류 문구를 쓰지 않는다. 인사말까지 오류로 취급하면 단톡방이 딱딱해진다.
     expect(JSON.stringify(res.body)).not.toMatch(/잘못|오류|실패/);
@@ -237,7 +237,7 @@ describe('POST /api/v1/kakao/router', () => {
     expect(guide).toContain('다른 도시를 찾고 있나요?');
     // ⚠️ 멘션부터 적는다. 단톡방에서는 멘션 없는 발화가 봇에게 오지 않는다.
     //    나라와 상관없는 도시를 예로 들면 안내가 아니라 딴소리다.
-    expect(guide).toContain('「@여행메이트 TST 하롱베이 호텔 추천해줘」');
+    expect(guide).toContain('「@가자고 TST 하롱베이 호텔 추천해줘」');
     // ⚠️ 버튼으로는 입력창을 못 채운다. 문서에 없는 action 은 응답 전체를 죽인다.
     expect(outputs[1].textCard).toBeUndefined();
   });
@@ -318,8 +318,8 @@ describe('POST /api/v1/kakao/router', () => {
   it('멘션만 온 발화도 되묻기를 이어간다 — 버튼이 전송돼 버려도 대화가 안 끊긴다', async () => {
     await post(ctx.app, kakaoPayload('베트남 호텔 추천해줘'));
 
-    // "@여행메이트 " 버튼이 프리필 대신 전송된 경우. 멘션을 떼면 빈 발화가 된다.
-    const res = await post(ctx.app, kakaoPayload('@여행메이트'));
+    // "@가자고 " 버튼이 프리필 대신 전송된 경우. 멘션을 떼면 빈 발화가 된다.
+    const res = await post(ctx.app, kakaoPayload('@가자고'));
 
     expect(textOf(res.body)).toContain('베트남');
     expect(textOf(res.body)).toMatch(/도시 이름|어디로/);
@@ -331,7 +331,7 @@ describe('POST /api/v1/kakao/router', () => {
     const stranger = await post(ctx.app, kakaoPayload('다낭', { userKey: 'b' }));
 
     // B 는 되묻기를 받은 적이 없다. 그냥 도움말이 나가야 한다.
-    expect(listCardOf(stranger.body)?.header?.title).toContain('여행메이트');
+    expect(listCardOf(stranger.body)?.header?.title).toContain('가자고');
   });
 
   it('되묻기 상태여도 새 질문은 새 질문으로 받는다', async () => {
@@ -350,7 +350,7 @@ describe('POST /api/v1/kakao/router', () => {
     const res = await post(ctx.app, kakaoPayload('ㅋㅋㅋ 거기 어디였지?'));
 
     // 아무 말이나 지명으로 등록하면 places 가 쓰레기로 찬다.
-    expect(listCardOf(res.body)?.header?.title).toContain('여행메이트');
+    expect(listCardOf(res.body)?.header?.title).toContain('가자고');
   });
 
   // ---------------------------------------------------------- 실패 경로

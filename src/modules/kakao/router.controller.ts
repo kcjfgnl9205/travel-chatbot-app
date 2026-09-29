@@ -72,7 +72,7 @@ export class RouterController {
 
   @Post('router')
   @ApiOperation({
-    summary: '여행메이트 라우터 (유일한 진입점)',
+    summary: '가자고 라우터 (유일한 진입점)',
     description:
       '오픈빌더 **폴백 블록**이 호출한다. 블록이 하나도 없으므로 봇을 멘션한 모든 발화가 ' +
       '여기로 온다.\n\n' +
@@ -147,7 +147,7 @@ export class RouterController {
       if (cursor) return this.search.servePage(cursor.cacheKey, cursor.offset, req);
     }
 
-    // 2. 멘션만 있는 빈 발화 — "@여행메이트에게 말하기" 버튼이 (프리필 대신) 전송된 경우다.
+    // 2. 멘션만 있는 빈 발화 — "@가자고에게 말하기" 버튼이 (프리필 대신) 전송된 경우다.
     //    되묻던 중이었으면 그 흐름을 이어준다. 아니면 아래 1차 필터가 도움말을 준다.
     if (!req.utterance) {
       const waitingForCity = this.pending.take(req.userKey);

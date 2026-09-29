@@ -139,7 +139,7 @@ export function kakaoPayload(
   return {
     intent: { id: 'intent-1', name: '폴백 블록' },
     userRequest,
-    bot: { id: 'bot-1', name: '여행메이트 TST' },
+    bot: { id: 'bot-1', name: '가자고 TST' },
     action: {
       name: '폴백액션',
       clientExtra: opts.clientExtra ?? {},

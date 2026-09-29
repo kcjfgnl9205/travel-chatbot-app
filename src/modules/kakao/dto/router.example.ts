@@ -12,11 +12,11 @@ export const ROUTER_REQUEST_EXAMPLE = {
     timezone: 'Asia/Seoul',
     params: {},
     block: { id: '6a90f3a995f722d77d9fd0e6', name: '폴백 블록' },
-    utterance: '@여행메이트 오사카 호텔 4명 9월 22~24일 추천해줘',
+    utterance: '@가자고 오사카 호텔 4명 9월 22~24일 추천해줘',
     lang: 'kr',
     user: { id: 'u1', type: 'botUserKey', properties: { botUserKey: 'u1' } },
   },
-  bot: { id: '6a90f3a995f722d77d9fd0e6', name: '여행메이트 TST' },
+  bot: { id: '6a90f3a995f722d77d9fd0e6', name: '가자고 TST' },
   action: { name: '폴백액션', clientExtra: {}, params: {}, detailParams: {}, id: 'action-1' },
 };
 
@@ -46,7 +46,7 @@ export const HELP_RESPONSE_EXAMPLE = {
     outputs: [
       {
         listCard: {
-          header: { title: '여행메이트가 도와드릴 수 있는 것' },
+          header: { title: '가자고가 도와드릴 수 있는 것' },
           items: [
             { title: '🏨 호텔 찾기', description: '오사카 호텔 추천해줘' },
             { title: '✈️ 항공권 찾기', description: '오사카 항공권 찾아줘' },

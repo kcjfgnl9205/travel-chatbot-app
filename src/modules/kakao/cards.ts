@@ -61,7 +61,7 @@ export function placeQuickReplies(kind: SearchKind, exclude?: string | null): t.
  */
 export function helpCard(): t.Json {
   return t.listCard({
-    headerTitle: '여행메이트가 도와드릴 수 있는 것',
+    headerTitle: '가자고가 도와드릴 수 있는 것',
     items: [
       t.listItem({ title: '🏨 호텔 찾기', description: '오사카 호텔 추천해줘' }),
       t.listItem({ title: '✈️ 항공권 찾기', description: '오사카 항공권 찾아줘' }),

@@ -38,16 +38,19 @@ export interface KakaoSkillPayload {
 /**
  * 사용자가 친 문장. **봇 멘션은 떼어낸다.**
  *
- * ⚠️ 단톡방에서는 모든 발화가 "@여행메이트 ..." 로 시작한다. 그런데 봇 이름에
- *    **"여행" 이 들어 있어서** 멘션을 안 떼면 "@여행메이트 안녕 다들 뭐해?" 같은
- *    잡담이 1차 필터(TRAVEL_HINT)를 통과해 버린다. 인사말 한 줄이 모델 호출 한 번이
- *    되고, 그게 방 인원수만큼 곱해진다.
+ * 단톡방에서는 모든 발화가 "@가자고 ..." 로 시작한다. 멘션을 남겨두면 의도·지명
+ * 파서가 그 토큰까지 문장의 일부로 읽고, 멘션만 보낸 빈 발화를 가려낼 수도 없다.
+ *
+ * ⚠️ **봇 이름을 바꿀 때는 TRAVEL_HINT 와 겹치는지 보라.** 예전 이름 "여행메이트" 에는
+ *    "여행" 이 들어 있어서, 멘션을 떼기 전에는 "@여행메이트 안녕 다들 뭐해?" 같은
+ *    잡담이 1차 필터를 통과했다. 인사말 한 줄이 모델 호출 한 번이 되고, 그게 방
+ *    인원수만큼 곱해진다. "가자고" 는 걸리지 않지만, 떼는 일은 그대로 한다.
  */
 export function utteranceOf(p: KakaoSkillPayload): string {
   const raw = (p.userRequest?.utterance ?? '').trim();
   const botName = typeof p.bot?.name === 'string' ? p.bot.name.trim() : '';
 
-  // 봇 이름은 공백을 포함할 수 있다 ("여행메이트 TST"). 이름을 알면 그걸 먼저 떼고,
+  // 봇 이름은 공백을 포함할 수 있다 ("가자고 TST"). 이름을 알면 그걸 먼저 떼고,
   // 모르면 맨 앞의 @토큰 하나를 뗀다.
   let text = raw;
   if (botName && text.startsWith(`@${botName}`)) {
@@ -64,7 +67,7 @@ export function userKeyOf(p: KakaoSkillPayload): string {
   );
 }
 
-/** 봇 이름. 단톡방에서 "@여행메이트 다낭" 처럼 멘션을 안내할 때 쓴다. */
+/** 봇 이름. 단톡방에서 "@가자고 다낭" 처럼 멘션을 안내할 때 쓴다. */
 export function botNameOf(p: KakaoSkillPayload): string | null {
   const name = p.bot?.name;
   return typeof name === 'string' && name.trim() ? name.trim() : null;
