@@ -18,7 +18,8 @@ export class AttractionsRepository extends BaseRepository {
   protected readonly tableName = 'attractions';
 
   /** 관리 화면·카드가 함께 쓰는 컬럼. 여기 없는 값은 카드에 못 찍힌다. */
-  private static readonly COLUMNS = 'id, city_id, name, area, image_url, rank, source';
+  private static readonly COLUMNS =
+    'id, city_id, name, name_en, area, image_url, image_source, rank, source';
 
   constructor(supabase: SupabaseService) {
     super(supabase);
@@ -61,6 +62,7 @@ export class AttractionsRepository extends BaseRepository {
   async create(input: {
     cityId: number;
     name: string;
+    nameEn: string | null;
     area: string | null;
     imageUrl: string | null;
     rank: number;
@@ -71,6 +73,8 @@ export class AttractionsRepository extends BaseRepository {
           .insert({
             city_id: input.cityId,
             name: input.name,
+            // 카드에는 안 쓴다. 사진을 찾을 때만 쓰는 값이다.
+            name_en: input.nameEn,
             area: input.area,
             image_url: input.imageUrl,
             rank: input.rank,
@@ -117,13 +121,15 @@ export class AttractionsRepository extends BaseRepository {
    */
   async insertMany(
     cityId: number,
-    items: { name: string; area: string | null; rank: number }[],
+    items: { name: string; area: string | null; nameEn?: string | null; rank: number }[],
   ): Promise<number> {
     if (!items.length) return 0;
 
     const rows = items.map((item) => ({
       city_id: cityId,
       name: item.name,
+      // 카드에는 안 쓴다. 사진을 찾을 때만 쓰는 값이다.
+      name_en: item.nameEn ?? null,
       area: item.area,
       // 모델은 사진 주소를 지어낸다. 빈 채로 두고 운영이 나중에 넣는다.
       image_url: null,

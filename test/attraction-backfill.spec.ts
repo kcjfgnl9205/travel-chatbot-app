@@ -41,8 +41,11 @@ function build(
 
   const config = { ...loadConfig(), attractionBackfill: over.backfill ?? true } as never;
 
-  return { service: new AttractionBackfillService(config, openai, attractions), asked, inserted };
+  return { service: new AttractionBackfillService(config, openai, attractions, noImages), asked, inserted };
 }
+
+/** 사진 탐색은 여기 관심사가 아니다 — 목록을 채우는 것만 본다. */
+const noImages = { fillCity: async () => ({ filled: 0, missing: 0 }) } as never;
 
 describe('켜고 끄기', () => {
   it('끄면 아무것도 안 한다', async () => {
@@ -96,8 +99,8 @@ describe('채우기', () => {
     expect(result).toEqual({ inserted: 2, proposed: 2 });
     expect(inserted[0].cityId).toBe(42);
     expect(inserted[0].items).toEqual([
-      { name: '오사카성', area: '주오구', rank: 0 },
-      { name: '도톤보리', area: '난바', rank: 1 },
+      { name: '오사카성', area: '주오구', nameEn: null, rank: 0 },
+      { name: '도톤보리', area: '난바', nameEn: null, rank: 1 },
     ]);
   });
 
@@ -119,7 +122,7 @@ describe('채우기', () => {
       },
     } as never;
     const attractions = { enabled: true, listByCity: async () => [], insertMany: async () => 0 } as never;
-    const service = new AttractionBackfillService(loadConfig(), openai, attractions);
+    const service = new AttractionBackfillService(loadConfig(), openai, attractions, noImages);
 
     await expect(service.fill(1, '오사카')).resolves.toEqual({ inserted: 0, proposed: 0 });
   });
@@ -158,7 +161,7 @@ describe('모델 응답 다듬기', () => {
 
   it('이름이 없는 줄은 버린다', () => {
     expect(toProposals([{ name: '  ' }, { area: '주오구' }, { name: '오사카성' }], 20)).toEqual([
-      { name: '오사카성', area: null },
+      { name: '오사카성', area: null, nameEn: null },
     ]);
   });
 
@@ -168,8 +171,8 @@ describe('모델 응답 다듬기', () => {
   });
 
   it('area 는 없어도 된다', () => {
-    expect(toProposals([{ name: '오사카성', area: null }], 20)).toEqual([
-      { name: '오사카성', area: null },
+    expect(toProposals([{ name: '오사카성', area: null, nameEn: null }], 20)).toEqual([
+      { name: '오사카성', area: null, nameEn: null },
     ]);
   });
 });

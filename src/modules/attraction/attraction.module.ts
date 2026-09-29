@@ -5,6 +5,7 @@ import { PlacesModule } from '../places/places.module';
 import { RecommendationModule } from '../recommendation/recommendation.module';
 import { AttractionAdminController } from './attraction-admin.controller';
 import { AttractionBackfillService } from './attraction-backfill';
+import { AttractionImageService } from './attraction-image.service';
 import { AttractionService } from './attraction.service';
 import { ATTRACTION_PROVIDER } from './attraction.types';
 import { DbAttractionProvider } from './providers/db.provider';
@@ -23,6 +24,9 @@ import { DbAttractionProvider } from './providers/db.provider';
  * PlacesModule 은 관리 API 가 "오사카" 를 `places` 행으로 바꾸는 데 쓴다. 그 해석이
  * 검색 경로와 같아야 등록한 것이 카드에 보인다.
  *
+ * 사진은 [attraction-image.service.ts](./attraction-image.service.ts)가 위키미디어에서
+ * 찾는다. **모델에게 묻지 않는다** — 이미지 주소를 시키면 지어내기 때문이다.
+ *
  * `AttractionsRepository` 는 DatabaseModule 이 @Global 로 내보낸다.
  */
 @Module({
@@ -32,6 +36,7 @@ import { DbAttractionProvider } from './providers/db.provider';
     DbAttractionProvider,
     { provide: ATTRACTION_PROVIDER, useExisting: DbAttractionProvider },
     AttractionBackfillService,
+    AttractionImageService,
     AttractionService,
   ],
   exports: [AttractionService],

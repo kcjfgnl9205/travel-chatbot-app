@@ -20,6 +20,7 @@ import { ApiHeader, ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs
 import { text } from '../../common/parse';
 import { AppConfig, CONFIG } from '../../config/app.config';
 import { AttractionsRepository } from '../database/repositories/attractions.repository';
+import { AttractionImageService } from './attraction-image.service';
 import { PlacesService } from '../places/places.service';
 import { httpsOnly } from './providers/db.provider';
 import {
@@ -59,6 +60,7 @@ export class AttractionAdminController {
     @Inject(CONFIG) private readonly config: AppConfig,
     private readonly attractions: AttractionsRepository,
     private readonly places: PlacesService,
+    private readonly images: AttractionImageService,
   ) {}
 
   // ------------------------------------------------------------------ 읽기
@@ -112,6 +114,8 @@ export class AttractionAdminController {
     const row = await this.attractions.create({
       cityId: place.id,
       name,
+      // 카드에는 안 나간다 — 사진을 찾을 때만 쓴다.
+      nameEn: text(body.nameEn) || null,
       area: text(body.area) || null,
       imageUrl: this.checkedImage(body.imageUrl),
       rank: Number.isFinite(body.rank) ? Number(body.rank) : 0,
@@ -150,6 +154,7 @@ export class AttractionAdminController {
       if (!name) throw new BadRequestException('name 을 빈 값으로 바꿀 수 없다');
       patch.name = name;
     }
+    if (body.nameEn !== undefined) patch.name_en = text(body.nameEn) || null;
     if (body.area !== undefined) patch.area = text(body.area) || null;
     if (body.imageUrl !== undefined) patch.image_url = this.checkedImage(body.imageUrl);
     if (body.rank !== undefined) {
@@ -199,6 +204,35 @@ export class AttractionAdminController {
     const ids = Array.isArray(body?.ids) ? body.ids.map(Number).filter(Number.isFinite) : [];
     if (!ids.length) throw new BadRequestException('ids 가 필요하다');
     return { moved: await this.attractions.reorder(ids) };
+  }
+
+  @Post('images')
+  @ApiOperation({
+    summary: '한 도시에서 사진이 빈 관광지를 위키미디어로 채운다',
+    description:
+      '**비어 있는 칸만 채운다** — 사람이 골라 넣은 사진은 건드리지 않는다.\n\n' +
+      '한국어판 → 영어판 → 위키미디어 커먼즈 순으로 찾고, 찾은 문서 주소를 ' +
+      '`image_source` 에 같이 남긴다. ⚠️ 위키미디어 사진은 대부분 저작자 표시가 ' +
+      '필요한 라이선스라, 그 링크가 출처를 밝힐 유일한 단서다.\n\n' +
+      '⚠️ **전부 채워지지는 않는다.** 위키미디어에 사진이 없는 장소가 있다 — ' +
+      '지하상가·백화점처럼 관광지로 촬영된 적 없는 곳이 특히 그렇다. ' +
+      '카카오 listCard 는 이미지가 없는 줄을 사진 없이 그리므로 카드는 깨지지 않는다.\n\n' +
+      '⚠️ 느리다(빈 곳 하나당 최대 3회 조회). 관리 화면에서 도시 단위로 부른다.',
+  })
+  @ApiResponse({ status: 201, description: '채운 수와 못 채운 수' })
+  async fillImages(
+    @Body() body: { city?: string },
+    @Headers('x-debug-token') token?: string,
+  ): Promise<{ city: string; filled: number; missing: number }> {
+    this.authorize(token);
+    const place = await this.resolveCity(body?.city ?? '');
+    // 영어판·커먼즈 검색어에 쓸 도시명. 슬러그가 이미 영문이다 (ho-chi-minh → ho chi minh).
+    const result = await this.images.fillCity(
+      place.id,
+      place.canonicalName,
+      place.slug.replace(/-/g, ' '),
+    );
+    return { city: place.canonicalName, ...result };
   }
 
   // ------------------------------------------------------------------ 내부

@@ -62,6 +62,8 @@ export interface AppConfig {
   flightDefaultOriginCode: string;
 
   attractionCacheTtlMinutes: number;
+  attractionImages: boolean;
+  attractionImageTimeoutMs: number;
   attractionBackfill: boolean;
   attractionBackfillCount: number;
 
@@ -185,6 +187,11 @@ export function loadConfig(): AppConfig {
     // 아무도 안 넣은 도시를 모델이 채울지. 끄면 그 도시는 빈손으로 남는다.
     // ⚠️ 모델은 폐관한 곳을 그럴듯하게 섞는다. 채워진 행은 source='ai' 로 표시되니
     //    가끔 훑어보는 것을 전제로 켠다.
+    // 사진을 위키미디어에서 자동으로 찾을지. 끄면 사진은 관리 화면에서만 들어간다.
+    // ⚠️ 모델에게는 사진 주소를 묻지 않는다 — 지어내기 때문이다.
+    attractionImages: bool('ATTRACTION_IMAGES', true),
+    // 한 도시의 여러 곳을 동시에 찾는다. 하나가 늘어지면 전체가 그만큼 늦는다.
+    attractionImageTimeoutMs: Math.round(num('ATTRACTION_IMAGE_TIMEOUT_SECONDS', 3) * 1000),
     attractionBackfill: bool('ATTRACTION_BACKFILL', true),
     // 한 도시에 몇 곳을 채울지. RESULT_MAX_ITEMS(20)에 맞춘다 — 더 받아봐야
     // 저장은 되지만 카드로는 안 나가고, 모델이 억지로 채우면서 품질만 떨어진다.

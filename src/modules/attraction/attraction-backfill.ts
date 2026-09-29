@@ -3,6 +3,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { clip, text } from '../../common/parse';
 import { AppConfig, CONFIG } from '../../config/app.config';
 import { AttractionsRepository } from '../database/repositories/attractions.repository';
+import { AttractionImageService } from './attraction-image.service';
 import { OpenAiService, parseJsonLoose } from '../openai/openai.service';
 
 /**
@@ -25,13 +26,16 @@ import { OpenAiService, parseJsonLoose } from '../openai/openai.service';
  *    도시 하나에 $0.05~0.1 인데, 학습 지식만 쓰면 $0.002 다. 유명 관광지는 모델이
  *    이미 알고 있어서 차이가 그만큼 나지 않는다 — 대신 **최근에 생긴 곳은 모른다.**
  *
- * ⚠️ **사진은 채우지 않는다.** 모델에게 이미지 주소를 시키면 그럴듯한 CDN 주소를
- *    지어낸다(호텔에서 확인된 것 — `web_search` 는 텍스트만 준다). 사진 없는 줄로
- *    나가고, 운영이 나중에 관리 화면에서 넣는다.
+ * ⚠️ **모델에게 사진을 시키지 않는다.** 이미지 주소를 물으면 그럴듯한 CDN 주소를
+ *    지어낸다(호텔에서 확인된 것 — `web_search` 는 텍스트만 준다).
+ *    사진은 목록을 넣은 뒤 **위키미디어에서 찾는다**([attraction-image.service.ts]).
+ *    거기서도 못 찾으면 사진 없는 줄로 나가고, 운영이 관리 화면에서 넣는다.
  */
 
 const INSTRUCTIONS = [
   '너는 한국인 여행자를 위한 관광지 목록을 만드는 어시스턴트다.',
+  '영문명(name_en)은 **영어 위키백과에 실릴 만한 공식 표기**로 적는다 (오사카성 → Osaka Castle).',
+  '영문명을 모르면 지어내지 말고 null 로 둔다 — 틀린 영문명은 엉뚱한 사진을 물고 온다.',
   '주어진 도시에서 처음 가는 한국인 여행자가 갈 만한 곳을 추천 순서대로 JSON 으로만 답한다.',
   // 순서를 따로 시키지 않으면 유명세와 무관하게 섞여 나온다.
   '가장 유명하고 누구나 가는 곳을 앞에 둔다.',
@@ -58,12 +62,21 @@ export const BACKFILL_SCHEMA = {
         items: {
           type: 'object',
           additionalProperties: false,
-          required: ['name', 'area'],
+          required: ['name', 'area', 'name_en'],
           properties: {
             name: { type: 'string', description: '관광지 표준 한국어 표기' },
             area: {
               type: ['string', 'null'],
               description: '도시 안에서의 위치 (주오구, 난바). 모르면 null',
+            },
+            // ⚠️ **1차에 이 필드가 없으면 사진을 거의 못 찾는다.** 위키미디어 커먼즈의
+            //    파일명은 거의 영문이라 한국어로는 안 걸린다 (실측 4/14 → 11/14).
+            //    이건 사실 조회가 아니라 표기 변환이라 모델이 잘하는 일이다.
+            name_en: {
+              type: ['string', 'null'],
+              description:
+                '영어 위키백과·커먼즈에 실릴 만한 공식 영문명 (Osaka Castle). ' +
+                '카드에는 안 쓰고 사진 검색에만 쓴다. 모르면 지어내지 말고 null',
             },
           },
         },
@@ -74,6 +87,13 @@ export const BACKFILL_SCHEMA = {
 
 /** 로그에 남길 모델 원문 길이. */
 const LOG_TEXT = 200;
+
+/** 모델이 낸 관광지 한 곳. `nameEn` 은 카드에 안 쓰고 사진 검색에만 쓴다. */
+export interface AttractionProposal {
+  name: string;
+  area: string | null;
+  nameEn: string | null;
+}
 
 export interface BackfillResult {
   /** DB 에 실제로 들어간 수. 유니크 충돌로 빠진 것은 제외된다. */
@@ -99,6 +119,7 @@ export class AttractionBackfillService {
     @Inject(CONFIG) private readonly config: AppConfig,
     private readonly openai: OpenAiService,
     private readonly attractions: AttractionsRepository,
+    private readonly images: AttractionImageService,
   ) {}
 
   /** 끌 수 있다. 끄면 빈 도시는 빈 채로 남는다 (0009 의 동작). */
@@ -112,7 +133,7 @@ export class AttractionBackfillService {
    * ⚠️ 사람이 넣은 목록을 모델이 덮어쓰면 안 된다. 호출부가 "비었더라" 를 보고
    *    부르지만, 그 사이에 누가 넣었을 수 있으므로 여기서 다시 본다.
    */
-  async fill(cityId: number, cityName: string): Promise<BackfillResult> {
+  async fill(cityId: number, cityName: string, cityNameEn = ''): Promise<BackfillResult> {
     const none: BackfillResult = { inserted: 0, proposed: 0 };
     if (!this.enabled) return none;
 
@@ -145,6 +166,14 @@ export class AttractionBackfillService {
       this.logger.log(
         `backfill city=${cityName} proposed=${proposed.length} inserted=${inserted}`,
       );
+
+      // 사진은 모델이 못 채운다(주소를 지어낸다). 위키미디어에서 이어서 찾는다.
+      // ⚠️ 여기서 실패해도 목록은 이미 들어갔다 — 사진 없는 줄로 나갈 뿐이다.
+      if (inserted) {
+        await this.images
+          .fillCity(cityId, cityName, cityNameEn)
+          .catch((err) => this.logger.warn(`image fill failed city=${cityName} err=${err}`));
+      }
       return { inserted, proposed: proposed.length };
     } finally {
       this.filling.delete(cityId);
@@ -153,7 +182,7 @@ export class AttractionBackfillService {
 
   // ---------------------------------------------------------------- 내부
   /** 모델에게 목록을 받는다. 실패하면 빈 배열 — 도시는 빈 채로 남는다. */
-  private async ask(cityName: string): Promise<{ name: string; area: string | null }[]> {
+  private async ask(cityName: string): Promise<AttractionProposal[]> {
     try {
       const result = await this.openai.respond({
         instructions: INSTRUCTIONS,
@@ -190,12 +219,12 @@ export class AttractionBackfillService {
 export function toProposals(
   rows: unknown[],
   limit: number,
-): { name: string; area: string | null }[] {
-  const out: { name: string; area: string | null }[] = [];
+): AttractionProposal[] {
+  const out: AttractionProposal[] = [];
   const seen = new Set<string>();
 
   for (const raw of rows) {
-    const row = raw as { name?: unknown; area?: unknown } | null;
+    const row = raw as { name?: unknown; area?: unknown; name_en?: unknown } | null;
     const name = text(row?.name);
     if (!name) continue;
 
@@ -204,7 +233,7 @@ export function toProposals(
     if (seen.has(key)) continue;
     seen.add(key);
 
-    out.push({ name, area: text(row?.area) });
+    out.push({ name, area: text(row?.area), nameEn: text(row?.name_en) });
     if (out.length >= limit) break;
   }
   return out;

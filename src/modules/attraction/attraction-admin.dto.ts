@@ -24,7 +24,19 @@ export class AttractionBody {
   area?: string | null;
 
   @ApiPropertyOptional({
-    description: '카드 썸네일. **https 여야 한다** — 카카오는 http 이미지를 그리지 않는다',
+    description:
+      '영문·현지 공식명. **카드에는 안 나간다 — 사진을 찾는 데만 쓴다.** ' +
+      '위키미디어 커먼즈의 파일명은 거의 영문이라, 이 값이 없으면 사진을 거의 못 찾는다 ' +
+      '(후쿠오카 실측: 없이 4/14, 있으면 11/14)',
+    example: 'Osaka Castle',
+    nullable: true,
+  })
+  nameEn?: string | null;
+
+  @ApiPropertyOptional({
+    description:
+      '카드 썸네일. **https 여야 한다** — 카카오는 http 이미지를 그리지 않는다. ' +
+      '비워두면 POST /images 가 위키미디어에서 찾아 채운다',
     example: 'https://example.com/osaka-castle.jpg',
     nullable: true,
   })

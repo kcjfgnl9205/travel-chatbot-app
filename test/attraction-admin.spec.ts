@@ -49,10 +49,18 @@ function build(
   } as never;
   const places = { resolve: over.resolve ?? (async () => OSAKA) } as never;
   const config = { debugToken: 'token' in over ? over.token : TOKEN } as never;
+  const filled: { cityId: number; cityName: string; cityNameEn: string }[] = [];
+  const images = {
+    fillCity: async (cityId: number, cityName: string, cityNameEn: string) => {
+      filled.push({ cityId, cityName, cityNameEn });
+      return { filled: 3, missing: 1 };
+    },
+  } as never;
 
   return {
-    controller: new AttractionAdminController(config, attractions, places),
+    controller: new AttractionAdminController(config, attractions, places, images),
     patches,
+    filled,
   };
 }
 
@@ -99,6 +107,8 @@ describe('등록', () => {
     expect(created[0]).toEqual({
       cityId: 42,
       name: '오사카성',
+      // 카드에는 안 나간다 — 사진을 찾을 때만 쓰는 값이라 안 주면 null 이다.
+      nameEn: null,
       area: '주오구',
       imageUrl: 'https://cdn/a.jpg',
       rank: 0,
@@ -273,7 +283,8 @@ describe('목록', () => {
     } as never;
     const places = { resolve: async () => OSAKA } as never;
     const config = { debugToken: TOKEN } as never;
-    const controller = new AttractionAdminController(config, attractions, places);
+    const images = { fillCity: async () => ({ filled: 0, missing: 0 }) } as never;
+    const controller = new AttractionAdminController(config, attractions, places, images);
 
     await controller.list('오사카', TOKEN, 'ai');
     await controller.list('오사카', TOKEN, '이상한값');
