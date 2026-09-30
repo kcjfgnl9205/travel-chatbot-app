@@ -7,9 +7,10 @@
 
 > ## ⚠️ 라우터 재설계로 테이블이 늘었다
 >
-> 이 문서가 설명하는 6개(`users` · `messages` · `recommendations` · `recommendation_items` ·
-> `affiliate_links` · `search_cache`)는 그대로 있고, 노출·클릭 추적은 하나도 바뀌지 않았다.
-> 다만 **검색 캐시가 `search_cache` → `search_results` 로 옮겨갔고**, 지역 마스터가 생겼다:
+> 이 문서가 설명하는 것 중 다섯(`users` · `messages` · `recommendations` ·
+> `recommendation_items` · `affiliate_links`)은 그대로 있고, 노출·클릭 추적도 하나도
+> 바뀌지 않았다. 다만 **검색 캐시가 `search_cache` → `search_results` 로 옮겨갔고**
+> (0013 이 빈 쪽을 지웠다), 지역 마스터가 생겼다:
 >
 > | 새 테이블 | 하는 일 |
 > |---|---|
@@ -19,18 +20,19 @@
 > | `intent_cache` | 같은 문장 재파싱 방지 (7일) |
 >
 > 정의는 [`0004_router.sql`](../supabase/migrations/0004_router.sql), 설계 의도는 [ROUTER.md](ROUTER.md).
-> `search_cache` 는 이제 코드가 읽지 않는다 (롤백용으로 남겨뒀다).
+> `search_cache` 는 **0013 에서 지웠다** — 0004 이후로 코드가 한 번도 읽지 않았다.
 
 
 ---
 
 ## 1. 한눈에
 
-테이블 6개. **전부 코드가 실제로 읽고 쓴다** — 빈 껍데기는 두지 않는다.
+테이블 10개. **전부 코드가 실제로 읽고 쓴다** — 빈 껍데기는 두지 않는다
+(0013 이 아무도 안 읽던 셋을 지웠다).
 
 | 그룹 | 테이블 | 성격 |
 |---|---|---|
-| **캐시** | `search_cache` | 검색 결과. AI/크롤링 재호출을 막아 비용·지연을 줄인다 |
+| **캐시** | `search_results` | 검색 결과 20건 + TTL + 선점. `search_cache` 를 대신한다 |
 | | `affiliate_links` | 애드픽 링크. API 분당 60회 제한이라 한 번 만든 건 재사용한다 |
 | **행동 로그** | `users`, `messages`, `recommendations`, `recommendation_items` | 요청마다 쌓임. 노출과 클릭이 한 행에 있다 |
 
@@ -387,7 +389,7 @@ select source_url,
 from recommendation_items
 where domain = 'hotel'
 group by 1 order by ctr desc;
--- 가격·판매처까지 보려면 recommendation_item_hotels 를 join 한다.
+-- 가격·판매처도 같은 행에 있다 (0013). ⚠️ price 는 domain 으로 뜻이 갈린다.
 
 -- 줄 순서가 클릭에 미치는 영향 → 정렬 로직 튜닝 근거
 select position,
@@ -452,10 +454,7 @@ from affiliate_links;
 recommendation_items                 id · recommendation_id · domain · position
                                      click_id · item_name · source_url · target_url
                                      click_count · first/last_clicked_at · created_at
-  ├─ recommendation_item_hotels      star_rating · review_score · price_per_night
-  │                                  merchant · affiliate_link_id · image_url
-  └─ recommendation_item_flights     airline · stops · cabin · duration_minutes
-                                     price_total · merchant · affiliate_link_id
+                                     price · merchant · image_url · affiliate_link_id
 ```
 
 위성 테이블은 `item_id` 가 곧 기본키이자 외래키다 (노출 1건당 0 또는 1행).
@@ -466,10 +465,15 @@ recommendation_items                 id · recommendation_id · domain · positi
 `merchant` · `affiliate_link_id` 가 늘 null 이었고, 항공권 행에는 `thumbnail_url` 이
 늘 null 이었다.
 
-> ⚠️ **`price_from` 은 이름까지 갈랐다** (`price_per_night` / `price_total`). 호텔은
-> 1박 최저가, 항공권은 1인 총액이라 **같은 칸에 있으면 안 되는 값**이었다. 0003 이
-> "domain 없이 평균을 내면 안 된다" 고 경고로만 막고 있었는데, 테이블이 갈리면 경고가
-> 필요 없다.
+> ⚠️ **0013 이 도로 합쳤다.** 위 그림은 0007~0012 의 모양이다. 관광지가 빠지고(0012)
+> 남은 값이 이름·링크·사진·가격·클릭 수뿐이 되면서, 위성 테이블 둘이 남긴 것은
+> 조인 하나와 노출마다 insert 두 번이었다. 읽는 쪽 없는 칸(성급·리뷰점수·경유·
+> 좌석등급·비행시간) 때문에 그걸 계속 낼 이유가 없어서 전부 공통 테이블로 올렸다.
+>
+> **`price` 는 호텔 1박가와 항공권 1인 총액이 한 칸에 들어간다.** 0007 이 이름까지
+> 갈라뒀던(`price_per_night` / `price_total`) 이유 자체는 여전히 맞다 —
+> **domain 없이 평균을 내면 안 된다.** 칸 하나를 줄이는 대신 그 책임이 읽는 쪽으로
+> 옮겨간 것이고, 아래 집계 예시는 전부 domain 을 걸어 적어뒀다.
 
 > **왜 공통 테이블을 아예 없애지 않았나** — `click_id` · `target_url` · `click_count`
 > **셋은 반드시 한 테이블에 같이 있어야 한다.** `/r/{clickId}` 요청이 들고 오는 건
@@ -512,20 +516,19 @@ from attractions
 where impression_count >= 50 and click_count = 0
 order by impression_count desc;
 
--- 항공권: 직항이 경유보다 얼마나 눌리나
-select f.stops,
-       count(*)                                  as 노출,
-       count(*) filter (where i.click_count > 0) as 클릭된줄
-from recommendation_items i
-join recommendation_item_flights f on f.item_id = i.id
+-- 항공권: 가격대별로 눌리나 (경유·좌석등급은 0013 에서 칸이 사라졌다)
+select width_bucket(price, 0, 1000000, 10) * 100000 as 가격대,
+       count(*)                                as 노출,
+       count(*) filter (where click_count > 0) as 클릭된줄
+from recommendation_items
+where domain = 'flight' and price is not null
 group by 1 order by 1;
 
 -- 수익화 누수 — 제휴를 타는 두 도메인만 본다 (관광지는 애초에 대상이 아니다)
-select 'hotel' as domain, count(*) as 변환실패_노출
-  from recommendation_item_hotels where affiliate_link_id is null
-union all
-select 'flight', count(*)
-  from recommendation_item_flights where affiliate_link_id is null;
+select domain, count(*) as 변환실패_노출
+  from recommendation_items
+ where domain in ('hotel', 'flight') and affiliate_link_id is null
+ group by domain;
 
 -- 도메인별 CTR · 줄 순서의 영향 (위성 테이블 없이 공통만으로 된다)
 select domain, position,

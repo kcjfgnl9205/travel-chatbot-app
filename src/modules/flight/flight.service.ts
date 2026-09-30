@@ -118,17 +118,11 @@ export class FlightService implements SearchDomain<Flight> {
         sourceUrl: flight.sourceUrl,
         title: listRowTitle(flight),
         description: listRowDescription(flight),
-        // 카드 한 줄로 합쳐져 버리는 값들. 직항이 경유보다 얼마나 눌리는지는
-        // 이 칸이 없으면 영영 못 본다 (label 에서 되파싱할 수는 없다).
-        // 가격은 **1인 총액**이다 — 호텔의 1박가와 섞이지 않게 이름을 갈랐다.
-        detail: {
-          airline: flight.airline,
-          stops: flight.stops,
-          cabin: flight.cabin,
-          duration_minutes: flight.durationMinutes,
-          price_total: flight.priceFrom,
-          merchant: flight.merchant,
-        },
+        // ⚠️ **1인 총액**이다. 호텔은 같은 칸에 1박가를 넣으므로 집계에 domain 을
+        //    걸어야 한다 (0013). 웹 검색으로 얻은 예상가이지 확정 운임이 아니다.
+        price: flight.priceFrom,
+        merchant: flight.merchant,
+        // 항공권 카드에는 이미지가 없다 — imageUrl 을 안 넘기면 image_url 은 null 이다.
       })),
       ctx,
       { provider: this.provider.name, links },

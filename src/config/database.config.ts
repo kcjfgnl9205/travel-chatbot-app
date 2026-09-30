@@ -22,8 +22,8 @@ export const supabaseClientOptions = {
  *    그래서 "코드는 새 버전인데 스키마는 옛 버전" 이 언제든 생길 수 있고,
  *    그걸 가장 먼저 알려주는 자리가 여기다. 테이블을 추가하면 여기도 추가한다.
  *
- * search_cache(0001)는 뺐다 — 라우터 이후로는 읽지 않는다. 안 쓰는 테이블을 찌르면
- * 누가 지웠을 때 멀쩡한 서버가 고장으로 보고된다.
+ * 0013 이 테이블 셋을 지웠다 — search_cache(0001, 0004 부터 아무도 안 읽었다)와
+ * 노출 위성 테이블 둘(recommendation_item_hotels/flights, 값이 공통 테이블로 올라갔다).
  */
 export const EXPECTED_TABLES = [
   // 0001~0003

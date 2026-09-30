@@ -277,17 +277,20 @@ flight:{출발 place_id}>{도착 place_id}:{rt|ow}
 
 ## 8. DB 에 남는 것
 
-노출 한 줄은 호텔과 같은 공통 테이블에 들어가고, 항공권 고유 값은 `recommendation_item_flights` 로 간다 (0007).
+노출 한 줄은 호텔과 **같은 테이블 같은 칸**에 들어간다. 0007 이 도메인별 위성 테이블로 갈라뒀던 것을 0013 이 도로 합쳤다.
 
 | 컬럼 | 호텔 | 항공권 |
 |---|---|---|
 | `recommendations.city_slug` | 도시 | **도착지** |
 | `recommendation_items.item_name` | 항목명 | **`대한항공 KE723 ICN→KIX`** |
-| 가격 | `..._hotels.price_per_night` (1박) | `..._flights.price_total` (**1인 총액**) |
-| 썸네일 | `..._hotels.image_url` | 칸이 없다 (카드에 이미지가 없다) |
-| 항공권 고유 | — | `airline` · `stops` · `cabin` · `duration_minutes` |
+| `recommendation_items.price` | 1박 최저가 | **1인 총액** |
+| `recommendation_items.image_url` | 예약 페이지 썸네일 | 항상 null (카드에 이미지가 없다) |
 
-담기는 건 "노출된 항목의 이름"이다. 나중에 로그에서 알아볼 수 있게 항공사·편명·구간을 합쳐 넣는다 (0007 전에는 `hotel_name` 이었다).
+> ⚠️ **`price` 는 두 도메인이 뜻이 다른 값을 한 칸에 넣는다.** 가르는 것은 `domain` 뿐이니 집계할 때 반드시 걸어야 한다. 0013 이 칸을 줄이면서 그 책임이 읽는 쪽으로 옮겨갔다.
+
+> `airline` · `stops` · `cabin` · `duration_minutes` 는 0013 에서 **사라졌다.** 카드에는 여전히 찍히지만(그 값은 `search_results` 에서 온다) DB 에서 읽는 코드가 없었다.
+
+담기는 건 "노출된 항목의 이름"이다. 나중에 로그에서 알아볼 수 있게 항공사·편명·구간을 합쳐 넣는다.
 
 ---
 

@@ -30,25 +30,20 @@ function fakes() {
   const recommendations = {
     create: async () => ({ id: 'rec-1' }),
   } as never;
-  const details: { table: string; rows: Record<string, unknown>[] }[] = [];
   const items = {
     createMany: async (rows: Record<string, unknown>[]) => {
       inserted.push(rows);
       return rows;
     },
-    createDetails: async (table: string, rows: Record<string, unknown>[]) => {
-      details.push({ table, rows });
-      return rows;
-    },
   } as never;
-  return { inserted, details, recommendations, items };
+  return { inserted, recommendations, items };
 }
 
 function build(over: Partial<AppConfig> = {}) {
-  const { inserted, details, recommendations, items } = fakes();
+  const { inserted, recommendations, items } = fakes();
   const memory = new MemoryStoreService();
   const service = new RecommendationRowsService(config(over), recommendations, items, memory);
-  return { service, inserted, details, memory };
+  return { service, inserted, memory };
 }
 
 const CTX: RenderContext = {
@@ -84,8 +79,8 @@ describe('노출 기록 + 클릭 링크 발급', () => {
     expect(link.endsWith(String(inserted[0][0].click_id))).toBe(true);
   });
 
-  // ------------------------------------------------------- 도메인별 위성 테이블
-  describe('도메인별로 남는 값', () => {
+  // ------------------------------------------------------------- 한 행에 다 담는다
+  describe('노출 한 건이 곧 한 행이다', () => {
     it('공통 행에 domain 이 박힌다 — 집계할 때 부모를 조인하지 않으려고', async () => {
       const { service, inserted } = build();
 
@@ -94,73 +89,50 @@ describe('노출 기록 + 클릭 링크 발급', () => {
       expect(inserted[0][0].domain).toBe('hotel');
     });
 
-    it('도메인 고유 값은 그 도메인 테이블로 간다', async () => {
-      const { service, inserted, details } = build();
+    /**
+     * 0007 이 갈라뒀던 값들이 0013 에서 공통 테이블로 올라왔다.
+     * **위성 insert 가 더 없다** — 노출 한 건에 쓰기 한 번이다.
+     */
+    it('가격·판매처·사진이 같은 행에 들어간다', async () => {
+      const { service, inserted } = build();
 
       await service.render(
-        [item({ detail: { star_rating: 4, review_score: 8.7, price_per_night: 120000 } })],
+        [item({ price: 120000, merchant: 'trip', imageUrl: 'https://img/h.jpg' })],
         CTX,
         { provider: 'openai' },
       );
 
-      expect(details).toHaveLength(1);
-      expect(details[0].table).toBe('recommendation_item_hotels');
-      expect(details[0].rows[0]).toEqual({
-        // 공통 행과 같은 id 를 가리켜야 조인이 된다.
-        item_id: inserted[0][0].id,
-        star_rating: 4,
-        review_score: 8.7,
-        price_per_night: 120000,
+      expect(inserted).toHaveLength(1);
+      expect(inserted[0][0]).toMatchObject({
+        price: 120000,
+        merchant: 'trip',
+        image_url: 'https://img/h.jpg',
       });
     });
 
-    it('항공권은 항공권 테이블로 간다', async () => {
-      const { service, details } = build();
+    /**
+     * ⚠️ **같은 칸에 뜻이 다른 값이 들어간다** — 호텔 1박가 / 항공권 1인 총액.
+     *    0013 이 두 칸을 합치면서 생긴 성질이라, 가르는 것은 domain 뿐이다.
+     */
+    it('항공권 총액도 같은 price 칸에 들어간다 — 구별은 domain 이 한다', async () => {
+      const { service, inserted } = build();
       const ctx = { ...CTX, meta: { ...CTX.meta, kind: 'flight' as const } };
 
-      await service.render([item({ detail: { airline: '대한항공', stops: 1 } })], ctx, {
+      await service.render([item({ price: 210000 })], ctx, {
         provider: 'openai',
         links: new Map(),
       });
 
-      expect(details[0].table).toBe('recommendation_item_flights');
+      expect(inserted[0][0]).toMatchObject({ domain: 'flight', price: 210000 });
     });
 
-    /** AI 결과는 필드가 비어 오는 게 흔하다. 전부 null 인 행을 남길 이유가 없다. */
-    it('빈 값은 칼럼째로 빠진다', async () => {
-      const { service, details } = build();
+    /** AI 결과는 필드가 비어 오는 게 흔하다. 빈 칸은 null 이지 행이 사라지지 않는다. */
+    it('값이 없어도 칸은 null 로 남는다', async () => {
+      const { service, inserted } = build();
 
-      await service.render(
-        [item({ detail: { price_per_night: null, review_score: undefined, merchant: 'agoda' } })],
-        CTX,
-        { provider: 'openai' },
-      );
+      await service.render([item()], CTX, { provider: 'openai' });
 
-      expect(details[0].rows[0]).toEqual({
-        item_id: expect.any(String),
-        merchant: 'agoda',
-      });
-    });
-
-    /** ⚠️ 직항이 0 이다. 빈 값이라고 지우면 "직항" 이라는 정보가 통째로 사라진다. */
-    it('0 과 false 는 값이므로 남는다', async () => {
-      const { service, details } = build();
-
-      await service.render([item({ detail: { stops: 0, free: false } })], CTX, {
-        provider: 'openai',
-      });
-
-      expect(details[0].rows[0]).toMatchObject({ stops: 0, free: false });
-    });
-
-    it('남길 값이 하나도 없으면 위성 행을 아예 안 만든다', async () => {
-      const { service, details } = build();
-
-      await service.render([item(), item({ detail: { merchant: null } })], CTX, {
-        provider: 'openai',
-      });
-
-      expect(details).toHaveLength(0);
+      expect(inserted[0][0]).toMatchObject({ price: null, merchant: null, image_url: null });
     });
   });
 
@@ -175,17 +147,9 @@ describe('노출 기록 + 클릭 링크 발급', () => {
       const row = inserted[0][0];
       expect(row.target_url).toBe(MAP_URL);
       expect(row.source_url).toBe(MAP_URL);
-      // 공통 테이블에는 제휴 칸이 없다. 위성 행에도 안 붙는다 — 남길 값이 하나도
-      // 없으면 위성 행 자체가 안 생긴다.
-      expect(row).not.toHaveProperty('affiliate_link_id');
-    });
-
-    it('제휴 칸을 위성 행에도 만들지 않는다', async () => {
-      const { service, details } = build();
-
-      await service.render([item({ detail: { merchant: 'agoda' } })], CTX, { provider: 'openai' });
-
-      expect(details[0].rows[0]).not.toHaveProperty('affiliate_link_id');
+      // 변환을 안 타는 도메인이라 칸은 null 이다. **"타는데 실패했다"(도 null)와
+      // 구별되는 건 links 를 넘겼는지뿐이고, 그건 경고 여부로 갈린다** (아래 테스트).
+      expect(row.affiliate_link_id).toBeNull();
     });
 
     it('변환 실패로 세지 않는다 — 변환할 게 애초에 없다', async () => {
@@ -203,11 +167,10 @@ describe('노출 기록 + 클릭 링크 발급', () => {
   describe('제휴 변환을 다루는 도메인', () => {
     const BOOKING = 'https://kr.trip.com/hotels/osaka-detail-1/';
     const hotel = item({ label: '호텔 A', sourceUrl: BOOKING, title: '호텔 A' });
-    /** 도메인이 곧 위성 테이블이라 여기서는 호텔 맥락이어야 한다. */
     const HOTEL_CTX = { ...CTX, meta: { ...CTX.meta, kind: 'hotel' as const } };
 
     it('변환된 링크가 목적지가 되고 affiliate_link_id 가 남는다', async () => {
-      const { service, inserted, details } = build();
+      const { service, inserted } = build();
       const links = new Map<string, ResolvedLink>([
         [
           BOOKING,
@@ -227,26 +190,23 @@ describe('노출 기록 + 클릭 링크 발급', () => {
       expect(row.target_url).toBe('https://link.adpick.co.kr/abcd');
       // 원본은 DB 에만 남는다 — 사용자에게 나가는 건 리다이렉트뿐이다.
       expect(row.source_url).toBe(BOOKING);
-      // 제휴 링크는 그 도메인 테이블로 간다. 공통에는 칸이 없다.
-      expect(row).not.toHaveProperty('affiliate_link_id');
-      expect(details[0].table).toBe('recommendation_item_hotels');
-      expect(details[0].rows[0]).toMatchObject({ affiliate_link_id: 'link-1' });
+      expect(row.affiliate_link_id).toBe('link-1');
     });
 
     /**
-     * ⚠️ 변환 실패는 **행이 없는 게 아니라 null 이어야** 알아볼 수 있다 —
-     * "변환할 게 없던 도메인" 과 "변환하려다 실패한 노출" 이 DB 에서 갈려야 한다.
+     * ⚠️ 변환 실패는 **행이 사라지는 게 아니라 null 로 남아야** 세어볼 수 있다.
+     *    그 노출은 수수료가 0 인데, 행까지 없으면 "수익화 누수" 집계에서 통째로
+     *    빠진다 — 찾으려던 것만 안 보이게 된다.
      */
-    it('변환 실패는 위성 행에 null 로 남는다', async () => {
-      const { service, details } = build();
+    it('변환 실패는 null 로 남는다 — 행이 사라지지 않는다', async () => {
+      const { service, inserted } = build();
 
       await service.render([hotel], HOTEL_CTX, {
         provider: 'openai',
         links: new Map<string, ResolvedLink>(),
       });
 
-      expect(details[0].table).toBe('recommendation_item_hotels');
-      expect(details[0].rows[0]).toHaveProperty('affiliate_link_id', null);
+      expect(inserted[0][0]).toHaveProperty('affiliate_link_id', null);
     });
 
     it('빈 Map 은 "변환을 못 했다" 이므로 경고를 남긴다', async () => {

@@ -39,21 +39,7 @@ export abstract class BaseRepository {
     build: (table: NonNullable<ReturnType<BaseRepository['table']>>) => Builder<T>,
     op = 'query',
   ): Promise<Row[] | null> {
-    return this.runOn(this.tableName, build, op);
-  }
-
-  /**
-   * 이 저장소가 맡은 테이블이 **아닌** 곳에 쓴다.
-   *
-   * 노출 1건이 공통 테이블(recommendation_items)과 도메인 테이블 두 곳에 나뉘어
-   * 들어가는데, 그 둘을 저장소 두 개로 가르면 호출부가 "어느 도메인이면 어느
-   * 저장소" 를 알아야 한다. 같은 한 번의 기록이므로 한 저장소가 다 맡는다.
-   */
-  protected async runOn<T = Row[]>(
-    tableName: string,
-    build: (table: NonNullable<ReturnType<BaseRepository['table']>>) => Builder<T>,
-    op = 'query',
-  ): Promise<Row[] | null> {
+    const tableName = this.tableName;
     const table = this.table(tableName);
     if (!table) return null;
 

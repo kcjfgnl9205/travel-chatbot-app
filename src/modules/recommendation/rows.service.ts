@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 
 import { AppConfig, CONFIG, redirectUrl } from '../../config/app.config';
 import { applySubid } from '../adpick/adpick.service';
@@ -10,7 +10,7 @@ import {
   RecommendationsRepository,
 } from '../database/repositories/recommendations.repository';
 import * as t from '../kakao/templates';
-import { RenderContext, SearchKind } from '../search/search.types';
+import { RenderContext } from '../search/search.types';
 
 /**
  * 한 페이지를 listCard 줄로 만들면서 **노출을 기록하고 클릭 링크를 발급한다.**
@@ -46,27 +46,18 @@ export interface ItemRow {
   sourceUrl: string;
   title: string;
   description: string | null;
-  /**
-   * 카드 썸네일. **DB 에는 여기서 안 넣는다** — 썸네일이 있는 도메인(호텔·관광지)이
-   * 자기 `detail.image_url` 로 따로 넣는다. 항공권 카드에는 이미지가 없다.
-   */
+  /** 카드 썸네일이자 `image_url` 스냅샷. 항공권 카드에는 이미지가 없어 비어 온다. */
   imageUrl?: string | null;
   /**
-   * 도메인별 위성 테이블에 남길 한 행 (recommendation_item_attractions 등).
+   * 노출 시점 가격(원).
    *
-   * **공통 테이블에는 세 도메인이 전부 쓰는 것만 남아 있다.** 가격·판매처·제휴링크·
-   * 썸네일처럼 한두 도메인만 쓰던 값은 전부 여기로 내려왔다. 특히 가격은 호텔(1박
-   * 최저가)과 항공권(1인 총액)이 의미가 달라 컬럼 이름부터 갈라져 있다.
-   *
-   * ⚠️ **제휴 링크(affiliate_link_id)는 여기 넣지 않는다.** 그건 도메인이 아니라
-   *    이 서비스가 해석해서 채운다 (아래 render 참고).
-   *
-   * ⚠️ **키는 DB 컬럼명(snake_case)이다.** 여기서 이름을 바꾸지 않고 그대로 넣는다 —
-   *    중간에 매핑을 두면 컬럼을 추가할 때마다 고칠 자리가 하나 더 생긴다.
-   * ⚠️ **읽을 계획이 있는 값만 넣는다.** 채우기만 하고 아무도 안 보는 칸은 나중에
-   *    값이 틀어져도 알 수가 없다.
+   * ⚠️ **domain 으로 의미가 갈린다** — hotel: 1박 최저가, flight: 1인 총액.
+   *    0013 이 두 칸을 하나로 합치면서 이름이 뜻을 안 들고 있게 됐으므로,
+   *    집계할 때 domain 을 거는 건 읽는 쪽 책임이다.
    */
-  detail?: Record<string, unknown>;
+  price?: number | null;
+  /** 판매처 (agoda | booking | trip …). */
+  merchant?: string | null;
 }
 
 export interface RenderOptions {
@@ -91,21 +82,6 @@ export interface StaticRow {
   linkUrl: string;
 }
 
-/**
- * 도메인별 상세가 들어가는 테이블.
- *
- * 공통 테이블은 하나이고 여기만 갈린다 — click_id·position·클릭 카운터는 두 도메인이
- * 똑같이 하는 일이라 쪼갤 이유가 없다 (0007 마이그레이션 주석 참고).
- *
- * ⚠️ **관광지가 여기 없다.** 0012 에서 노출 스냅샷을 그만두고 `attractions` 의
- *    카운터로 옮겼다 — 목록이 우리 테이블에 있어서 복원할 것이 없기 때문이다
- *    (아래 renderCounted 참고).
- */
-const DETAIL_TABLES: Partial<Record<SearchKind, string>> = {
-  hotel: 'recommendation_item_hotels',
-  flight: 'recommendation_item_flights',
-};
-
 @Injectable()
 export class RecommendationRowsService {
   private readonly logger = new Logger(RecommendationRowsService.name);
@@ -124,8 +100,6 @@ export class RecommendationRowsService {
     const recommendationId = await this.logRecommendation(ctx, opts.provider, items.length);
 
     const dbRows: Record<string, unknown>[] = [];
-    /** 위성 테이블에 들어갈 행. 상세가 하나도 없는 항목은 아예 안 만든다. */
-    const detailRows: Record<string, unknown>[] = [];
     const listItems: t.Json[] = [];
     /** 제휴 변환이 안 돼 원본 주소로 나가는 줄. 수익화가 안 되는 노출이다. */
     const unconverted: string[] = [];
@@ -146,23 +120,10 @@ export class RecommendationRowsService {
       //    달아봐야 아무도 읽지 않고 링크만 지저분해진다.
       const targetUrl = monetized ? applySubid(destination, clickId, this.config) : destination;
 
-      // id 를 DB 기본값에 맡기지 않고 여기서 만든다. 위성 행이 이 값을 가리켜야 하는데,
-      // insert 응답의 순서를 믿고 되짚는 것보다 미리 정해두는 쪽이 확실하다.
-      const itemId = randomUUID();
-      // 제휴 링크는 도메인이 아니라 여기서 해석한 값이라 이 자리에서 합친다.
-      // 변환을 다루지 않는 도메인(관광지)의 테이블에는 그 컬럼이 아예 없다.
-      const detail = compact(item.detail);
-      // ⚠️ **변환에 실패해도 null 을 적어 행을 남긴다.** 빈 값이라고 지우면 그 노출은
-      //    위성 행조차 없어서 "변환 실패한 노출" 집계에서 통째로 빠진다 — 수수료가
-      //    새는 지점을 찾으려고 세는 값인데 정작 샌 것만 안 보이게 된다.
-      if (monetized) detail.affiliate_link_id = link?.affiliateLinkId ?? null;
-      if (Object.keys(detail).length) detailRows.push({ item_id: itemId, ...detail });
-
       dbRows.push({
-        id: itemId,
         recommendation_id: recommendationId,
-        // 부모(recommendations)도 같은 값을 갖는다. 조인 없이 도메인별로 보고,
-        // 어느 위성 테이블에 상세가 있는지도 이 값이 가리킨다.
+        // 부모(recommendations)도 같은 값을 갖는다. 조인 없이 도메인별로 거른다.
+        // ⚠️ **price 의 의미도 이 값이 정한다** — hotel 1박가 / flight 총액.
         domain: ctx.meta.kind,
         position,
         // ⚠️ 이 셋은 한 테이블에 같이 있어야 한다. /r/{clickId} 가 click_id 하나로
@@ -171,6 +132,13 @@ export class RecommendationRowsService {
         target_url: targetUrl,
         source_url: item.sourceUrl,
         item_name: item.label,
+        price: item.price ?? null,
+        merchant: item.merchant ?? null,
+        image_url: item.imageUrl ?? null,
+        // ⚠️ **변환에 실패해도 null 을 적는다.** 제휴를 안 타는 도메인(undefined)과
+        //    "타는데 실패했다"(null)를 가르는 값이라, 실패를 안 적으면 수수료가 새는
+        //    노출이 집계에서 통째로 빠진다 — 찾으려던 것만 안 보이게 된다.
+        affiliate_link_id: monetized ? (link?.affiliateLinkId ?? null) : null,
       });
 
       // DB 가 없어도 리다이렉트가 동작하도록 인메모리에도 남긴다.
@@ -202,15 +170,7 @@ export class RecommendationRowsService {
       );
     }
 
-    if (recommendationId && dbRows.length) {
-      const saved = await this.items.createMany(dbRows);
-      const table = DETAIL_TABLES[ctx.meta.kind];
-      // 공통 행이 안 들어갔으면 위성도 넣지 않는다 — item_id 가 가리킬 행이 없어서
-      // 외래키 위반만 한 번 더 나고, 로그에 원인이 둘로 늘어난다.
-      if (saved && table && detailRows.length) {
-        await this.items.createDetails(table, detailRows);
-      }
-    }
+    if (recommendationId && dbRows.length) await this.items.createMany(dbRows);
     return listItems;
   }
 
@@ -274,22 +234,6 @@ export class RecommendationRowsService {
     });
     return (row?.id as string) ?? null;
   }
-}
-
-/**
- * 값이 있는 칼럼만 남긴다.
- *
- * AI 결과는 필드가 비어 오는 게 흔하다. 전부 null 인 행까지 위성 테이블에 넣으면
- * "이 노출은 상세가 없다" 와 "상세가 전부 비었다" 가 같은 뜻인데 행 수만 달라진다.
- *
- * ⚠️ **0 과 false 는 남긴다.** 항공권의 `stops: 0` 이 직항이라 비었다고 지우면
- *    "직항" 이라는 정보가 통째로 사라진다.
- */
-function compact(meta: Record<string, unknown> | undefined): Record<string, unknown> {
-  if (!meta) return {};
-  return Object.fromEntries(
-    Object.entries(meta).filter(([, value]) => value !== null && value !== undefined),
-  );
 }
 
 function newClickId(): string {
