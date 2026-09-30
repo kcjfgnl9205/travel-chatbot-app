@@ -25,10 +25,8 @@
 --
 -- **호텔·항공권은 그대로다.** 위 셋이 하나도 성립하지 않는다.
 --
--- ⚠️ **잃는 것 둘.** 누적 카운터라 "이번 달 인기 관광지" 같은 시계열이 안 나오고,
---    누가 눌렀는지도 안 남는다. 시계열이 필요해지면 `attraction_stats(attraction_id,
---    date, impressions, clicks)` 일별 버킷을 얹으면 된다 — 관광지 100곳이면 연 36,500행이라
---    노출마다 쌓는 것과는 자릿수가 다르다.
+-- ⚠️ **누적값이다.** 기간별로 쪼개지지 않고 누가 눌렀는지도 안 남는다. 지금 필요한
+--    것은 "어느 관광지가 많이 눌리나" 하나뿐이라 그걸로 충분하다.
 
 -- ------------------------------------------------------------------ 카운터
 alter table public.attractions
@@ -42,8 +40,7 @@ comment on column public.attractions.impression_count is
     '"100번 눌린 곳" 이 인기가 많은 건지 그냥 100번 노출된 건지 알 수 없다.';
 
 comment on column public.attractions.click_count is
-    '누적 클릭. `/a/{id}` 리다이렉트가 올린다. '
-    '⚠️ 누적값이라 기간별로 못 쪼갠다 (파일 머리말 참고).';
+    '누적 클릭. `/a/{id}` 리다이렉트가 올린다. 기간별로는 쪼개지지 않는다.';
 
 -- 인기순 조회 하나가 이 인덱스로 끝난다. 관리 API 가 쓴다.
 create index if not exists attractions_click_count_idx
