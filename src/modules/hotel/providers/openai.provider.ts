@@ -297,7 +297,7 @@ export class OpenAiHotelProvider
     const picks = await this.rank<RawPick>(query, candidates, trace);
     const normalized = this.toHotels(picks, query);
 
-    return done(await this.withThumbnails(normalized, trace), candidates);
+    return done(await this.withThumbnails(normalized, trace, query), candidates);
   }
 
   // ------------------------------------------------------------ 정규화
@@ -379,8 +379,19 @@ export class OpenAiHotelProvider
    * 콜백 경로에서만 도는 코드라 5초 예산과 무관하다. 결과는 검색 캐시에 같이
    * 저장되므로, 같은 도시를 다시 물어도 페이지를 또 읽지 않는다.
    */
-  private async withThumbnails(hotels: Hotel[], trace: SearchTrace): Promise<Hotel[]> {
-    if (!this.config.hotelThumbnails) return hotels;
+  private async withThumbnails(
+    hotels: Hotel[],
+    trace: SearchTrace,
+    query: HotelQuery,
+  ): Promise<Hotel[]> {
+    if (!this.config.hotelThumbnails) {
+      // 꺼져 있으면 카드에 사진이 하나도 안 나간다. 설정을 의심할 자리를 남긴다.
+      this.logger.log(`hotel thumbnails off (HOTEL_THUMBNAILS=false) hotels=${hotels.length}`);
+      return hotels;
+    }
+
+    /** 왜 못 붙였나. 개별 줄이 아니라 이걸로 진단한다 (아래 한 줄 요약). */
+    const failed: Record<string, number> = {};
 
     const resolved = hotels.map(async (hotel) => {
       // ① 모델이 준 주소 (거의 없다)
@@ -395,11 +406,12 @@ export class OpenAiHotelProvider
       }
 
       // ② 예약 페이지에서 긁는다
-      const found = await this.thumbnailFromPage(hotel.sourceUrl);
+      const found = await this.thumbnailFromPage(hotel.sourceUrl, failed);
       if (!found) return { ...hotel, thumbnailUrl: null };
 
       if (!(await isLiveImage(found.url))) {
         trace.droppedThumbnails += 1;
+        count(failed, 'notLive');
         this.logger.log(`page thumbnail not live hotel=${hotel.name} url=${found.url}`);
         return { ...hotel, thumbnailUrl: null };
       }
@@ -410,30 +422,64 @@ export class OpenAiHotelProvider
       return { ...hotel, thumbnailUrl: found.url };
     });
 
-    return Promise.all(resolved);
+    const withImages = await Promise.all(resolved);
+
+    // ⚠️ **한 줄로 남긴다.** 개별 줄(page unreadable / not live)은 호텔마다 하나씩이라
+    //    스무 곳이면 스무 줄을 세어봐야 "사진이 왜 없나" 를 알 수 있다. 실측으로는
+    //    사이트가 원인을 가른다 — trip.com 은 photo 층에서 잘 나오고, hotels.com(429)과
+    //    클룩(403)은 페이지를 아예 못 읽는다. hosts= 가 그걸 바로 보여준다.
+    const filled = withImages.filter((hotel) => hotel.thumbnailUrl).length;
+    if (filled < withImages.length) {
+      this.logger.warn(
+        `hotel thumbnails ${this.subjectOf(query)} hotels=${withImages.length} ` +
+          `filled=${filled} ${describe(failed)} ` +
+          `sources=${describe(trace.thumbnailSources) || '-'}`,
+      );
+    }
+    return withImages;
   }
 
-  /** 예약 페이지 HTML 을 (앞부분만) 읽어 대표 이미지를 뽑는다. 실패는 null. */
+  /**
+   * 예약 페이지 HTML 을 (앞부분만) 읽어 대표 이미지를 뽑는다. 실패는 null.
+   *
+   * ⚠️ **두 가지 실패를 갈라 센다.** "페이지를 못 읽었다"(차단·타임아웃)와 "읽었는데
+   *    사진이 없다"(추출 실패)는 손볼 데가 전혀 다르다 — 앞은 사이트 문제라 할 수
+   *    있는 게 별로 없고, 뒤는 추출기에 층을 하나 더 얹으면 된다.
+   */
   private async thumbnailFromPage(
     pageUrl: string,
+    failed: Record<string, number>,
   ): Promise<{ url: string; source: ThumbnailSource } | null> {
-    if (!pageUrl) return null;
+    if (!pageUrl) {
+      count(failed, 'noUrl');
+      return null;
+    }
     const html = await fetchHtml(
       pageUrl,
       this.config.hotelThumbnailTimeoutMs,
       this.config.hotelThumbnailMaxBytes,
     );
     if (!html) {
+      count(failed, `unreadable:${hostOf(pageUrl)}`);
       this.logger.log(`thumbnail page unreadable url=${pageUrl}`);
       return null;
     }
-    return extractThumbnail(html, pageUrl);
+    const found = extractThumbnail(html, pageUrl);
+    if (!found) count(failed, `noImage:${hostOf(pageUrl)}`);
+    return found;
   }
 }
 
 /** Record 카운터 증가. 층별 성공률을 보려고 쓴다. */
 function count(bucket: Record<string, number>, key: string): void {
   bucket[key] = (bucket[key] ?? 0) + 1;
+}
+
+/** 카운터를 로그 한 조각으로. 비어 있으면 빈 문자열이라 줄이 지저분해지지 않는다. */
+function describe(bucket: Record<string, number>): string {
+  return Object.entries(bucket)
+    .map(([key, n]) => `${key}=${n}`)
+    .join(' ');
 }
 
 /**
