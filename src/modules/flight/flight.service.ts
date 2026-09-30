@@ -15,12 +15,15 @@ import {
 import {
   FLIGHT_PROVIDER,
   Flight,
+  FlightOffer,
   FlightProvider,
   FlightQuery,
   flightKey,
-  isFlight,
-  listRowDescription,
-  listRowTitle,
+  isFlightOffer,
+  offerDescription,
+  offerLabel,
+  offerTitle,
+  toOffers,
 } from './flight.types';
 
 /**
@@ -54,7 +57,7 @@ export function dedupe(flights: Flight[], logger?: Logger): Flight[] {
 }
 
 @Injectable()
-export class FlightService implements SearchDomain<Flight> {
+export class FlightService implements SearchDomain<FlightOffer> {
   readonly kind = 'flight' as const;
   private readonly logger = new Logger(FlightService.name);
 
@@ -75,21 +78,38 @@ export class FlightService implements SearchDomain<Flight> {
     return this.provider.enabled !== false;
   }
 
-  /** ⚠️ 느리다(7~30초). 백그라운드에서만 부른다. */
-  async search(ctx: SearchContext): Promise<Flight[]> {
+  /**
+   * ⚠️ 느리다(7~30초). 백그라운드에서만 부른다.
+   *
+   * **저장되는 건 편이 아니라 플랫폼 줄이다.** 모델이 준 편들에서 시세·소요시간·
+   * 항공사를 뽑아 플랫폼별 한 줄로 접는다 — 편별로 한 줄씩 내면 줄마다 다른
+   * 편명·가격을 찍으면서 **링크는 전부 같은 검색 페이지로 갔다.**
+   */
+  async search(ctx: SearchContext): Promise<FlightOffer[]> {
     const flights = await this.provider.search(this.queryOf(ctx));
-    return dedupe(flights, this.logger).slice(0, ctx.limit);
+    // 편 단위 중복은 여기서 접는다 — 같은 편이 두 번 들어오면 시세 폭이 왜곡된다.
+    const unique = dedupe(flights, this.logger);
+    const offers = toOffers(unique, this.queryOf(ctx).tripType);
+
+    this.logger.log(
+      `flight result ${ctx.place.canonicalName} flights=${flights.length} ` +
+        `unique=${unique.length} offers=${offers.length}`,
+    );
+    return offers.slice(0, ctx.limit);
   }
 
-  isItem(item: unknown): item is Flight {
-    return isFlight(item);
+  isItem(item: unknown): item is FlightOffer {
+    return isFlightOffer(item);
   }
 
-  headerTitle(meta: SearchMeta, count: number, start: number): string {
+  /**
+   * 카드 머리글. **시세를 여기 적는다** — 줄마다 반복하면 40자를 다 먹는다.
+   *
+   * 줄이 플랫폼 두세 개뿐이라 "몇 번째" 를 셀 일이 없다.
+   */
+  headerTitle(meta: SearchMeta, _count: number, _start: number): string {
     const route = `${meta.fromName ?? this.config.flightDefaultOriginName}→${meta.placeName}`;
-    return start
-      ? `${route} 항공권 ${start + 1}~${start + count}번째`
-      : `${route} 항공권 ${count}편`;
+    return `${route} 항공권`;
   }
 
   moreText(meta: SearchMeta): string {
@@ -100,28 +120,32 @@ export class FlightService implements SearchDomain<Flight> {
     return cards.placeQuickReplies('flight', meta.placeName);
   }
 
-  async rows(flights: Flight[], ctx: RenderContext): Promise<t.Json[]> {
+  /**
+   * 줄 하나가 **플랫폼 하나**다.
+   *
+   * ⚠️ 편별로 줄을 내던 때는 줄마다 다른 편명·시각·가격을 찍으면서 링크는 전부
+   *    같은 검색 페이지로 갔다. 이제 보내는 곳이 곧 줄의 제목이라 어긋날 자리가 없다.
+   */
+  async rows(offers: FlightOffer[], ctx: RenderContext): Promise<t.Json[]> {
     // 원본 주소 → 애드픽 커미션 링크. 캐시에 있으면 API 를 안 탄다.
-    // 항공권은 여러 편이 같은 주소를 공유하므로 변환 호출 수가 줄 수보다 적다.
     const links =
       ctx.links ??
       (await this.affiliate.resolve(
-        flights
-          .filter((f) => f.sourceUrl)
-          .map((f) => ({ sourceUrl: f.sourceUrl, merchant: f.merchant })),
+        offers
+          .filter((o) => o.sourceUrl)
+          .map((o) => ({ sourceUrl: o.sourceUrl, merchant: o.merchant })),
       ));
 
     return this.renderer.render(
-      flights.map((flight) => ({
-        // 카드에는 시각·경유가 찍히지만, DB 에는 알아볼 수 있는 이름으로 남긴다.
-        label: itemLabel(flight),
-        sourceUrl: flight.sourceUrl,
-        title: listRowTitle(flight),
-        description: listRowDescription(flight),
-        // ⚠️ **1인 총액**이다. 호텔은 같은 칸에 1박가를 넣으므로 집계에 domain 을
-        //    걸어야 한다 (0013). 웹 검색으로 얻은 예상가이지 확정 운임이 아니다.
-        price: flight.priceFrom,
-        merchant: flight.merchant,
+      offers.map((offer) => ({
+        label: offerLabel(offer),
+        sourceUrl: offer.sourceUrl,
+        title: offerTitle(offer),
+        description: offerDescription(offer),
+        // ⚠️ **1인 총액의 하한**이다. 범위의 아래쪽을 남긴다 — 확정 운임이 아니라
+        //    모델이 웹에서 본 값이므로 집계할 때 그 사실을 잊으면 안 된다.
+        price: offer.priceLow,
+        merchant: offer.merchant,
         // 항공권 카드에는 이미지가 없다 — imageUrl 을 안 넘기면 image_url 은 null 이다.
       })),
       ctx,

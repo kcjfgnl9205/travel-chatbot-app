@@ -69,6 +69,45 @@ export interface Flight {
   raw?: Record<string, unknown> | null;
 }
 
+/**
+ * 카드 한 줄이 되는 값. **편이 아니라 "플랫폼 하나"다.**
+ *
+ * 예전에는 편별로 한 줄씩 냈는데, 줄마다 다른 편명·시각·가격을 찍으면서
+ * **링크는 전부 같은 곳으로 갔다** — 여러 편이 같은 노선 검색 페이지를 가리키기
+ * 때문이다. "피치 89,000원" 을 누른 사람이 검색 결과를 보게 되고, 게다가 그
+ * 가격은 웹 검색으로 얻은 **예상가이지 확정 운임이 아니다.**
+ *
+ * 그래서 **모델이 잘하는 것만 남긴다** — 이 노선에 뭐가 다니고 대략 얼마인지.
+ * 편별 확정 운임은 플랫폼이 답할 몫이고, 우리는 거기로 정확히 보낸다.
+ * 관광지에서 입장료를 아예 안 모으기로 한 것과 같은 판단이다.
+ */
+export interface FlightOffer {
+  /** 이 줄이 보내는 곳. trip | myrealtrip … 카드 제목이 여기서 나온다. */
+  merchant: string;
+  /** 그 플랫폼의 노선 검색 페이지. **줄의 신원이기도 하다.** */
+  sourceUrl: string;
+  originCode: string;
+  destCode: string;
+  originName?: string | null;
+  destName?: string | null;
+  tripType: TripType;
+
+  /**
+   * 대략의 시세. **범위로 말한다.**
+   *
+   * ⚠️ "122,000원" 은 틀릴 수 있지만 "12~18만원대" 는 맞는다. 모델이 웹에서 본
+   *    값들의 폭이라, 확정 운임이 아니라는 사실이 표기 자체에 드러난다.
+   */
+  priceLow?: number | null;
+  priceHigh?: number | null;
+  /** 가장 짧은 비행 시간(분). 직항이 있으면 대개 그 값이다. */
+  durationMinutes?: number | null;
+  /** 직항이 있는 노선인가. 없으면 경유만 있다는 뜻이다. */
+  nonstop?: boolean | null;
+  /** 이 노선을 다니는 항공사. 카드에 두세 곳만 적는다. */
+  airlines?: string[];
+}
+
 export interface FlightQuery {
   originSlug: string;
   originName: string;
@@ -101,17 +140,6 @@ export function isoDate(value: unknown): string | null {
   return parsed.toISOString().slice(0, 10) === raw ? raw : null;
 }
 
-/** 캐시에서 살려낸 값이 항공권 모양인가. 배포로 필드가 바뀌면 미스로 떨어뜨린다. */
-export function isFlight(item: unknown): item is Flight {
-  if (!item || typeof item !== 'object') return false;
-  const f = item as Flight;
-  return (
-    typeof f.airline === 'string' &&
-    typeof f.sourceUrl === 'string' &&
-    typeof f.originCode === 'string' &&
-    typeof f.destCode === 'string'
-  );
-}
 
 /**
  * 같은 항공편인지 판정하는 키.
@@ -136,110 +164,6 @@ export function priceText(f: Flight): string {
   return `${f.priceFrom.toLocaleString('ko-KR')}원`;
 }
 
-/** 0 → '직항', 1 → '1회 경유 (홍콩)'. */
-export function stopsText(f: Flight): string {
-  if (f.stops === 0) return '직항';
-  if (!f.stops) return '';
-  const label = `${f.stops}회 경유`;
-  return f.via ? `${label} (${f.via})` : label;
-}
-
-/** '2시간 25분 · 직항'. 둘 다 없으면 빈 문자열. */
-export function durationLine(f: Flight): string {
-  const bits = [
-    f.durationMinutes ? durationText(f.durationMinutes) : '',
-    stopsText(f),
-  ].filter(Boolean);
-  return bits.join(' · ');
-}
-
-const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
-
-/**
- * '2026-10-03' → '10/3(토)'. 카드 한 줄이 20자라 연도를 버린다.
- *
- * UTC 자정으로 파싱하고 getUTCDay() 를 쓴다. 날짜 문자열은 달력상의 날짜일 뿐
- * 시각이 아니므로, 지역 시간대로 파싱하면 서버가 어디에 떠 있는지에 따라
- * 요일이 하루씩 밀린다.
- */
-export function dateLabel(iso: string | null | undefined): string {
-  if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '';
-  const parsed = new Date(`${iso}T00:00:00Z`);
-  if (Number.isNaN(parsed.getTime())) return '';
-  const [, month, day] = iso.split('-');
-  return `${Number(month)}/${Number(day)}(${WEEKDAYS[parsed.getUTCDay()]})`;
-}
-
-/**
- * 한 구간을 카드 한 줄로. '10/3(금) 09:20→11:45'
- *
- * 20자 안에 날짜·출발·도착이 다 들어가야 해서 화살표 하나로 붙인다.
- * 시각을 모르면 날짜만, 날짜도 모르면 빈 문자열이 되고 그 줄은 빠진다.
- */
-export function legText(
-  date: string | null | undefined,
-  depart: string | null | undefined,
-  arrive: string | null | undefined,
-): string {
-  const times = [depart, arrive].filter(Boolean).join('→');
-  return [dateLabel(date), times].filter(Boolean).join(' ');
-}
-
-/**
- * listCard 한 줄의 제목. '대한항공 KE723 · 325,000원'
- *
- * **가격을 제목에 둔다.** 항공편을 고르는 첫 번째 축이고, listCard 에서 제목이
- * 설명보다 눈에 먼저 들어온다. 40자까지 쓸 수 있어 자리도 넉넉하다.
- */
-export function listRowTitle(f: Flight): string {
-  const airline = [f.airline, f.flightNo].filter(Boolean).join(' ');
-  return [airline, priceText(f)].filter(Boolean).join(' · ');
-}
-
-/**
- * listCard 한 줄의 설명. **40자 1줄**이라 itemCard 5줄이 담던 걸 다 못 넣는다.
- *
- *   편도: '10/3(토) 09:20→11:45 · 2시간 25분 · 직항'
- *   왕복: '10/3(토) 09:20 ↔ 10/7(수) 12:30 · 직항'
- *
- * 왕복은 두 구간의 날짜·출발 시각만으로 자리가 차서 **도착 시각과 소요 시간을 버린다.**
- * 대신 직항 여부는 남긴다 — 경유가 몇 번인지가 시각 다음으로 중요한 판단 기준이고,
- * 그건 예약 페이지를 열기 전에 알아야 거르기 때문이다.
- */
-export function listRowDescription(f: Flight): string {
-  const schedule =
-    f.tripType === 'round'
-      ? [departLabel(f.departDate, f.departTime), departLabel(f.returnDate, f.returnDepartTime)]
-          .filter(Boolean)
-          .join(' ↔ ')
-      : legText(f.departDate, f.departTime, f.arriveTime);
-
-  // ⚠️ 왕복은 두 구간의 날짜·시각만으로 자리가 거의 찬다. 경유지 이름까지 붙이면
-  //    40자를 넘겨 잘린다 — 잘리면 가장 뒤에 있는 **직항 여부**가 사라지므로,
-  //    경유지 이름을 먼저 버린다 ('1회 경유 (홍콩)' → '1회 경유').
-  const tail =
-    f.tripType === 'round' ? stopsText({ ...f, via: null }) : durationLine(f);
-  return [schedule, tail].filter(Boolean).join(' · ');
-}
-
-/** '10/3(토) 09:20'. 왕복 한 구간을 날짜+출발시각으로만 줄인 것. */
-function departLabel(
-  date: string | null | undefined,
-  depart: string | null | undefined,
-): string {
-  return [dateLabel(date), depart].filter(Boolean).join(' ');
-}
-
-const CABINS: Record<string, string> = {
-  economy: '이코노미',
-  premium: '프리미엄 이코노미',
-  business: '비즈니스',
-  first: '일등석',
-};
-
-export function cabinText(cabin: string): string {
-  return CABINS[cabin.toLowerCase()] ?? cabin;
-}
 
 export interface FlightProvider {
   readonly name: string;
@@ -264,3 +188,137 @@ export interface FlightProvider {
  * (실제 OpenAI 를 부르면 안 된다), FLIGHT_PROVIDER 설정으로도 바뀐다.
  */
 export const FLIGHT_PROVIDER = 'FLIGHT_PROVIDER';
+
+
+// ------------------------------------------------------- 플랫폼 줄 (FlightOffer)
+/**
+ * 편 목록을 **플랫폼별 한 줄로 접는다.**
+ *
+ * 모델이 준 편들은 대개 두세 플랫폼의 검색 페이지를 가리킨다. 그 페이지가 줄의
+ * 신원이고, 편들에서 뽑은 시세·소요시간·항공사가 그 줄의 설명이 된다.
+ *
+ * ⚠️ **순서를 지킨다.** 모델이 앞에 둔 편의 플랫폼이 앞 줄이 된다 — 대개 가격이
+ *    낮거나 유명한 쪽이다.
+ */
+export function toOffers(flights: Flight[], tripType: TripType): FlightOffer[] {
+  const byMerchant = new Map<string, Flight[]>();
+  for (const flight of flights) {
+    if (!flight.sourceUrl) continue;
+    const key = flight.merchant || flight.sourceUrl;
+    byMerchant.set(key, [...(byMerchant.get(key) ?? []), flight]);
+  }
+
+  const offers: FlightOffer[] = [];
+  for (const [merchant, group] of byMerchant) {
+    const prices = group.map((f) => f.priceFrom).filter((p): p is number => !!p && p > 0);
+    const durations = group
+      .map((f) => f.durationMinutes)
+      .filter((d): d is number => !!d && d > 0);
+    const first = group[0];
+
+    offers.push({
+      merchant,
+      sourceUrl: first.sourceUrl,
+      originCode: first.originCode,
+      destCode: first.destCode,
+      originName: first.originName ?? null,
+      destName: first.destName ?? null,
+      tripType,
+      priceLow: prices.length ? Math.min(...prices) : null,
+      priceHigh: prices.length ? Math.max(...prices) : null,
+      durationMinutes: durations.length ? Math.min(...durations) : null,
+      // 직항이 하나라도 있으면 그렇게 적는다. 아무 편도 stops 를 안 주면 모르는 것이다.
+      nonstop: group.some((f) => f.stops === 0)
+        ? true
+        : group.some((f) => typeof f.stops === 'number')
+          ? false
+          : null,
+      airlines: [...new Set(group.map((f) => f.airline).filter(Boolean))],
+    });
+  }
+  return offers;
+}
+
+/** 캐시에서 살려낸 값이 플랫폼 줄 모양인가. 배포로 필드가 바뀌면 미스로 떨어뜨린다. */
+export function isFlightOffer(item: unknown): item is FlightOffer {
+  if (!item || typeof item !== 'object') return false;
+  const o = item as FlightOffer;
+  return typeof o.sourceUrl === 'string' && typeof o.merchant === 'string';
+}
+
+/** 같은 줄인지 판정하는 키. 플랫폼 하나당 한 줄이다. */
+export function offerKey(offer: FlightOffer): string {
+  return offer.merchant || offer.sourceUrl;
+}
+
+/**
+ * 시세 표기. '12~18만원대' / '약 12만원대' / '' (모름).
+ *
+ * ⚠️ **만원 단위로 내림해서 범위로 적는다.** "122,000원" 처럼 정밀하게 쓰면 맞는
+ *    것처럼 보이는데, 이 값은 웹 검색으로 얻은 예상가라 실제와 다를 수 있다.
+ *    범위로 말하면 틀릴 일이 없고, 표기 자체가 "대략" 이라는 걸 알려준다.
+ */
+export function priceRangeText(offer: FlightOffer): string {
+  const low = manwon(offer.priceLow);
+  const high = manwon(offer.priceHigh);
+  if (low === null) return '';
+  if (high === null || high === low) return `약 ${low}만원대`;
+  return `${low}~${high}만원대`;
+}
+
+function manwon(value: number | null | undefined): number | null {
+  if (!value || value <= 0) return null;
+  return Math.floor(value / 10_000);
+}
+
+/** '직항 1시간 55분' / '경유 · 5시간 20분' / ''. 둘 다 모르면 빈 문자열. */
+export function routeText(offer: FlightOffer): string {
+  const bits: string[] = [];
+  if (offer.nonstop === true) bits.push('직항');
+  else if (offer.nonstop === false) bits.push('경유');
+  if (offer.durationMinutes) bits.push(durationText(offer.durationMinutes));
+  return bits.join(' ');
+}
+
+/** '대한항공 · 아시아나 외 2곳'. 카드 한 줄에 다 못 넣으므로 둘까지만 적는다. */
+export function airlinesText(offer: FlightOffer, limit = 2): string {
+  const names = offer.airlines ?? [];
+  if (!names.length) return '';
+  const shown = names.slice(0, limit).join(' · ');
+  const rest = names.length - limit;
+  return rest > 0 ? `${shown} 외 ${rest}곳` : shown;
+}
+
+/** 카드 제목. 어디로 보내는 줄인지가 제목이다. */
+export function offerTitle(offer: FlightOffer): string {
+  return `${merchantLabel(offer.merchant)}에서 보기`;
+}
+
+/**
+ * listCard 한 줄 설명(40자). **시세 → 직항·소요시간 → 항공사** 순.
+ *
+ * 시세를 줄마다 적는 게 중복이 아닌 이유 — **플랫폼마다 값이 다르다.** 어디가 싼지가
+ * 사용자가 줄을 고르는 기준이라, 머리글로 올려 하나로 합치면 그 차이가 지워진다.
+ */
+export function offerDescription(offer: FlightOffer): string {
+  return [priceRangeText(offer), routeText(offer), airlinesText(offer, 1)]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/** DB·로그에 남는 이름. 나중에 무엇이 노출됐는지 알아볼 수 있어야 한다. */
+export function offerLabel(offer: FlightOffer): string {
+  return `${merchantLabel(offer.merchant)} ${offer.originCode}→${offer.destCode}`;
+}
+
+/** 사람이 읽는 플랫폼 이름. 모르는 값은 그대로 쓴다. */
+const MERCHANT_LABELS: Record<string, string> = {
+  trip: '트립닷컴',
+  myrealtrip: '마이리얼트립',
+  interpark: '인터파크투어',
+  skyscanner: '스카이스캐너',
+};
+
+export function merchantLabel(merchant: string): string {
+  return MERCHANT_LABELS[merchant.toLowerCase()] ?? merchant;
+}

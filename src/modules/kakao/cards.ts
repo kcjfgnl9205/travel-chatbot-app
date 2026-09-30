@@ -242,6 +242,13 @@ export function noticeText(opts: { ignored?: string[]; meta?: SearchMeta }): str
     lines.push(`${conditionLabel(ignored)}(${ignored.join(', ')})은 반영되지 않았어요.`);
   }
 
+  // ⚠️ **항공권 가격은 확정 운임이 아니다.** 모델이 웹에서 본 값의 폭이라 실제와
+  //    다를 수 있다. 카드에 범위로 적는 것만으로는 부족하다 — 사용자는 숫자를 보면
+  //    맞는 값이라고 읽는다. 그래서 한 줄로 분명히 밝힌다.
+  if (opts.meta?.kind === 'flight') {
+    lines.push('가격은 검색 시점 기준이라 실제 결제 금액과 다를 수 있어요.');
+  }
+
   // 출발지를 추측했으면 반드시 알려준다. 부산에서 가려던 사람이 고쳐 말할 유일한 단서다.
   if (opts.meta?.originAssumed && opts.meta.fromName) {
     lines.push(`${opts.meta.fromName} 출발 기준이에요. 다른 곳이면 "부산에서 출발" 처럼 알려주세요.`);
