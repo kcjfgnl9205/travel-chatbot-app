@@ -37,10 +37,14 @@ export const EXPECTED_TABLES = [
   'place_aliases',
   'search_results',
   'intent_cache',
+  // 0009 — 관광지 목록. 0012 부터 노출·클릭 카운터도 여기 있어서, 이 테이블이 없으면
+  // 관광지 카드도 `/a/{id}` 리다이렉트도 통째로 안 된다.
+  'attractions',
 ] as const;
 
 /** 어느 마이그레이션이 만드는 테이블인가. 힌트가 파일명을 정확히 짚기 위한 것. */
 export const TABLES_BY_MIGRATION: Record<string, readonly string[]> = {
   '0001_init.sql': ['users', 'messages', 'affiliate_links', 'recommendations', 'recommendation_items'],
   '0004_router.sql': ['places', 'place_aliases', 'search_results', 'intent_cache'],
+  '0009_attraction_manual.sql': ['attractions'],
 };

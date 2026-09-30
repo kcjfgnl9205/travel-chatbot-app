@@ -269,6 +269,11 @@ Postgres 함수로 만든 이유는 두 가지다:
 - PostgREST 는 `set x = x + 1` 같은 **컬럼 표현식 업데이트를 지원하지 않는다.** 앱에서 읽고 더해서 쓰면 동시 클릭에 카운트가 유실된다.
 - 조회·증가·목적지 반환이 한 번에 끝나서 **DB 왕복이 2회 → 1회**가 된다. 사용자가 302 를 기다리는 경로라 왕복 수가 곧 체감 지연이다.
 
+> **관광지는 카운터가 `attractions` 행에 있다** (0012). 링크가 `/a/{id}` 라서
+> `register_attraction_click(id)` 이 같은 일을 한다 — 조회·증가·목적지 재료 반환을
+> 왕복 1회로. 노출 쪽도 `register_attraction_impressions(ids[])` 하나로 스무 곳을
+> 한 문장에 올린다.
+
 없는 `click_id` 면 0행을 반환하고, 앱은 404 안내 페이지를 보여준다.
 
 **대신 포기한 것**: 클릭 개별 시각과 기기 정보. `first_clicked_at` / `last_clicked_at` 로 양 끝만 남고, `user_agent` · `ip_hash` 는 사라졌다 — 봇 트래픽을 사후에 걸러낼 수 없다. 누가 눌렀는지는 `recommendation_id → recommendations.user_id` 로 여전히 알 수 있다.
@@ -447,7 +452,6 @@ from affiliate_links;
 recommendation_items                 id · recommendation_id · domain · position
                                      click_id · item_name · source_url · target_url
                                      click_count · first/last_clicked_at · created_at
-  ├─ recommendation_item_attractions place_id · category · area · image_url
   ├─ recommendation_item_hotels      star_rating · review_score · price_per_night
   │                                  merchant · affiliate_link_id · image_url
   └─ recommendation_item_flights     airline · stops · cabin · duration_minutes
@@ -482,9 +486,12 @@ recommendation_items                 id · recommendation_id · domain · positi
 > 하나 추가한 날부터 기록이 안 남는데 아무도 모르는 게 최악이다. 숫자 범위(성급 1~5,
 > 평점 0~10, 경유 0~5)는 물리적으로 안 늘어나므로 걸어뒀다.
 
-> ⚠️ **관광지의 평점·주소는 여기 없다.** 구글 콘텐츠라 영구 보관하지 않고 30일 캐시
-> (`search_results`)에만 둔다. 영구로 남는 건 `place_id` 뿐이다 — 구글 약관이 명시적으로
-> 허용하는 값이고, 관광지 단위 집계도 이 칸으로 한다 (0008 참고).
+> ⚠️ **관광지는 이 구조에 없다 (0012).** 노출마다 행을 쌓는 대신 `attractions` 행의
+> `impression_count` · `click_count` 를 올린다. 스냅샷이 필요한 이유는 호텔·항공권
+> 목록이 매번 새로 검색돼 덮어써지기 때문인데, 관광지 목록은 **우리가 소유한 영구
+> 테이블**이라 복원할 것이 없다. 링크도 `/r/{clickId}` 가 아니라 `/a/{id}` 로 고정이다
+> — 그 키가 애드픽 subid 로 쓰이지 않아 노출을 구별할 이유가 없다. 아래 '관광지'
+> 항목 참고.
 
 > ⚠️ **변환 실패는 행이 없는 게 아니라 `affiliate_link_id` 가 null 로 남는다.** 제휴를
 > 타는 도메인(호텔·항공권)은 변환에 실패해도 위성 행을 만든다 — 안 그러면 수수료가
@@ -492,21 +499,18 @@ recommendation_items                 id · recommendation_id · domain · positi
 > "제휴를 안 타는 도메인" 이라는 뜻이다.
 
 ```sql
--- 관광지: 어떤 장소가 반복해서 노출·클릭되나 (이름이 아니라 place_id 로 묶는다)
-select a.place_id, max(i.item_name) as 표시명,
-       count(*)                                  as 노출,
-       count(*) filter (where i.click_count > 0) as 클릭된줄
-from recommendation_items i
-join recommendation_item_attractions a on a.item_id = i.id
-group by 1 order by 3 desc;
+-- 관광지: 많이 눌린 곳. **조인이 없다** — 노출·클릭이 행의 컬럼이다 (0012)
+select name, area, impression_count as 노출, click_count as 클릭,
+       round(100.0 * click_count / nullif(impression_count, 0), 1) as ctr
+from attractions
+where impression_count > 0
+order by click_count desc limit 20;
 
--- 관광지: 카테고리별 CTR (2차 호출의 "카테고리를 섞어라" 가 값을 하는지)
-select a.category,
-       count(*)                                  as 노출,
-       count(*) filter (where i.click_count > 0) as 클릭된줄
-from recommendation_items i
-join recommendation_item_attractions a on a.item_id = i.id
-group by 1 order by 2 desc;
+-- 관광지: 노출은 많은데 안 눌리는 곳. rank 를 내리거나 사진을 바꿀 후보다
+select name, area, impression_count, click_count
+from attractions
+where impression_count >= 50 and click_count = 0
+order by impression_count desc;
 
 -- 항공권: 직항이 경유보다 얼마나 눌리나
 select f.stops,

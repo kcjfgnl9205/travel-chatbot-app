@@ -54,6 +54,64 @@ export class AttractionsRepository extends BaseRepository {
     );
   }
 
+  /**
+   * 많이 눌린 순서로. 관리 API 가 쓴다.
+   *
+   * ⚠️ **노출이 한 번도 없던 곳은 뺀다.** 클릭 0 인 행이 섞이면 "안 눌리는 곳" 과
+   *    "아직 안 나간 곳" 이 같은 줄로 보이는데, 전자는 고칠 대상이고 후자는 아니다.
+   */
+  async clickStats(
+    cityId: number | null,
+    limit: number,
+  ): Promise<Record<string, any>[] | null> {
+    return this.run(
+      (t) => {
+        const q = t
+          .select('id, city_id, name, area, impression_count, click_count, last_clicked_at')
+          .gt('impression_count', 0);
+        return (cityId === null ? q : q.eq('city_id', cityId))
+          .order('click_count', { ascending: false })
+          .order('impression_count', { ascending: false })
+          .limit(limit);
+      },
+      'attraction click stats',
+    );
+  }
+
+  // -------------------------------------------------------------- 노출·클릭
+  /**
+   * 카드에 나간 관광지들의 노출 수를 올린다.
+   *
+   * **노출 1건이 행 하나가 아니라 카운터 +1 이다**(0012). 관광지는 목록이 우리
+   * 테이블에 있어서 "그때 본 값" 을 따로 복사해둘 이유가 없다 — 호텔·항공권은
+   * 매번 새로 검색해 오므로 지금도 `recommendation_items` 에 스냅샷을 남긴다.
+   *
+   * 스무 곳을 건별로 UPDATE 하면 그게 곧 응답 지연이라 배열 하나로 보낸다.
+   */
+  async registerImpressions(ids: number[]): Promise<void> {
+    if (!ids.length) return;
+    await this.rpc(
+      'register_attraction_impressions',
+      { p_ids: ids },
+      'register_attraction_impressions',
+    );
+  }
+
+  /**
+   * 클릭 1회를 기록하고 **지도 링크를 만들 재료**를 돌려준다 (`/a/{id}` 가 부른다).
+   *
+   * ⚠️ URL 자체를 돌려주지 않는다 — 구글맵 주소 조립은 `common/maps-url.ts` 한 곳에
+   *    둔다. 없는 id 면 null.
+   */
+  async registerClick(id: number): Promise<Record<string, any> | null> {
+    const rows = await this.rpc(
+      'register_attraction_click',
+      { p_id: id },
+      'register_attraction_click',
+    );
+    return rows && rows.length ? rows[0] : null;
+  }
+
   // ------------------------------------------------------------------ 쓰기
   /**
    * 한 곳 등록. 같은 도시에 같은 이름이 있으면 DB 가 막는다

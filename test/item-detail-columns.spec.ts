@@ -2,8 +2,6 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { loadConfig } from '../src/config/app.config';
-import { AttractionService } from '../src/modules/attraction/attraction.service';
-import { Attraction } from '../src/modules/attraction/attraction.types';
 import { FlightService } from '../src/modules/flight/flight.service';
 import { Flight } from '../src/modules/flight/flight.types';
 import { HotelService } from '../src/modules/hotel/hotel.service';
@@ -21,6 +19,10 @@ import { RenderContext } from '../src/modules/search/search.types';
  * 아무도 모른다.
  *
  * 그래서 마이그레이션 파일을 직접 읽어서 대조한다. DB 없이 도는 테스트다.
+ *
+ * ⚠️ **관광지는 여기 없다.** 0012 부터 노출 스냅샷을 안 남기고 `attractions` 의
+ *    카운터를 올린다 — 넘길 `detail` 자체가 없다
+ *    ([attraction-counters.spec.ts](./attraction-counters.spec.ts)).
  */
 
 /**
@@ -51,7 +53,7 @@ function columnsOf(table: string): string[] {
   return [...columns];
 }
 
-const CTX = (kind: 'hotel' | 'flight' | 'attraction'): RenderContext => ({
+const CTX = (kind: 'hotel' | 'flight'): RenderContext => ({
   meta: { kind, placeName: '오사카', placeSlug: 'osaka' },
   userId: null,
   messageId: null,
@@ -74,31 +76,7 @@ function capture() {
 /** 링크 해석을 타지 않게 빈 Map 을 넘긴다 (변환은 이 테스트의 관심사가 아니다). */
 const noAffiliate = { resolve: async () => new Map() } as never;
 
-/** 이 테스트는 rows() 만 본다 — 백필은 search() 쪽 일이라 여기선 안 탄다. */
-const noBackfill = { enabled: false, fill: async () => ({ inserted: 0, proposed: 0 }) } as never;
-
 describe('detail 키가 실제 컬럼과 맞는가', () => {
-  it('관광지', async () => {
-    const { rows, renderer } = capture();
-    const attraction: Attraction = {
-      id: 7,
-      name: '오사카성',
-      citySlug: 'osaka',
-      mapUrl: 'https://maps/1',
-      area: '주오구',
-      imageUrl: 'https://img/1.jpg',
-    };
-
-    await new AttractionService({ name: 'fake' } as never, renderer, noBackfill).rows(
-      [attraction],
-      CTX('attraction'),
-    );
-
-    expect(Object.keys(rows[0].detail ?? {}).sort()).toEqual(
-      columnsOf('recommendation_item_attractions').sort(),
-    );
-  });
-
   it('호텔', async () => {
     const { rows, renderer } = capture();
     const hotel: Hotel = {

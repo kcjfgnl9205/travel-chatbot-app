@@ -1,8 +1,10 @@
-import { Controller, Get, Logger, Param, Res } from '@nestjs/common';
+import { Controller, Get, Logger, Param, ParseIntPipe, Res } from '@nestjs/common';
 import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 
+import { mapsUrl } from '../../common/maps-url';
 import { MemoryStoreService } from '../database/memory-store.service';
+import { AttractionsRepository } from '../database/repositories/attractions.repository';
 import { RecommendationItemsRepository } from '../database/repositories/recommendations.repository';
 
 /**
@@ -37,6 +39,16 @@ const EXPIRED_HTML = `<!doctype html>
 <p>챗봇에서 호텔을 다시 추천받아 주세요.</p>
 </body></html>`;
 
+/** 관광지 쪽 문구. 지워진 곳이라 "만료" 가 아니다 — 다시 물어도 그 줄은 없다. */
+const GONE_HTML = `<!doctype html>
+<html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>관광지를 찾을 수 없어요</title></head>
+<body style="font-family:-apple-system,sans-serif;padding:48px 24px;text-align:center">
+<h2>없어진 관광지예요</h2>
+<p>챗봇에서 관광지를 다시 추천받아 주세요.</p>
+</body></html>`;
+
 @ApiTags('리다이렉트')
 @Controller()
 export class RedirectController {
@@ -45,6 +57,7 @@ export class RedirectController {
   constructor(
     private readonly items: RecommendationItemsRepository,
     private readonly memory: MemoryStoreService,
+    private readonly attractions: AttractionsRepository,
   ) {}
 
   @Get('r/:clickId')
@@ -85,6 +98,47 @@ export class RedirectController {
     this.logger.log(
       `click clickId=${clickId} item=${row?.item_name as string} ` +
         `count=${row?.click_count as number} via=db`,
+    );
+    res.redirect(302, targetUrl);
+  }
+
+  @Get('a/:id')
+  @ApiOperation({
+    summary: '관광지 클릭 추적 후 구글맵으로 이동',
+    description:
+      '관광지 줄 링크가 가리키는 곳. `attractions.click_count` 를 올리고 302 로 보낸다.\n\n' +
+      '⚠️ **주소가 `/r/{clickId}` 와 달리 관광지별로 고정이다.** 호텔·항공권의 clickId 는 ' +
+      '애드픽 subid 로 링크에 박혀서 노출마다 달라야 하지만, 관광지는 변환이 없어 그럴 ' +
+      '이유가 없다. 그래서 단톡방에 오래 남은 카드의 링크도 안 죽는다.\n\n' +
+      'DB 왕복은 한 번이다 (register_attraction_click 이 조회·증가·재료 반환을 동시에 한다).',
+  })
+  @ApiParam({ name: 'id', description: 'attractions.id' })
+  @ApiResponse({ status: 302, description: '구글맵 검색 주소로 이동' })
+  @ApiResponse({ status: 404, description: '없거나 지워진 관광지' })
+  async attraction(
+    @Param('id', ParseIntPipe) id: number,
+    @Res() res: Response,
+  ): Promise<void> {
+    // ⚠️ **인메모리 빠른 길을 두지 않는다.** 목적지를 알려면 이름과 도시가 필요한데,
+    //    그걸 미리 담아두면 한 번의 카드 노출이 스무 칸을 차지한다 — 2000칸짜리
+    //    공용 LRU 라서 수수료가 걸린 호텔 항목을 밀어낸다. 그쪽을 살리는 게 낫고,
+    //    이 경로는 어차피 RPC 한 번(따뜻한 연결 ~90ms)으로 끝난다.
+    const row = await this.attractions.registerClick(id);
+    const name = (row?.attraction_name as string) ?? '';
+
+    if (!name) {
+      // 관리 화면에서 지웠거나 DB 가 꺼져 있다. 사용자가 할 수 있는 일은 같다.
+      this.logger.warn(`unknown attraction id=${id}`);
+      res.status(404).type('html').send(GONE_HTML);
+      return;
+    }
+
+    // ⚠️ **주소를 여기서 만든다.** 노출 시점 값을 스냅샷해두지 않는 것이 요점이라
+    //    (0012), 관리 화면에서 이름을 고치면 다음 클릭부터 새 이름으로 검색된다.
+    const targetUrl = mapsUrl(name, (row?.city_name as string) ?? null);
+
+    this.logger.log(
+      `click attraction=${id} name=${name} count=${row?.clicks as number} via=db`,
     );
     res.redirect(302, targetUrl);
   }

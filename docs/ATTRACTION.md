@@ -159,11 +159,16 @@ https://www.google.com/maps/search/?api=1&query=오사카성%20오사카
 
 > 0008 까지는 `&query_place_id=ChIJ…` 를 붙여 그 장소를 정확히 열었다. 구글을 끊으면서 place_id 를 안 받으므로 이름 검색으로 돌아갔다. 도시명을 붙이니 실사용에서 거의 정확히 찍힌다.
 
-### 그래도 `/r/{clickId}` 를 거친다
+### 그래도 한 홉을 거친다 — `/a/{id}`
 
 수수료가 없어도 **어떤 관광지를 눌렀는지**는 알아야 다음 목록이 나아진다. 카카오 링크는 브라우저를 바로 열어서, 한 홉을 끼우지 않으면 아무 신호도 오지 않는다.
 
-`links` 를 렌더러에 **안 넘긴다** — 그게 이 도메인의 표식이다. 빈 Map 은 "변환을 시도했는데 하나도 못 건졌다"(수익 누수)라 경고가 뜨는데, `undefined` 는 "변환을 다루지 않는 도메인"이다.
+**그 홉이 `/r/{clickId}` 가 아니라 `/a/{id}` 다** (0012). 호텔·항공권의 `clickId` 는 노출마다 새로 발급되는데, 그 값이 애드픽 subid 로 **링크에 박혀서** 성과 데이터와 조인되기 때문이다. 관광지는 변환이 없어 subid 를 안 붙이므로 노출을 구별할 이유가 없다.
+
+그래서 얻는 것 둘 —
+
+- **주소가 관광지별로 고정이다.** 단톡방에 오래 남은 카드의 링크도 안 죽는다.
+- **목적지를 클릭 시점에 만든다.** 관리 화면에서 이름을 고치면 다음 클릭부터 새 이름으로 검색된다 — 노출 시점 값을 스냅샷해두지 않기 때문이다.
 
 ---
 
@@ -273,9 +278,20 @@ curl -s localhost:8000/api/v1/admin/attractions \
 
 도시 행을 미리 심어두려면 한 번만: `POST /api/v1/catalog/seed` (사전 112곳, 모델 안 부름).
 
-### 노출 스냅샷
+### 노출·클릭 카운터
 
-`recommendation_item_attractions` 에 `attraction_id` · `area` · `image_url` 이 남는다. 관광지를 지워도 **기록은 남는다** (`on delete set null`) — 이름은 `recommendation_items.label` 에 있다.
+**노출마다 행이 쌓이지 않는다** (0012). `attractions` 행의 `impression_count` · `click_count` 가 올라갈 뿐이라, 여러 사람이 같은 도시를 계속 물어도 테이블이 안 자란다.
+
+```
+GET /api/v1/admin/attractions/stats?city=후쿠오카&limit=20
+  → [{ id, name, area, impressions, clicks, ctr, lastClickedAt }, ...]
+```
+
+호텔·항공권은 지금도 `recommendation_items` 에 노출마다 한 행을 남긴다. 그쪽은 매 검색마다 목록을 새로 받아오고 캐시는 갱신되면 덮어써져서, 복사해두지 않으면 "그때 사용자가 본 값" 이 영영 사라지기 때문이다. **관광지 목록은 우리 `attractions` 테이블에 영구히 있어서 복사할 것이 없다.**
+
+> ⚠️ **누적값이라 기간별로 못 쪼갠다.** "이번 달 인기 관광지" 가 필요해지면 `attraction_stats(attraction_id, date, impressions, clicks)` 일별 버킷을 얹는다 — 관광지 100곳이면 연 36,500행이라 노출마다 쌓는 것과 자릿수가 다르다.
+
+> ⚠️ **관광지를 지우면 카운터도 같이 사라진다.** 한동안 노출되던 곳이면 지우기 전에 `/stats` 로 확인해두는 편이 좋다.
 
 ### 캐시
 

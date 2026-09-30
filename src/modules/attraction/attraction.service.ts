@@ -1,7 +1,9 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import { dedupeBy } from '../../common/dedupe';
+import { AppConfig, CONFIG, attractionRedirectUrl } from '../../config/app.config';
 import { AttractionBackfillService } from './attraction-backfill';
+import { AttractionsRepository } from '../database/repositories/attractions.repository';
 import * as cards from '../kakao/cards';
 import * as t from '../kakao/templates';
 import { RecommendationRowsService } from '../recommendation/rows.service';
@@ -33,9 +35,13 @@ import {
  *      **아무도 안 넣은 도시**뿐이고, 그때도 사용자에게 바로 가는 게 아니라
  *      DB 에 먼저 들어간다 ([attraction-backfill.ts](./attraction-backfill.ts)).
  *
- * 그럼에도 `/r/{clickId}` 는 그대로 거친다. 수수료는 없어도 **어떤 관광지를 눌렀는지**는
+ * 그럼에도 리다이렉트 한 홉은 그대로 거친다. 수수료는 없어도 **어떤 관광지를 눌렀는지**는
  * 알아야 다음 추천이 나아진다 — 카카오 링크는 브라우저를 바로 열어서 한 홉을 끼우지
  * 않으면 아무 신호도 오지 않는다.
+ *
+ *   3. **그 한 홉이 `/r/{clickId}` 가 아니라 `/a/{id}` 다.** 노출마다 키를 발급하고
+ *      행을 쌓는 대신 `attractions` 의 카운터를 올린다 — 목록이 우리 테이블에 있어서
+ *      노출 시점 값을 복사해둘 이유가 없다 (0012 마이그레이션).
  */
 
 /**
@@ -61,9 +67,12 @@ export class AttractionService implements SearchDomain<Attraction> {
   private readonly logger = new Logger(AttractionService.name);
 
   constructor(
+    @Inject(CONFIG) private readonly config: AppConfig,
     @Inject(ATTRACTION_PROVIDER) private readonly provider: AttractionProvider,
     private readonly renderer: RecommendationRowsService,
     private readonly backfill: AttractionBackfillService,
+    /** 조회는 provider 가 하고, 이쪽은 **노출 카운터**만 올린다 (0012). */
+    private readonly attractions: AttractionsRepository,
   ) {}
 
   /** 실제로 붙어 있는 데이터 소스. 설정값이 아니라 주입된 구현이 답이다 (/health). */
@@ -132,32 +141,38 @@ export class AttractionService implements SearchDomain<Attraction> {
   }
 
   /**
-   * ⚠️ **`links` 를 넘기지 않는다** — 그게 이 도메인이 다른 점이다.
+   * ⚠️ **노출마다 행을 쌓지 않는다** — 그게 호텔·항공권과 가장 다른 점이다.
    *
-   * 관광지는 우리가 파는 게 아니라 장소라서 애드픽에 변환할 주소가 없다. 렌더러는
-   * links 가 없으면 원본(지도 링크)을 그대로 목적지로 쓰고, 변환 실패 경고도
-   * affiliate_link_id 도 subid 도 만들지 않는다.
+   * 저 둘은 매 검색마다 목록을 새로 받아오고 캐시는 갱신되면 덮어써지므로, "그때
+   * 사용자가 본 값" 을 `recommendation_items` 에 복사해두지 않으면 영영 복원이 안 된다.
+   * 관광지 목록은 **우리 `attractions` 테이블에 영구히 있다.** 복사해둘 것이 없다.
+   *
+   * 그래서 남기는 것은 `recommendations` 한 행과 **카운터 +1** 이다. 여러 사람이 같은
+   * 도시를 물어도 행이 안 자란다 (0012 마이그레이션).
+   *
+   * 링크도 노출별이 아니라 **관광지별로 고정**이다(`/a/{id}`). 호텔·항공권의 clickId 는
+   * 애드픽 subid 로 링크에 박혀서 노출마다 달라야 하는데, 관광지는 변환 자체가 없다.
    */
   async rows(attractions: Attraction[], ctx: RenderContext): Promise<t.Json[]> {
-    return this.renderer.render(
+    const items = await this.renderer.renderCounted(
       attractions.map((attraction) => ({
-        label: attraction.name,
-        // 목적지가 곧 지도 링크다. 이름+도시로 우리가 만든 주소라 죽을 일이 없다.
-        sourceUrl: attraction.mapUrl,
         title: attraction.name,
         description: listDescription(attraction),
         imageUrl: attraction.imageUrl,
-        // ⚠️ **관광지 단위 집계는 attraction_id 로 한다.** 이름은 관리 화면에서
-        //    바뀔 수 있지만 이 값은 그대로다.
-        detail: {
-          attraction_id: attraction.id,
-          area: attraction.area,
-          image_url: attraction.imageUrl,
-        },
+        // 목적지는 리다이렉트가 이름+도시로 다시 만든다. 여기서 mapUrl 을 넘기지
+        // 않는 이유 — 관리 화면에서 이름을 고치면 **새 이름이 맞는 주소**다.
+        linkUrl: attractionRedirectUrl(this.config, attraction.id),
       })),
       ctx,
       { provider: this.provider.name },
     );
+
+    // 진단 경로(persist:false)는 통계를 안 남긴다. 카운터도 마찬가지다 —
+    // 여기서 올리면 아무도 안 본 노출이 분모에 섞여 클릭률이 낮게 보인다.
+    if (ctx.persist !== false) {
+      await this.attractions.registerImpressions(attractions.map((a) => a.id));
+    }
+    return items;
   }
 }
 

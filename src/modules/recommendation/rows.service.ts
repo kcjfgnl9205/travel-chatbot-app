@@ -15,14 +15,18 @@ import { RenderContext, SearchKind } from '../search/search.types';
 /**
  * 한 페이지를 listCard 줄로 만들면서 **노출을 기록하고 클릭 링크를 발급한다.**
  *
- * 세 도메인(호텔·항공권·관광지)이 거의 글자 그대로 같은 코드를 들고 있었다. 당연한데,
- * 셋 다 같은 것을 해야 하기 때문이다 —
+ * 호텔·항공권이 거의 글자 그대로 같은 코드를 들고 있었다. 당연한데, 둘 다 같은 것을
+ * 해야 하기 때문이다 —
  *
  *   recommendations 행 하나 → 항목마다 clickId 발급 → recommendation_items 행
  *     → 인메모리 폴백 → 줄 링크는 `/r/{clickId}`
  *
  * 사용자에게 노출되는 건 우리 리다이렉트뿐이고, 그 302 목적지가 최종 주소다.
  * 원본 주소는 DB 에만 남는다.
+ *
+ * ⚠️ **관광지는 `render` 가 아니라 `renderCounted` 를 쓴다.** 0012 에서 노출 스냅샷을
+ *    그만두고 `attractions` 의 카운터로 옮겼다 — 그 목록은 우리 테이블에 있어서
+ *    복원할 것이 없고, 링크에 노출별 값이 박히지도 않는다.
  *
  * ⚠️ **제휴 변환은 여기서 하지 않는다.** 호출부가 이미 해석해서 `links` 로 넘긴다.
  *    그래야 관광지 모듈이 AffiliateModule 을 끌어오지 않는다 — 관광지는 예약할 게
@@ -78,16 +82,28 @@ export interface RenderOptions {
   links?: Map<string, ResolvedLink>;
 }
 
+/** 노출마다 행을 쌓지 않는 도메인이 쓰는 한 줄. 링크가 이미 정해져 있다. */
+export interface StaticRow {
+  title: string;
+  description: string | null;
+  imageUrl?: string | null;
+  /** 줄 전체가 가리킬 주소. 호출부가 만든다 (관광지는 `/a/{id}`). */
+  linkUrl: string;
+}
+
 /**
  * 도메인별 상세가 들어가는 테이블.
  *
- * 공통 테이블은 하나이고 여기만 갈린다 — click_id·position·클릭 카운터는 세 도메인이
+ * 공통 테이블은 하나이고 여기만 갈린다 — click_id·position·클릭 카운터는 두 도메인이
  * 똑같이 하는 일이라 쪼갤 이유가 없다 (0007 마이그레이션 주석 참고).
+ *
+ * ⚠️ **관광지가 여기 없다.** 0012 에서 노출 스냅샷을 그만두고 `attractions` 의
+ *    카운터로 옮겼다 — 목록이 우리 테이블에 있어서 복원할 것이 없기 때문이다
+ *    (아래 renderCounted 참고).
  */
-const DETAIL_TABLES: Record<SearchKind, string> = {
+const DETAIL_TABLES: Partial<Record<SearchKind, string>> = {
   hotel: 'recommendation_item_hotels',
   flight: 'recommendation_item_flights',
-  attraction: 'recommendation_item_attractions',
 };
 
 @Injectable()
@@ -105,24 +121,7 @@ export class RecommendationRowsService {
     // 제휴 링크를 아예 안 다루는 도메인인가. 빈 Map 과 구별해야 한다 (RenderOptions 참고).
     const monetized = opts.links !== undefined;
 
-    // persist:false 면 통계를 안 남긴다 (진단 경로). recommendationId 가 null 이 되고
-    // 아래 items.createMany 도 자연히 건너뛴다.
-    const recommendation =
-      ctx.persist === false
-        ? null
-        : await this.recommendations.create({
-            userId: ctx.userId,
-            messageId: ctx.messageId,
-            domain: ctx.meta.kind,
-            // 항공권은 호텔의 city_slug 자리에 목적지를 넣는다. 도메인별 컬럼을 늘리지 않는다.
-            citySlug: ctx.meta.placeSlug,
-            provider: opts.provider,
-            itemCount: items.length,
-            guests: null,
-            latencyMs: Date.now() - ctx.started,
-            cacheHit: ctx.cacheHit,
-          });
-    const recommendationId = (recommendation?.id as string) ?? null;
+    const recommendationId = await this.logRecommendation(ctx, opts.provider, items.length);
 
     const dbRows: Record<string, unknown>[] = [];
     /** 위성 테이블에 들어갈 행. 상세가 하나도 없는 항목은 아예 안 만든다. */
@@ -205,13 +204,75 @@ export class RecommendationRowsService {
 
     if (recommendationId && dbRows.length) {
       const saved = await this.items.createMany(dbRows);
+      const table = DETAIL_TABLES[ctx.meta.kind];
       // 공통 행이 안 들어갔으면 위성도 넣지 않는다 — item_id 가 가리킬 행이 없어서
       // 외래키 위반만 한 번 더 나고, 로그에 원인이 둘로 늘어난다.
-      if (saved && detailRows.length) {
-        await this.items.createDetails(DETAIL_TABLES[ctx.meta.kind], detailRows);
+      if (saved && table && detailRows.length) {
+        await this.items.createDetails(table, detailRows);
       }
     }
     return listItems;
+  }
+
+  /**
+   * **노출 행을 만들지 않는 도메인의 렌더링** (관광지).
+   *
+   * 남기는 것은 `recommendations` 한 행 — "언제 누가 무엇을 물었나" 뿐이다. 항목별
+   * 노출·클릭은 호출부가 자기 마스터 테이블의 카운터로 센다.
+   *
+   * 왜 관광지만 이 길인가 (0012 마이그레이션에 자세히) —
+   *
+   *   · 목록이 우리 `attractions` 테이블에 있어서 **덮어써지지 않는다.** 호텔·항공권은
+   *     매번 새로 검색해 와서 스냅샷이 없으면 "그때 본 값" 이 영영 사라진다.
+   *   · 링크에 노출별 값이 안 박힌다. 호텔·항공권의 clickId 는 애드픽 subid 로
+   *     링크에 들어가서 노출마다 달라야 하는데, 관광지는 변환이 없다.
+   *   · 줄 순서가 `attractions.rank` 로 고정이라 position 별 CTR 이 안 나온다.
+   *
+   * ⚠️ **`links` 를 받지 않는다.** 제휴를 타는 도메인이 이 길로 오면 subid 가 안 붙어
+   *    수수료가 통째로 새므로, 애초에 넘길 수 없게 해둔다.
+   */
+  async renderCounted(
+    rows: StaticRow[],
+    ctx: RenderContext,
+    opts: { provider: string },
+  ): Promise<t.Json[]> {
+    await this.logRecommendation(ctx, opts.provider, rows.length);
+    return rows.map((row) =>
+      t.listItem({
+        title: row.title,
+        description: row.description,
+        // 없으면 listItem 이 알아서 뺀다 — 그 줄만 사진 없이 나간다.
+        imageUrl: row.imageUrl,
+        linkUrl: row.linkUrl,
+      }),
+    );
+  }
+
+  /**
+   * "이 요청에 이렇게 응답했다" 한 행. 도메인과 무관하게 남는다.
+   *
+   * persist:false 면 남기지 않는다 (진단 경로) — 섞이면 전환율 집계가 틀어진다.
+   * 그때 null 이 돌아가고 호출부의 노출 기록도 자연히 건너뛰어진다.
+   */
+  private async logRecommendation(
+    ctx: RenderContext,
+    provider: string,
+    itemCount: number,
+  ): Promise<string | null> {
+    if (ctx.persist === false) return null;
+    const row = await this.recommendations.create({
+      userId: ctx.userId,
+      messageId: ctx.messageId,
+      domain: ctx.meta.kind,
+      // 항공권은 호텔의 city_slug 자리에 목적지를 넣는다. 도메인별 컬럼을 늘리지 않는다.
+      citySlug: ctx.meta.placeSlug,
+      provider,
+      itemCount,
+      guests: null,
+      latencyMs: Date.now() - ctx.started,
+      cacheHit: ctx.cacheHit,
+    });
+    return (row?.id as string) ?? null;
   }
 }
 

@@ -8,11 +8,16 @@ import { RenderContext } from '../src/modules/search/search.types';
 import { AppConfig, loadConfig } from '../src/config/app.config';
 
 /**
- * 세 도메인이 공유하는 노출 기록·링크 발급.
+ * 호텔·항공권이 공유하는 노출 기록·링크 발급.
  *
- * 여기서 지키려는 건 **`links` 를 안 넘긴 도메인(관광지)과 넘겼는데 비어 있는 경우를
- * 구별하는 것**이다. 둘을 같이 취급하면 관광지 지도 링크에 추적 파라미터가 붙고,
- * "변환 실패" 경고가 관광지에서도 떠서 아무도 그 경고를 안 읽게 된다.
+ * 여기서 지키려는 건 **`links` 를 안 넘긴 경우와 넘겼는데 비어 있는 경우를 구별하는
+ * 것**이다. 둘을 같이 취급하면 변환을 안 타는 주소에 추적 파라미터가 붙고,
+ * "변환 실패" 경고가 그쪽에서도 떠서 아무도 그 경고를 안 읽게 된다.
+ *
+ * ⚠️ **관광지는 이 서비스를 안 탄다.** 0012 부터 노출 행 대신 `attractions` 의
+ *    카운터를 올린다 ([attraction-counters.spec.ts](./attraction-counters.spec.ts)).
+ *    그래서 `links` 를 안 넘기는 도메인이 지금은 없지만, 그 갈래는 남겨둔다 —
+ *    제휴를 안 타는 도메인이 다시 생겼을 때 조용히 subid 가 붙으면 안 된다.
  */
 
 function config(over: Partial<AppConfig> = {}): AppConfig {
@@ -47,7 +52,7 @@ function build(over: Partial<AppConfig> = {}) {
 }
 
 const CTX: RenderContext = {
-  meta: { kind: 'attraction', placeName: '오사카', placeSlug: 'osaka' },
+  meta: { kind: 'hotel', placeName: '오사카', placeSlug: 'osaka' },
   userId: null,
   messageId: null,
   started: Date.now(),
@@ -86,26 +91,26 @@ describe('노출 기록 + 클릭 링크 발급', () => {
 
       await service.render([item()], CTX, { provider: 'openai' });
 
-      expect(inserted[0][0].domain).toBe('attraction');
+      expect(inserted[0][0].domain).toBe('hotel');
     });
 
     it('도메인 고유 값은 그 도메인 테이블로 간다', async () => {
       const { service, inserted, details } = build();
 
       await service.render(
-        [item({ detail: { admission_fee: 1200, admission_currency: 'JPY', category: '역사/문화' } })],
+        [item({ detail: { star_rating: 4, review_score: 8.7, price_per_night: 120000 } })],
         CTX,
         { provider: 'openai' },
       );
 
       expect(details).toHaveLength(1);
-      expect(details[0].table).toBe('recommendation_item_attractions');
+      expect(details[0].table).toBe('recommendation_item_hotels');
       expect(details[0].rows[0]).toEqual({
         // 공통 행과 같은 id 를 가리켜야 조인이 된다.
         item_id: inserted[0][0].id,
-        admission_fee: 1200,
-        admission_currency: 'JPY',
-        category: '역사/문화',
+        star_rating: 4,
+        review_score: 8.7,
+        price_per_night: 120000,
       });
     });
 
@@ -126,14 +131,14 @@ describe('노출 기록 + 클릭 링크 발급', () => {
       const { service, details } = build();
 
       await service.render(
-        [item({ detail: { admission_fee: null, duration_minutes: undefined, category: '전망' } })],
+        [item({ detail: { price_per_night: null, review_score: undefined, merchant: 'agoda' } })],
         CTX,
         { provider: 'openai' },
       );
 
       expect(details[0].rows[0]).toEqual({
         item_id: expect.any(String),
-        category: '전망',
+        merchant: 'agoda',
       });
     });
 
@@ -151,7 +156,7 @@ describe('노출 기록 + 클릭 링크 발급', () => {
     it('남길 값이 하나도 없으면 위성 행을 아예 안 만든다', async () => {
       const { service, details } = build();
 
-      await service.render([item(), item({ detail: { category: null } })], CTX, {
+      await service.render([item(), item({ detail: { merchant: null } })], CTX, {
         provider: 'openai',
       });
 
@@ -159,7 +164,7 @@ describe('노출 기록 + 클릭 링크 발급', () => {
     });
   });
 
-  // ------------------------------------------------- links 를 안 넘기는 도메인 (관광지)
+  // ---------------------------------------------------------- links 를 안 넘긴 경우
   describe('제휴 변환을 다루지 않는 도메인', () => {
     it('목적지는 원본 주소 그대로이고 subid 를 붙이지 않는다', async () => {
       // subid 를 켜둔 설정에서도 붙으면 안 된다 — 지도 주소에 달아봐야 아무도 안 읽는다.
@@ -170,15 +175,15 @@ describe('노출 기록 + 클릭 링크 발급', () => {
       const row = inserted[0][0];
       expect(row.target_url).toBe(MAP_URL);
       expect(row.source_url).toBe(MAP_URL);
-      // 공통 테이블에는 제휴 칸이 없다. 관광지 테이블에도 없다 — 그게 이 도메인의
-      // 정체다. 남길 값이 없으면 위성 행 자체가 안 생긴다.
+      // 공통 테이블에는 제휴 칸이 없다. 위성 행에도 안 붙는다 — 남길 값이 하나도
+      // 없으면 위성 행 자체가 안 생긴다.
       expect(row).not.toHaveProperty('affiliate_link_id');
     });
 
     it('제휴 칸을 위성 행에도 만들지 않는다', async () => {
       const { service, details } = build();
 
-      await service.render([item({ detail: { category: '전망' } })], CTX, { provider: 'openai' });
+      await service.render([item({ detail: { merchant: 'agoda' } })], CTX, { provider: 'openai' });
 
       expect(details[0].rows[0]).not.toHaveProperty('affiliate_link_id');
     });

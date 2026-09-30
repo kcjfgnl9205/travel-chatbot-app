@@ -27,7 +27,11 @@ function fakeRes() {
   return { res, sent };
 }
 
-function build(dbRow: Record<string, unknown> | null, dbDelayMs = 0) {
+function build(
+  dbRow: Record<string, unknown> | null,
+  dbDelayMs = 0,
+  attractionRow: Record<string, unknown> | null = null,
+) {
   const calls: string[] = [];
   const items = {
     registerClick: async (clickId: string) => {
@@ -36,8 +40,14 @@ function build(dbRow: Record<string, unknown> | null, dbDelayMs = 0) {
       return dbRow;
     },
   } as never;
+  const attractions = {
+    registerClick: async (id: number) => {
+      calls.push(`a:${id}`);
+      return attractionRow;
+    },
+  } as never;
   const memory = new MemoryStoreService();
-  return { calls, memory, controller: new RedirectController(items, memory) };
+  return { calls, memory, controller: new RedirectController(items, memory, attractions) };
 }
 
 const ENTRY = {
@@ -95,9 +105,61 @@ describe('클릭 리다이렉트', () => {
     memory.put('c3', ENTRY);
     const { res, sent } = fakeRes();
 
-    await new RedirectController(items, memory).redirect('c3', res as never);
+    await new RedirectController(items, memory, {} as never).redirect('c3', res as never);
     await new Promise((r) => setTimeout(r, 10));
 
     expect(sent.redirect).toBe(ENTRY.targetUrl);
+  });
+});
+
+/**
+ * 관광지는 길이 다르다 — `/a/{id}` 는 **관광지별로 고정된 주소**다.
+ *
+ * 노출마다 키를 발급하지 않으므로 단톡방에 오래 남은 카드의 링크도 안 죽고,
+ * 목적지는 클릭 시점의 이름으로 다시 만들어진다 (0012).
+ */
+describe('관광지 클릭 리다이렉트', () => {
+  it('클릭 시점의 이름으로 지도 주소를 만든다', async () => {
+    const { controller, calls } = build(null, 0, {
+      attraction_name: '오사카성',
+      city_name: '오사카',
+      clicks: 12,
+    });
+    const { res, sent } = fakeRes();
+
+    await controller.attraction(7, res as never);
+
+    expect(calls).toEqual(['a:7']);
+    expect(sent.redirect).toBe(
+      'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent('오사카성 오사카'),
+    );
+  });
+
+  /**
+   * 세부 지역은 부모 도시가 붙는다 ("도톤보리 오사카"). 노출 때 만든 링크와 같은
+   * 주소가 나와야 하므로 RPC 가 `searchName()` 과 같은 규칙으로 맞춰서 준다.
+   */
+  it('세부 지역이면 부모 도시가 붙은 채로 온다', async () => {
+    const { controller } = build(null, 0, {
+      attraction_name: '글리코 간판',
+      city_name: '도톤보리 오사카',
+      clicks: 1,
+    });
+    const { res, sent } = fakeRes();
+
+    await controller.attraction(9, res as never);
+
+    expect(sent.redirect).toContain(encodeURIComponent('글리코 간판 도톤보리 오사카'));
+  });
+
+  it('지워진 관광지면 안내를 띄운다 — 만료가 아니라 없어진 것이다', async () => {
+    const { controller } = build(null, 0, null);
+    const { res, sent } = fakeRes();
+
+    await controller.attraction(404, res as never);
+
+    expect(sent.status).toBe(404);
+    expect(sent.html).toContain('없어진');
+    expect(sent.redirect).toBeUndefined();
   });
 });

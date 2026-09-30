@@ -92,6 +92,41 @@ export class AttractionAdminController {
     return { city: place.canonicalName, items: rows.map(toResponse) };
   }
 
+  // ------------------------------------------------------------------ 통계
+  @Get('stats')
+  @ApiOperation({
+    summary: '많이 눌린 관광지 순서대로',
+    description:
+      '**조인이 없다.** 노출·클릭이 `attractions` 행의 카운터라 이 테이블만 읽으면 된다 ' +
+      '(0012). 예전에는 노출마다 `recommendation_items` 에 행이 쌓였고, 같은 관광지를 ' +
+      '여러 사람이 봐도 같은 값이 계속 늘어나기만 했다.\n\n' +
+      '⚠️ **한 번도 안 나간 곳은 빠진다.** "안 눌리는 곳"(고칠 대상)과 "아직 안 나간 ' +
+      '곳"(아닌 것)이 같은 줄로 보이면 안 된다.\n\n' +
+      '⚠️ **누적값이라 기간별로 못 쪼갠다.** "이번 달 인기" 가 필요해지면 일별 버킷 ' +
+      '테이블을 얹어야 한다 (0012 머리말).',
+  })
+  @ApiQuery({
+    name: 'city',
+    required: false,
+    description: '도시 이름·별칭·슬러그. 안 주면 전체에서 뽑는다',
+    example: '후쿠오카',
+  })
+  @ApiQuery({ name: 'limit', required: false, description: '기본 20, 최대 100' })
+  async stats(
+    @Headers('x-debug-token') token?: string,
+    @Query('city') city?: string,
+    @Query('limit') limit?: string,
+  ): Promise<{ city: string | null; items: unknown[] }> {
+    this.authorize(token);
+
+    // 도시를 안 주면 전체다. 여기서 resolveCity 를 부르면 빈 값에 400 이 난다.
+    const place = text(city) ? await this.resolveCity(city as string) : null;
+    const size = Math.min(Math.max(Number(limit) || 20, 1), 100);
+
+    const rows = (await this.attractions.clickStats(place?.id ?? null, size)) ?? [];
+    return { city: place?.canonicalName ?? null, items: rows.map(toStatsResponse) };
+  }
+
   // ------------------------------------------------------------------ 생성
   @Post()
   @ApiOperation({
@@ -173,8 +208,11 @@ export class AttractionAdminController {
   @ApiOperation({
     summary: '관광지 삭제',
     description:
-      '노출 기록은 남는다 — `recommendation_item_attractions.attraction_id` 가 null 이 될 뿐이다. ' +
-      '"그때 이걸 보여줬다" 를 지우면 클릭 통계가 앞뒤가 안 맞는다.',
+      '⚠️ **노출·클릭 카운터도 같이 사라진다.** 0012 부터 그 값이 이 행의 컬럼이라 ' +
+      '행을 지우면 통계에서도 빠진다. 한동안 노출되던 곳이면 지우기 전에 ' +
+      '`GET /stats` 로 확인해두는 편이 좋다.\n\n' +
+      '지운 뒤 그 관광지의 `/a/{id}` 링크는 404 다 — 단톡방에 남은 옛 카드를 누르면 ' +
+      '"없어진 관광지예요" 가 뜬다.',
   })
   async remove(
     @Param('id', ParseIntPipe) id: number,
@@ -285,6 +323,27 @@ function toResponse(row: Record<string, any>) {
     rank: row.rank ?? 0,
     // 어디서 왔는지. 관리 화면이 'AI' 배지를 붙여 검수 대상을 드러낸다.
     source: row.source ?? 'manual',
+  };
+}
+
+/**
+ * 통계 한 줄.
+ *
+ * ⚠️ **ctr 을 서버에서 계산해서 준다.** 분모가 0 인 행은 애초에 안 올라오지만
+ *    (`impression_count > 0` 으로 걸렀다), 화면마다 나눗셈을 다시 쓰게 두면
+ *    반올림 자리가 갈린다.
+ */
+function toStatsResponse(row: Record<string, any>) {
+  const impressions = Number(row.impression_count ?? 0);
+  const clicks = Number(row.click_count ?? 0);
+  return {
+    id: row.id,
+    name: row.name,
+    area: row.area ?? null,
+    impressions,
+    clicks,
+    ctr: impressions ? Math.round((clicks / impressions) * 1000) / 10 : 0,
+    lastClickedAt: row.last_clicked_at ?? null,
   };
 }
 

@@ -225,4 +225,15 @@ export const openaiEnabled = (c: AppConfig): boolean =>
 export const redirectUrl = (c: AppConfig, clickId: string): string =>
   `${c.publicBaseUrl.replace(/\/+$/, '')}/r/${clickId}`;
 
+/**
+ * 관광지 줄 링크. **노출마다 발급하는 clickId 가 아니라 관광지 자체의 id 다.**
+ *
+ * 호텔·항공권의 `/r/{clickId}` 는 그 한 번의 노출을 가리킨다 — clickId 가 애드픽
+ * subid 로 링크에 박혀서 노출마다 달라야 성과 조인이 되기 때문이다. 관광지는 변환이
+ * 없어서 subid 를 안 붙이고, 목적지도 이름+도시로 정해지는 값이라 노출을 구별할
+ * 이유가 없다. 그래서 **주소가 고정이고, 단톡방에 오래 남은 카드의 링크도 안 죽는다.**
+ */
+export const attractionRedirectUrl = (c: AppConfig, attractionId: number): string =>
+  `${c.publicBaseUrl.replace(/\/+$/, '')}/a/${attractionId}`;
+
 export const CONFIG = 'APP_CONFIG';
