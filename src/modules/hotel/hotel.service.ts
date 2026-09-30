@@ -66,33 +66,36 @@ export function dedupe(hotels: Hotel[], logger?: Logger): Hotel[] {
  *   이름으로만 판정 '호텔 그란비아 오사카' / 'Hotel Granvia Osaka' 가 다른 값이 된다.
  *                  모델은 같은 호텔을 표기만 바꿔 여러 번 준다.
  *
- * 그래서 **주소가 신원 노릇을 하는지 먼저 본다.** 한 주소에 서로 다른 이름이 셋 이상
- * 달려 있으면 그건 호텔 페이지가 아니라 목록 페이지다 — 그 주소를 쓰는 항목들은
- * 이름으로 판정한다. 나머지는 지금까지처럼 주소로 판정한다.
+ * 그래서 **주소가 신원 노릇을 하는지 먼저 본다.** 한 주소에 항목이 셋 이상 달려
+ * 있으면 그건 호텔 페이지가 아니라 목록 페이지다 — 그 주소를 쓰는 항목들은 이름으로
+ * 판정한다. 나머지는 지금까지처럼 주소로 판정한다.
  *
- * ⚠️ **왜 둘이 아니라 셋인가.** 한 주소에 이름이 둘이면 대개 같은 호텔의 표기 차이다
+ * ⚠️ **세는 것은 항목 수이지 이름 종류가 아니다.** 처음에는 "서로 다른 이름이 셋
+ *    이상" 으로 셌는데, 그러면 **모델이 같은 호텔 두 곳을 열 번씩 되풀이해 준 경우가
+ *    안 걸린다** — 스무 줄이 한 주소를 가리키는데 이름 종류는 둘뿐이라 목록 페이지로
+ *    안 보고, 주소로 묶어 한 줄만 남는다. 고치려던 그 증상이 그대로 난다.
+ *    항목 수로 세면 스무 줄이 곧 신호라서 이름으로 갈리고 두 줄이 나간다.
+ *
+ * ⚠️ **왜 둘이 아니라 셋인가.** 한 주소에 항목이 둘이면 대개 같은 호텔의 표기 차이다
  *    ('호텔 그란비아 오사카' / 'Hotel Granvia Osaka'). 한글과 영문은 문자열로 견줄
  *    수가 없어서 **주소가 그 둘을 잇는 유일한 다리**다. 둘에서 갈라버리면 중복이
- *    그대로 카드에 나간다. 반면 목록 페이지는 모델이 여러 곳에 같이 붙이므로 셋을
- *    넘는다 — 실제로 스무 곳 전부에 같은 주소가 붙어 한 줄만 남았다.
+ *    그대로 카드에 나간다.
  *
- * ⚠️ 둘인 경우는 여전히 애매하고, 그때는 **합치는 쪽으로 기운다.** 줄이 하나만 남는
- *    것보다 같은 호텔이 두 줄 나오는 게 낫지만, 둘 중 하나를 골라야 한다면 더 흔한
- *    쪽(표기 차이)을 잡는다.
+ * ⚠️ 셋 이상이 전부 같은 호텔의 표기 차이일 수도 있고, 그때는 같은 호텔이 세 줄
+ *    나간다. **그쪽으로 틀리는 게 낫다** — 스무 줄이 한 줄로 접히는 것보다 중복 몇
+ *    줄이 눈에 거슬리는 편이 훨씬 가볍다.
  */
-const LISTING_PAGE_NAMES = 3;
+const LISTING_PAGE_ITEMS = 3;
 export function identityOf(hotels: Hotel[]): (hotel: Hotel) => string {
-  const namesByUrl = new Map<string, Set<string>>();
+  const countByUrl = new Map<string, number>();
   for (const hotel of hotels) {
     if (!hotel.sourceUrl) continue;
-    const names = namesByUrl.get(hotel.sourceUrl) ?? new Set<string>();
-    names.add(normalizeName(hotel.name));
-    namesByUrl.set(hotel.sourceUrl, names);
+    countByUrl.set(hotel.sourceUrl, (countByUrl.get(hotel.sourceUrl) ?? 0) + 1);
   }
 
   return (hotel) => {
     const listing =
-      hotel.sourceUrl && (namesByUrl.get(hotel.sourceUrl)?.size ?? 0) >= LISTING_PAGE_NAMES;
+      hotel.sourceUrl && (countByUrl.get(hotel.sourceUrl) ?? 0) >= LISTING_PAGE_ITEMS;
     if (!hotel.sourceUrl || listing) return `name:${normalizeName(hotel.name)}`;
     return `url:${hotel.sourceUrl}`;
   };

@@ -303,6 +303,9 @@ export class OpenAiHotelProvider
   // ------------------------------------------------------------ 정규화
   private toHotels(picks: RawPick[], query: HotelQuery): Hotel[] {
     const hotels: Hotel[] = [];
+    /** 어느 호스트에서 몇 개가 떨어졌나. 한 줄 요약에 쓴다. */
+    const droppedHosts: Record<string, number> = {};
+    let droppedEmpty = 0;
 
     for (const pick of picks) {
       const name = text(pick.name);
@@ -311,6 +314,7 @@ export class OpenAiHotelProvider
         // ⚠️ **조용히 버리면 안 된다.** 스키마상 필수인 값이라 빠질 리 없다고 생각했지만,
         //    effort 를 내리면 모델이 빈 문자열이나 "정보 없음" 을 채워 보낸다. 그러면
         //    picks=10 인데 결과는 0건이 되고, 로그에 아무 흔적이 없어 원인을 못 찾는다.
+        droppedEmpty += 1;
         this.logger.warn(
           `dropped hotel with empty field name=${name ?? '-'} url=${sourceUrl ?? '-'}`,
         );
@@ -319,6 +323,7 @@ export class OpenAiHotelProvider
 
       // 링크가 없으면 카드 줄을 만들 수 없다. 지어낸 호스트도 여기서 걸린다.
       if (!isAllowedSourceUrl(sourceUrl)) {
+        count(droppedHosts, hostOf(sourceUrl));
         this.logger.warn(`dropped hotel with untrusted url name=${name} url=${sourceUrl}`);
         continue;
       }
@@ -342,6 +347,21 @@ export class OpenAiHotelProvider
           ? pick.tags.filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
           : [],
       });
+    }
+
+    // ⚠️ **왜 한 줄로 또 남기나.** 위의 warn 들은 버려진 항목마다 한 줄씩이라, 스무
+    //    곳이 떨어지면 스무 줄을 세어봐야 "몇 개가 왜 없어졌는지" 를 알 수 있다.
+    //    `picks=20 kept=1` 은 그 자체로 답이고, hosts= 가 어느 사이트를 허용 목록에
+    //    넣어야 하는지까지 알려준다 — 운영에서 실제로 여기서 열아홉 개가 떨어졌다.
+    if (picks.length !== hotels.length) {
+      const hosts = Object.entries(droppedHosts)
+        .map(([host, n]) => `${host}:${n}`)
+        .join(' ');
+      this.logger.warn(
+        `hotel normalize ${this.subjectOf(query)} picks=${picks.length} kept=${hotels.length} ` +
+          `droppedEmpty=${droppedEmpty} droppedHost=${picks.length - hotels.length - droppedEmpty}` +
+          (hosts ? ` hosts=${hosts}` : ''),
+      );
     }
 
     return hotels.slice(0, query.limit);
@@ -414,6 +434,25 @@ export class OpenAiHotelProvider
 /** Record 카운터 증가. 층별 성공률을 보려고 쓴다. */
 function count(bucket: Record<string, number>, key: string): void {
   bucket[key] = (bucket[key] ?? 0) + 1;
+}
+
+/**
+ * 로그에 찍을 호스트명.
+ *
+ * ⚠️ **https 가 아니면 스킴을 같이 찍는다.** `allowedHost` 는 호스트가 목록에 있어도
+ *    http 면 떨어뜨리는데, 그때 호스트만 찍으면 `hosts=kr.trip.com:20` 이 되어
+ *    "허용 목록에 있는데 왜 떨어지지" 로 읽힌다. 진단하려고 남기는 줄이 엉뚱한 곳을
+ *    가리키면 없느니만 못하다.
+ */
+function hostOf(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:'
+      ? parsed.hostname
+      : `${parsed.protocol}//${parsed.hostname}`;
+  } catch {
+    return '(잘못된 주소)';
+  }
 }
 
 /**
