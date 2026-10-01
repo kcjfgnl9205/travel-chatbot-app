@@ -121,9 +121,13 @@ hotel search city=후쿠오카 searches=0 candidates=0 chars=17 ms=5078
 
 목표: **총 45초 이하** (1분 예산에 여유를 두고). 후보 수단을 효과 큰 순서로:
 
+> ✅ 2026-10-01 — ①의 전제를 고쳤다. 2차가 **번호만** 고른다(`PICK_INDEX_SCHEMA`).
+> `source_url` 을 다시 쓸 일이 없으니 minimal 에서 0건이 되던 경로가 사라졌고,
+> 출력 토큰도 짧아졌다. **`OPENAI_RANK_EFFORT=minimal` 로 재측정할 차례다.**
+
 | 수단 | 실측 | 대가 |
 |---|---|---|
-| ① **`rank=minimal` 을 쓸 수 있게 만든다** | **30초 → 9.7초** (총 27초) | 지금은 `source_url` 이 비어 와 0건. **이걸 고치는 게 1순위** |
+| ① **`rank=minimal` 을 쓸 수 있게 만든다** | **30초 → 9.7초** (총 27초) | ~~지금은 `source_url` 이 비어 와 0건~~ → 번호 선택으로 해결. 측정만 남았다 |
 | ② `RESULT_MAX_ITEMS` 20 → 10 | 몇 초 + **실패율 감소** | 더보기 2페이지까지 |
 | ③ 썸네일을 첫 페이지(5건)만 수집 | 미측정 | 2페이지 사진 없음 |
 | ④ **rank 호출 제거** (1차 결과를 서버가 정렬) | 23~30초 절감 (총 ~20초) | 모델의 비교·선별이 사라진다. 최후 수단 |
@@ -154,11 +158,15 @@ grep -E "hotel (search|rank) city" /tmp/bench.log   # 단계별 ms
 ⚠️ 한 번 돌 때마다 OpenAI 요금이 나간다. 같은 도시를 반복하면 모델 캐시 효과로
 빨라 보일 수 있으니 **도시를 바꿔가며** 잰다.
 
-#### A-3. 검색 전체에 타임아웃을 건다
+#### A-3. 검색 전체에 타임아웃을 건다 ✅ 2026-10-01
 
-지금은 모델 호출마다 60초(`OPENAI_TIMEOUT_SECONDS`)뿐이고 **검색 전체를 끊는 자리가
+`SEARCH_TIMEOUT_SECONDS`(기본 240)로 `runSearch` 가 끊는다. 넘기면 실패 카드를
+보내고, 늦게 끝난 결과는 **저장만** 한다(다시 물으면 바로 나간다). 푸시는
+`pushOnce` 로 한 번뿐이다 — 콜백 URL 이 1회용이라 두 번 보내면 하나는 버려진다.
+
+~~지금은 모델 호출마다 60초(`OPENAI_TIMEOUT_SECONDS`)뿐이고 **검색 전체를 끊는 자리가
 없다.** 두 번 호출 + 썸네일이면 이론상 5분을 넘길 수 있고, 그러면 콜백 URL 이 만료돼
-사용자는 아무것도 못 받는다.
+사용자는 아무것도 못 받는다.~~
 
 [search.service.ts](../src/modules/search/search.service.ts) `runSearch` 에 전체 타임아웃
 (예: 4분)을 두고, 넘기면 **실패 콜백을 보낸다.** 침묵보다 낫다.
@@ -167,12 +175,19 @@ grep -E "hotel (search|rank) city" /tmp/bench.log   # 단계별 ms
 경로마다 한 번씩만 부르지만, 타임아웃을 추가하면 "타임아웃 푸시 + 늦게 끝난 검색 푸시"
 가 겹칠 수 있다. 플래그로 막을 것)
 
-#### A-4. 진단에 provider trace 를 되살린다 (선택)
+#### A-4. 진단에 provider trace 를 되살린다 ✅ 2026-10-01
 
-이번 원인 규명이 **서버 로그 없이는 불가능**했다. `searches=0` 은 로그에만 있다.
-`/api/v1/debug/search` 응답에 `searchCalls` · `candidates` · `picks` · 단계별 ms 를
-같이 실어주면 다음 사람이 로그를 못 봐도 원인을 짚는다.
-(예전 `*-debug.controller.ts` 에 있던 `trace=true` 를 라우터 구조에 맞게 되살리는 것)
+`POST /api/v1/debug/search` 응답에 `trace` 가 실린다. 빈손일 때 원인이 셋인데
+**고치는 곳이 전부 다르다** —
+
+| 신호 | 뜻 | 고칠 곳 |
+|---|---|---|
+| `trace.provider.searchCalls = 0` | 모델이 웹 검색을 건너뛰었다 | 프롬프트 / `tool_choice` |
+| `trace.provider.candidates = 0` | 1차가 아무것도 못 모았다 | 1차 검색 프롬프트 |
+| `picks > 0` 인데 `trace.kept = 0` | 정규화가 전부 버렸다 | 허용 호스트 / 필수 필드 |
+
+`trace.candidates` 에 1차 원문이 그대로 들어 있다. 관광지는 DB 쿼리 하나라 단계가
+없어서 `trace` 가 null 이다 — 빈 숫자를 지어내지 않는다.
 
 ### B. 사람이 해야 할 일 (코드로 못 하는 것)
 

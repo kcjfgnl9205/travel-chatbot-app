@@ -83,6 +83,13 @@ export interface HotelProvider {
    * 카카오 5초 예산 안에서 도는 건 캐시 조회뿐이다.
    */
   search(query: HotelQuery): Promise<Hotel[]>;
+  /**
+   * 진단용. 단계별 계측을 같이 돌려준다. **AI provider 만 가진다** —
+   * 단계가 없는 provider 가 억지로 흉내 내면 빈 숫자가 진짜처럼 보인다.
+   */
+  searchTraced?(
+    query: HotelQuery,
+  ): Promise<{ hotels: Hotel[]; trace: object; candidates: string | null }>;
 }
 
 /**

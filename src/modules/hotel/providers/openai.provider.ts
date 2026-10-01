@@ -60,9 +60,9 @@ export { chooseUrl, toKoreanUrl } from '../../../common/booking-url';
 /**
  * 검색 한 번에 대한 계측. 공통 필드는 [TwoStageTrace](../../openai/two-stage.ts) 에 있다.
  *
- * ⚠️ **지금 이 값을 읽는 코드가 없다.** 주석이 가리키던 /api/v1/debug/hotel-search 는
- *    컨트롤러가 /debug/search 하나로 합쳐지면서 사라졌고, 로그에 찍히는 건 trace 가
- *    아니라 respond() 의 반환값이다. 남겨둔 이유와 정리 방향은 TwoStageTrace 주석 참고.
+ * **읽는 쪽은 `POST /api/v1/debug/search` 의 `trace` 다.** 한동안 읽는 코드가 없어
+ * 죽어 있었는데, 그 사이 원인 규명이 서버 로그 없이는 불가능했다 — 모델이 웹 검색을
+ * 건너뛴 사실(`searchCalls=0`)이 로그에만 있었다. 이제 응답에 실린다.
  */
 export interface SearchTrace extends TwoStageTrace {
   /** 살아 있지 않아서 버린 이미지 주소 수. */

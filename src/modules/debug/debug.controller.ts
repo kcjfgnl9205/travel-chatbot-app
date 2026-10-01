@@ -111,7 +111,12 @@ export class DebugController {
       '```\n발화 → 의도·지역 추출 → 지역 정규화 → AI 검색 → 카드 조립\n```\n\n' +
       '⚠️ **라우터의 즉시 응답과는 다르다.** 캐시 미스면 거기서는 `useCallback` 만 나가고 ' +
       '이 카드는 잠시 뒤 **콜백으로** 배달된다 — 여기 나오는 건 그 콜백 본문이다.\n\n' +
-      '⚠️ 호출 한 번이 OpenAI 요금이다 (7~30초). 캐시를 읽지도 쓰지도 않는다.',
+      '⚠️ 호출 한 번이 OpenAI 요금이다 (7~30초). 캐시를 읽지도 쓰지도 않는다.\n\n' +
+      '`trace` 가 **왜 그 결과인지**를 말해준다 — `provider.searchCalls`(0 이면 모델이 ' +
+      '웹 검색을 건너뛴 것), `provider.candidates`(1차가 모은 수), `provider.picks`' +
+      '(2차가 고른 수), `kept`(정규화를 통과해 카드까지 간 수), `candidates`(1차 원문). ' +
+      '셋은 고치는 곳이 전부 다르다. 예전에는 이게 서버 로그에만 있어서 로그를 못 보면 ' +
+      '원인을 짚을 수 없었다.',
   })
   @ApiBody({
     schema: { type: 'object', properties: { utterance: { type: 'string' } } },
@@ -164,8 +169,12 @@ export class DebugController {
 
     const domain = this.domainOf(kind);
     const searchStarted = Date.now();
-    const items = await domain.search(ctx);
+    // ⚠️ **운영과 같은 길을 태운다.** searchTraced 는 search 와 다른 코드가 아니라
+    //    같은 코드에 계측을 얹은 것이다. 없으면(관광지) 그냥 search 를 부른다.
+    const traced = await domain.searchTraced?.(ctx);
+    const items = traced?.items ?? (await domain.search(ctx));
     const searchMs = Date.now() - searchStarted;
+    const trace = traced?.trace ?? null;
 
     if (!items.length) {
       return {
@@ -173,6 +182,11 @@ export class DebugController {
         intent: parsed,
         place,
         items: [],
+        // ⚠️ **빈손일 때가 trace 가 가장 필요한 순간이다.** provider.searchCalls 가
+        //    0 이면 모델이 웹 검색을 건너뛴 것이고, candidates 가 0 이면 검색 프롬프트가
+        //    안 먹은 것이고, picks 는 있는데 kept 가 0 이면 정규화가 전부 버린 것이다.
+        //    셋은 고치는 곳이 전부 다르다.
+        trace,
         timing: { searchMs, totalMs: Date.now() - started },
         response: cards.emptyText(meta),
       };
@@ -195,6 +209,7 @@ export class DebugController {
       cacheKey: cacheKeyOf(kind, place, from, parsed.tripType),
       itemCount: items.length,
       items,
+      trace,
       timing: { searchMs, totalMs: Date.now() - started },
       response: t.listCardWithNotice(
         {

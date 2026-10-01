@@ -11,6 +11,7 @@ import {
   SearchContext,
   SearchDomain,
   SearchMeta,
+  SearchTrace,
 } from '../search/search.types';
 import {
   HOTEL_PROVIDER,
@@ -141,6 +142,24 @@ export class HotelService implements SearchDomain<Hotel> {
       `hotel result city=${ctx.place.canonicalName} found=${hotels.length} unique=${unique.length}`,
     );
     return unique.slice(0, ctx.limit);
+  }
+
+  /**
+   * 진단용. `search` 와 **같은 길**을 타되 계측을 같이 돌려준다.
+   *
+   * ⚠️ 비슷한 코드를 하나 더 만들지 않는다 — 그러면 검증하는 게 실제 응답이 아니라
+   *    "비슷한 것" 이 된다. 중복을 피하려고 search() 가 이걸 거쳐 가게 두었다.
+   */
+  async searchTraced(ctx: SearchContext): Promise<{ items: Hotel[]; trace: SearchTrace }> {
+    // 단계가 없는 provider(테스트·DB)는 계측도 없다. 빈 숫자를 지어내지 않는다.
+    if (!this.provider.searchTraced) {
+      const items = await this.search(ctx);
+      return { items, trace: { provider: null, candidates: null, kept: items.length } };
+    }
+
+    const { hotels, trace, candidates } = await this.provider.searchTraced(queryOf(ctx));
+    const unique = dedupe(hotels, this.logger).slice(0, ctx.limit);
+    return { items: unique, trace: { provider: trace, candidates, kept: unique.length } };
   }
 
   isItem(item: unknown): item is Hotel {

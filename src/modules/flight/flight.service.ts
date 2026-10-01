@@ -12,6 +12,7 @@ import {
   SearchContext,
   SearchDomain,
   SearchMeta,
+  SearchTrace,
 } from '../search/search.types';
 import {
   FLIGHT_PROVIDER,
@@ -97,6 +98,25 @@ export class FlightService implements SearchDomain<FlightOffer> {
         `unique=${unique.length} offers=${offers.length}`,
     );
     return offers.slice(0, ctx.limit);
+  }
+
+  /**
+   * 진단용. `search` 와 **같은 길**을 타되 계측을 같이 돌려준다.
+   *
+   * ⚠️ 비슷한 코드를 하나 더 만들지 않는다 — 그러면 검증하는 게 실제 응답이 아니라
+   *    "비슷한 것" 이 된다.
+   */
+  async searchTraced(ctx: SearchContext): Promise<{ items: FlightOffer[]; trace: SearchTrace }> {
+    // 단계가 없는 provider(테스트)는 계측도 없다. 빈 숫자를 지어내지 않는다.
+    if (!this.provider.searchTraced) {
+      const items = await this.search(ctx);
+      return { items, trace: { provider: null, candidates: null, kept: items.length } };
+    }
+
+    const { flights, trace, candidates } = await this.provider.searchTraced(this.queryOf(ctx));
+    const unique = dedupe(flights, this.logger);
+    const offers = toOffers(unique, this.queryOf(ctx).tripType).slice(0, ctx.limit);
+    return { items: offers, trace: { provider: trace, candidates, kept: offers.length } };
   }
 
   isItem(item: unknown): item is FlightOffer {

@@ -124,6 +124,12 @@ export interface SearchDomain<T = unknown> {
   peek?(ctx: SearchContext): Promise<T[] | null>;
   /** ⚠️ 느리다(AI 7~30초). 라우터가 백그라운드에서만 부른다. */
   search(ctx: SearchContext): Promise<T[]>;
+  /**
+   * 진단용. `search` 와 **같은 코드**를 태우되 단계별 계측을 같이 돌려준다.
+   *
+   * 단계가 없는 도메인은 구현하지 않는다 — 관광지는 DB 쿼리 하나라 잴 게 없다.
+   */
+  searchTraced?(ctx: SearchContext): Promise<{ items: T[]; trace: SearchTrace }>;
   /** 캐시에서 살려낸 값이 이 도메인의 모양인가. 배포로 필드가 바뀌면 미스로 떨어진다. */
   isItem(item: unknown): item is T;
   /** 카드 머리글. '오사카 호텔 5곳' / '서울→오사카 항공권 5편' */
@@ -134,6 +140,32 @@ export interface SearchDomain<T = unknown> {
   moreText(meta: SearchMeta): string;
   /** 카드에 붙일 퀵리플라이. */
   quickReplies(meta: SearchMeta): t.Json[];
+}
+
+/**
+ * 진단용 계측. **로그에만 있던 것을 /debug/search 응답으로 끌어올린다.**
+ *
+ * ⚠️ 한 번은 원인 규명이 **서버 로그 없이는 불가능**했다 — 모델이 웹 검색을 건너뛴
+ *    사실(`searches=0`)이 로그에만 있었고, 응답만 보면 그냥 빈손이었다. 로그를 못
+ *    보는 사람이 "왜 빈손인가" 를 짚으려면 이 값이 응답에 있어야 한다.
+ */
+export interface SearchTrace {
+  /**
+   * provider 단계별 계측. 2단 검색 provider 만 준다 (DB provider 는 null).
+   *
+   * 모양은 provider 가 정한다 — 호텔은 썸네일 수까지 담고 항공권은 안 담는다.
+   * 여기서 구조를 못 박으면 한쪽에 없는 칸이 0 으로 찍혀 진짜처럼 보인다.
+   */
+  provider: object | null;
+  /** 1차 호출이 긁어온 후보 원문. 모델이 뭘 봤는지는 이것 말고 알 길이 없다. */
+  candidates: string | null;
+  /**
+   * provider 가 준 것 중 **카드까지 가는 개수.**
+   *
+   * provider trace 의 `picks` 와 다르면 그 차이가 곧 정규화가 버린 수다 —
+   * 허용 밖 호스트, 빈 필드, 중복. 로그를 줄줄이 세지 않아도 어디서 샜는지 보인다.
+   */
+  kept: number;
 }
 
 /**
