@@ -1,3 +1,4 @@
+import { AppConfig, CONFIG } from '../src/config/app.config';
 import {
   TestApp,
   askUntilCard,
@@ -421,5 +422,71 @@ describe('POST /api/v1/kakao/router', () => {
     } finally {
       await receiver.close();
     }
+  });
+
+  /**
+   * 검색 전체 타임아웃.
+   *
+   * ⚠️ 모델 호출마다 걸린 60초로는 못 막는다 — 2단 호출 + 썸네일이면 합이 콜백 URL
+   *    수명(5분)을 넘길 수 있고, 그러면 URL 이 만료돼 사용자는 "찾고 있어요" 만
+   *    보고 끝난다. **침묵보다 실패 카드가 낫다.**
+   */
+  describe('검색이 너무 오래 걸릴 때', () => {
+    /** 느린 검색 + 짧은 타임아웃. 설정 객체를 그대로 고쳐 쓰고 끝나면 되돌린다. */
+    async function withSlowSearch(run: (receiver: any) => Promise<void>) {
+      const config = ctx.app.get<AppConfig>(CONFIG);
+      const original = config.searchTimeoutMs;
+      config.searchTimeoutMs = 30;
+      ctx.provider.delayMs = 300;
+      const receiver = await callbackReceiver();
+      try {
+        await run(receiver);
+      } finally {
+        config.searchTimeoutMs = original;
+        await receiver.close();
+      }
+    }
+
+    it('기다리기를 그만두고 실패 카드를 보낸다 — 침묵보다 낫다', async () => {
+      await withSlowSearch(async (receiver) => {
+        await post(
+          ctx.app,
+          kakaoPayload('후쿠오카 호텔 추천해줘', { callbackUrl: receiver.url }),
+        );
+
+        const pushed = await receiver.received;
+        expect(textOf(pushed)).toContain('불러오지 못했어요');
+      });
+    });
+
+    it('**푸시는 한 번뿐이다** — 콜백 URL 은 1회용이라 두 번째는 버려진다', async () => {
+      await withSlowSearch(async (receiver) => {
+        await post(
+          ctx.app,
+          kakaoPayload('후쿠오카 호텔 추천해줘', { callbackUrl: receiver.url }),
+        );
+        await receiver.received;
+
+        // 늦게 끝난 검색이 카드를 또 밀지 않는지. 검색(300ms)이 끝나고도 남게 기다린다.
+        await new Promise((r) => setTimeout(r, 400));
+        expect(receiver.bodies).toHaveLength(1);
+      });
+    });
+
+    it('늦게 끝난 결과는 저장해둔다 — 다시 물으면 바로 나간다', async () => {
+      await withSlowSearch(async (receiver) => {
+        await post(
+          ctx.app,
+          kakaoPayload('후쿠오카 호텔 추천해줘', { callbackUrl: receiver.url }),
+        );
+        await receiver.received;
+        await new Promise((r) => setTimeout(r, 400));
+
+        // 돈과 시간을 이미 썼다. 버리면 사용자가 또 그만큼 기다린다.
+        const body = await post(ctx.app, kakaoPayload('후쿠오카 호텔 추천해줘'));
+        expect(listCardOf(body.body).items).toHaveLength(5);
+        expect(ctx.provider.calls).toHaveLength(1);
+      });
+    });
   });
 });

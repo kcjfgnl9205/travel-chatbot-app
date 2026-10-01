@@ -185,16 +185,23 @@ export async function askUntilCard(
   throw new Error(`listCard 가 나오지 않았다: ${utterance}`);
 }
 
-/** 카카오 콜백 수신기 흉내. POST 로 들어온 첫 본문을 돌려준다. */
+/**
+ * 카카오 콜백 수신기 흉내. POST 로 들어온 첫 본문을 돌려준다.
+ *
+ * ⚠️ `bodies` 로 **몇 번 왔는지**도 센다. 진짜 콜백 URL 은 1회용이라 두 번째 푸시는
+ *    버려지는데, 수신기가 첫 본문만 보면 그 사실이 테스트에서 드러나지 않는다.
+ */
 export async function callbackReceiver(): Promise<{
   url: string;
   received: Promise<any>;
+  bodies: any[];
   close: () => Promise<void>;
 }> {
   let resolve!: (body: any) => void;
   const received = new Promise<any>((r) => {
     resolve = r;
   });
+  const bodies: any[] = [];
 
   const server: Server = createServer((req, res) => {
     const chunks: Buffer[] = [];
@@ -203,8 +210,11 @@ export async function callbackReceiver(): Promise<{
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end('{"status":"SUCCESS"}');
       try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        bodies.push(body);
+        resolve(body);
       } catch {
+        bodies.push(null);
         resolve(null);
       }
     });
@@ -216,6 +226,7 @@ export async function callbackReceiver(): Promise<{
   return {
     url: `http://127.0.0.1:${port}/callback`,
     received,
+    bodies,
     close: () => new Promise<void>((r) => server.close(() => r())),
   };
 }

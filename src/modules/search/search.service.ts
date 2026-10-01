@@ -226,6 +226,10 @@ export class SearchService {
    * 요청 경로 밖에서 도는 코드라 **여기서 던진 예외는 아무도 못 받는다.**
    * 전부 삼키고 로그로만 남긴다. 선점한 행은 어떤 경로로든 반드시 풀어준다 —
    * 안 그러면 그 지역은 pending 이 만료될 때까지 아무도 검색하지 못한다.
+   *
+   * ⚠️ **전체 시간을 여기서 끊는다.** 모델 호출마다 걸린 60초로는 못 막는다 —
+   *    2단 호출 + 썸네일이면 합이 콜백 URL 수명(5분)을 넘길 수 있고, 그러면 URL 이
+   *    만료돼 사용자는 "찾고 있어요" 만 보고 끝난다. **침묵보다 실패 카드가 낫다.**
    */
   private async runSearch(
     ctx: SearchContext,
@@ -236,8 +240,36 @@ export class SearchService {
     opts: { ignored: string[]; messageId: string | null },
   ): Promise<void> {
     const domain = this.domainOf(meta.kind);
+
+    // ⚠️ **콜백 URL 은 1회만 유효하다.** 타임아웃 푸시와 늦게 끝난 검색의 푸시가
+    //    겹치면 둘 중 하나는 버려지는데, 어느 쪽이 버려질지는 운이다. 한 번만 보낸다.
+    let pushed = false;
+    const pushOnce = async (body: t.Json): Promise<void> => {
+      if (pushed) return;
+      pushed = true;
+      await this.push(req, body);
+    };
+
+    // 검색은 멈출 방법이 없다(모델 호출 중이다). 기다리기를 그만둘 뿐이다.
+    const search = domain.search(ctx);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), this.config.searchTimeoutMs);
+    });
+
     try {
-      const items = await domain.search(ctx);
+      const items = await Promise.race([search, timeout]);
+
+      if (items === null) {
+        this.logger.error(
+          `search timed out key=${cacheKey} after=${this.config.searchTimeoutMs}ms — ` +
+            '실패 카드를 보낸다. 콜백 URL 을 그냥 태우면 사용자는 아무것도 못 받는다.',
+        );
+        await this.store.fail(cacheKey, 'timeout', this.config.failedTtlMinutes, meta);
+        await pushOnce(cards.failedText(meta));
+        this.storeLate(search, cacheKey, meta);
+        return;
+      }
 
       if (!items.length) {
         // ⚠️ **한 번의 빈손으로 굳히지 않는다.** 모델은 같은 질의에도 가끔 빈손으로
@@ -247,7 +279,7 @@ export class SearchService {
         const ttl = streak >= 2 ? this.config.failedTtlMinutes : 1;
         await this.store.fail(cacheKey, 'empty result', ttl, { ...meta, emptyStreak: streak });
         this.logger.warn(`search empty key=${cacheKey} streak=${streak} ttl=${ttl}m`);
-        await this.push(req, cards.emptyText(meta));
+        await pushOnce(cards.emptyText(meta));
         return;
       }
 
@@ -259,12 +291,31 @@ export class SearchService {
         messageId: opts.messageId,
         cacheHit: false,
       });
-      await this.push(req, response);
+      await pushOnce(response);
     } catch (err) {
       this.logger.error(`background search failed key=${cacheKey} err=${err}`);
       await this.store.fail(cacheKey, String(err), this.config.failedTtlMinutes, meta);
-      await this.push(req, cards.failedText(meta));
+      await pushOnce(cards.failedText(meta));
+    } finally {
+      // 검색이 이겼으면 타이머가 남는다. 안 치우면 그만큼 프로세스가 안 죽는다.
+      clearTimeout(timer);
     }
+  }
+
+  /**
+   * 타임아웃 뒤에 끝난 검색을 **저장만** 한다.
+   *
+   * 버리기는 아깝다 — 돈과 시간을 이미 썼고, 사용자가 다시 물으면 그 결과가 바로
+   * 나간다. 하지만 **푸시는 못 한다.** 콜백 URL 은 1회용이고 실패 카드에 이미 썼다.
+   */
+  private storeLate(search: Promise<unknown[]>, cacheKey: string, meta: SearchMeta): void {
+    void search
+      .then(async (items) => {
+        if (!items.length) return;
+        await this.store.complete(cacheKey, items, this.ttlOf(meta.kind), meta);
+        this.logger.log(`late search stored key=${cacheKey} items=${items.length}`);
+      })
+      .catch((err) => this.logger.warn(`late search discarded key=${cacheKey} err=${err}`));
   }
 
   /**
