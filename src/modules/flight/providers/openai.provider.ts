@@ -29,9 +29,15 @@ import { Flight, FlightProvider, FlightQuery, isoDate } from '../flight.types';
 /**
  * 예약 링크로 인정하는 호스트.
  *
- * 호텔은 네 곳을 쓰는데 여기는 두 곳이다 — 클룩·호텔스닷컴은 항공권을 팔지 않아서
- * 허용해두면 모델이 "항공권 링크" 라며 엉뚱한 페이지를 가져온다. 반대로 두 곳은
- * 호텔 쪽에서 이미 애드픽 변환이 되는 게 확인된 곳이라 수익화 경로가 검증돼 있다.
+ * 클룩·호텔스닷컴은 호텔 쪽 목록에 있지만 여기엔 없다 — **항공권을 팔지 않아서**
+ * 허용해두면 모델이 "항공권 링크" 라며 엉뚱한 페이지를 가져온다.
+ *
+ * ⚠️ **스카이스캐너는 애드픽 변환이 검증되지 않았다.** 트립닷컴·마이리얼트립은 호텔
+ *    쪽에서 변환이 되는 걸 확인하고 넣은 곳인데, 스카이스캐너는 그 확인이 없다.
+ *    변환에 실패해도 줄은 원본 주소로 나가므로 사용자에게는 멀쩡해 보이고, 대신
+ *    수수료만 조용히 샌다 — 그 신호는 `애드픽 변환 실패` 경고뿐이다
+ *    ([rows.service.ts](../../recommendation/rows.service.ts)). 로그를 보고 변환이
+ *    안 되는 게 확실해지면 이 줄을 빼는 판단을 해야 한다.
  *
  * ⚠️ 여기를 바꾸면 SEARCH_INSTRUCTIONS 와 스키마의 안내 문구도 같이 바꿔야 한다.
  *    모델에게 A 를 찾으라고 시켜놓고 B 만 통과시키면 결과가 전부 버려진다.
@@ -39,11 +45,16 @@ import { Flight, FlightProvider, FlightQuery, isoDate } from '../flight.types';
 export const FLIGHT_ALLOWED_HOSTS = [
   'trip.com', // 트립닷컴 항공
   'myrealtrip.com', // 마이리얼트립 항공
+  // 스카이스캐너는 국가 도메인이 갈린다. 셋 다 merchantFrom 이 'skyscanner' 로 읽으므로
+  // 어느 쪽으로 들어와도 줄은 하나로 접힌다(toKoreanUrl 이 .co.kr 로 돌려놓는다).
+  'skyscanner.co.kr',
+  'skyscanner.net',
+  'skyscanner.com',
 ];
 
 /** 프롬프트에 그대로 박아 넣는 표기. 목록과 문구가 어긋나지 않게 여기서 만든다. */
 export const FLIGHT_ALLOWED_SITES_TEXT =
-  '트립닷컴(trip.com), 마이리얼트립(myrealtrip.com)';
+  '트립닷컴(trip.com), 마이리얼트립(myrealtrip.com), 스카이스캐너(skyscanner.co.kr)';
 
 export function isAllowedFlightUrl(url: string): boolean {
   return allowedHost(url, FLIGHT_ALLOWED_HOSTS);
@@ -56,9 +67,10 @@ export function flightMerchantOf(url: string): string | null {
 const SEARCH_INSTRUCTIONS = [
   '너는 한국인 여행자를 위한 항공권 리서치 어시스턴트다.',
   '반드시 web_search 툴로 실제 웹을 검색해서 답한다. 기억에 의존하지 않는다.',
-  `예약 링크는 반드시 다음 두 곳 중 하나여야 한다: ${FLIGHT_ALLOWED_SITES_TEXT}.`,
-  '이 두 곳이 아닌 사이트(스카이스캐너·네이버항공권·항공사 자체 사이트 등)의 링크는 적지 마라.',
-  '**반드시 한국어 페이지 주소를 골라라** (www.trip.com 이 아니라 kr.trip.com).',
+  `예약 링크는 반드시 다음 세 곳 중 하나여야 한다: ${FLIGHT_ALLOWED_SITES_TEXT}.`,
+  '이 세 곳이 아닌 사이트(네이버항공권·인터파크·항공사 자체 사이트 등)의 링크는 적지 마라.',
+  '**반드시 한국어 페이지 주소를 골라라** (www.trip.com 이 아니라 kr.trip.com, ' +
+    'www.skyscanner.net 이 아니라 www.skyscanner.co.kr).',
   '검색 결과에 나오지 않은 편명·시각·가격은 절대 지어내지 않는다. 모르면 null 로 둔다.',
   '항공사는 한국어로 적는다 (Korean Air → 대한항공, Peach → 피치항공).',
   '가격은 1인 기준 총액(세금·유류할증료 포함)을 원화로 적는다.',
@@ -97,7 +109,7 @@ export const FLIGHT_CANDIDATE_SCHEMA = {
               type: 'string',
               description:
                 `검색 결과에 실제로 나온 예약 페이지 URL. ${FLIGHT_ALLOWED_SITES_TEXT} 중 하나. ` +
-                '반드시 한국어 페이지 (kr.trip.com 등)',
+                '반드시 한국어 페이지 (kr.trip.com, www.skyscanner.co.kr 등)',
             },
             price_from: {
               type: ['integer', 'null'],
@@ -177,7 +189,7 @@ export const FLIGHT_SCHEMA = {
               description:
                 `예약 페이지 URL. ${FLIGHT_ALLOWED_SITES_TEXT} 중 하나여야 한다. 한국어 페이지`,
             },
-            merchant: { type: ['string', 'null'], description: 'trip | myrealtrip' },
+            merchant: { type: ['string', 'null'], description: 'trip | myrealtrip | skyscanner' },
             tags: {
               type: 'array',
               items: { type: 'string' },

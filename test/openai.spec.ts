@@ -6,6 +6,12 @@ import {
   toKoreanUrl,
 } from '../src/modules/hotel/providers/openai.provider';
 import {
+  FLIGHT_ALLOWED_HOSTS,
+  FLIGHT_ALLOWED_SITES_TEXT,
+  flightMerchantOf,
+  isAllowedFlightUrl,
+} from '../src/modules/flight/providers/openai.provider';
+import {
   outputTextOf,
   parseJsonLoose,
   requestHeaders,
@@ -216,6 +222,55 @@ describe('한국어 예약 페이지로 돌린다', () => {
       'https://www.myrealtrip.com/offers/1',
     ]) {
       expect(isAllowedSourceUrl(toKoreanUrl(url))).toBe(true);
+    }
+  });
+
+  it('스카이스캐너는 국가 도메인을 .co.kr 로 돌리고 경로는 그대로 둔다', () => {
+    // 이 사이트는 없는 경로에도 200 을 주는 SPA 라 404 판정이 못 걸러낸다 —
+    // 경로를 건드리지 않는 게 특히 중요하다.
+    for (const host of ['www.skyscanner.net', 'www.skyscanner.com', 'www.skyscanner.co.kr']) {
+      const out = new URL(toKoreanUrl(`https://${host}/transport/flights/sel/tyoa/`));
+      expect(out.hostname).toBe('www.skyscanner.co.kr');
+      expect(out.pathname).toBe('/transport/flights/sel/tyoa/');
+    }
+  });
+});
+
+describe('항공권 예약 링크', () => {
+  it('세 곳만 통과시킨다 — 항공권을 안 파는 곳과 지어낸 호스트는 버린다', () => {
+    for (const url of [
+      'https://kr.trip.com/flights/seoul-to-tokyo/',
+      'https://www.myrealtrip.com/flights/ICN-NRT',
+      'https://www.skyscanner.co.kr/transport/flights/sel/tyoa/',
+      'https://www.skyscanner.net/transport/flights/sel/tyoa/',
+    ]) {
+      expect(isAllowedFlightUrl(url)).toBe(true);
+    }
+
+    for (const url of [
+      'https://www.klook.com/ko/flights/', // 항공권을 팔지 않는다
+      'https://flight.naver.com/flights/', // 프롬프트가 막는 곳
+      'https://www.notskyscanner.com/x', // 호스트가 겹쳐 보이는 함정
+      'http://www.skyscanner.co.kr/x', // https 가 아니다
+    ]) {
+      expect(isAllowedFlightUrl(url)).toBe(false);
+    }
+  });
+
+  it('국가 도메인이 달라도 플랫폼 이름은 하나다 — 줄이 갈라지면 안 된다', () => {
+    const merchants = [
+      'https://www.skyscanner.net/transport/flights/sel/tyoa/',
+      'https://www.skyscanner.com/transport/flights/sel/tyoa/',
+      'https://www.skyscanner.co.kr/transport/flights/sel/tyoa/',
+    ].map((url) => flightMerchantOf(url));
+    expect(new Set(merchants)).toEqual(new Set(['skyscanner']));
+  });
+
+  it('허용 목록과 프롬프트 문구가 어긋나지 않는다 — 어긋나면 결과가 전부 버려진다', () => {
+    for (const host of FLIGHT_ALLOWED_HOSTS) {
+      // .net/.com 은 한국어 도메인(.co.kr)이 대표로 적혀 있으면 된다
+      const shown = host.startsWith('skyscanner') ? 'skyscanner.co.kr' : host;
+      expect(FLIGHT_ALLOWED_SITES_TEXT).toContain(shown);
     }
   });
 });

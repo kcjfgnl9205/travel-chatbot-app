@@ -7,7 +7,7 @@
  * 그러면 같은 사이트에서 호텔은 한국어인데 항공권은 영어로 나간다.
  *
  * 도메인별로 다른 것은 **어떤 호스트를 허용하는가** 뿐이다. 그건 호출부가 준다
- * (호텔은 네 곳, 항공권은 항공권을 실제로 파는 두 곳).
+ * (호텔은 네 곳, 항공권은 항공권을 실제로 파는 세 곳).
  */
 
 /** `trip.com` 과 `kr.trip.com` 은 같게 보고, `nottrip.com` 은 다르게 본다. */
@@ -57,6 +57,8 @@ export function merchantFrom(url: string, hosts: readonly string[]): string | nu
  *   - trip.com    : kr.trip.com 200 확인. 로케일이 서브도메인이다
  *   - hotels.com  : kr.hotels.com 존재 확인(429 는 봇 차단이지 없는 호스트가 아니다)
  *   - klook.com   : /{locale}/ 경로 규약. 있으면 ko 로 바꾸고, 없으면 손대지 않는다
+ *   - skyscanner  : 로케일이 **국가 도메인**이다. 같은 경로가 .net/.com/.co.kr 에서
+ *                   전부 200 이라(`/transport/flights/sel/tyoa/` 로 확인) 호스트만 바꾼다
  *   - myrealtrip  : 국내 서비스라 이미 한국어
  */
 export function toKoreanUrl(url: string): string {
@@ -78,6 +80,14 @@ export function toKoreanUrl(url: string): string {
 
   if (on('hotels.com')) {
     parsed.hostname = 'kr.hotels.com';
+    return parsed.toString();
+  }
+
+  // ⚠️ 스카이스캐너는 **없는 경로에도 200 을 준다** (프런트에서 처리하는 SPA).
+  //    그래서 chooseUrl 의 404 판정이 여기서는 아무것도 못 걸러낸다 — 경로를 건드리지
+  //    않고 호스트만 바꾸는 게 특히 중요하다.
+  if (on('skyscanner.net') || on('skyscanner.com') || on('skyscanner.co.kr')) {
+    parsed.hostname = 'www.skyscanner.co.kr';
     return parsed.toString();
   }
 
