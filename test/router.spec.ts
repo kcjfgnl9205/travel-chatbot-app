@@ -83,6 +83,17 @@ describe('POST /api/v1/kakao/router', () => {
     expect(notice).toMatch(/날짜|인원/);
   });
 
+  it('테마를 말해도 반영하지 않는다 — 그러면 그렇다고 알린다', async () => {
+    const body = await askUntilCard(ctx.app, '오사카 아이랑 갈 만한 관광지 추천해줘');
+    const notice = noticeOf(body);
+
+    // ⚠️ 날짜·인원은 알리면서 테마만 침묵하면 **그것만 반영된 줄 안다.**
+    //    "아이랑" 을 '인원' 이라고 부르면 사용자가 자기 말과 못 잇는다.
+    expect(notice).toContain('테마');
+    expect(notice).toContain('아이랑');
+    expect(notice).toContain('반영되지 않았어요');
+  });
+
   it('할 말이 없으면 고지 말풍선을 아예 안 붙인다', async () => {
     const body = await askUntilCard(ctx.app, '오사카 호텔 추천해줘');
 

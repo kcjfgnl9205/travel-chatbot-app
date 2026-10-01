@@ -266,6 +266,11 @@ function conditionLabel(ignored: string[]): string {
   }
   if (/\d+\s*(명|인)/.test(joined)) labels.push('인원');
   if (/만원/.test(joined)) labels.push('예산');
+  // 동행·분위기. "아이랑" 을 '인원' 이라고 하면 틀린 이름이고, 이름이 틀리면
+  // 사용자는 자기가 말한 것과 고지된 것을 못 잇는다.
+  if (/아이|애기|애들|아기|가족|부모님|친구|연인|커플|혼자|야경|일몰|노을|실내|조용한|한적한|이색|힐링/.test(joined)) {
+    labels.push('테마');
+  }
   return labels.length ? labels.join('·') : '일부 조건';
 }
 
