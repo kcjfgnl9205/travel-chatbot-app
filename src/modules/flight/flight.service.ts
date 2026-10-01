@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import { dedupeBy } from '../../common/dedupe';
+import { adpickCarries } from '../adpick/adpick.service';
 import { AffiliateService } from '../affiliate/affiliate.service';
 import { AppConfig, CONFIG } from '../../config/app.config';
 import * as cards from '../kakao/cards';
@@ -125,6 +126,11 @@ export class FlightService implements SearchDomain<FlightOffer> {
    *
    * ⚠️ 편별로 줄을 내던 때는 줄마다 다른 편명·시각·가격을 찍으면서 링크는 전부
    *    같은 검색 페이지로 갔다. 이제 보내는 곳이 곧 줄의 제목이라 어긋날 자리가 없다.
+   *
+   * ⚠️ **줄마다 제휴 여부가 다르다.** 트립닷컴·마이리얼트립은 애드픽을 타고
+   *    스카이스캐너는 안 탄다(광고주가 없다) — 그 줄은 원본 주소로 그대로 보낸다.
+   *    `adpickCarries` 가 양쪽에서 같은 판단을 하므로 변환 호출과 경고 집계가
+   *    어긋나지 않는다.
    */
   async rows(offers: FlightOffer[], ctx: RenderContext): Promise<t.Json[]> {
     // 원본 주소 → 애드픽 커미션 링크. 캐시에 있으면 API 를 안 탄다.
@@ -146,6 +152,8 @@ export class FlightService implements SearchDomain<FlightOffer> {
         //    모델이 웹에서 본 값이므로 집계할 때 그 사실을 잊으면 안 된다.
         price: offer.priceLow,
         merchant: offer.merchant,
+        // 애드픽에 없는 플랫폼은 "변환 실패" 가 아니라 "처음부터 안 타는 줄" 이다.
+        monetizable: adpickCarries(offer.merchant),
         // 항공권 카드에는 이미지가 없다 — imageUrl 을 안 넘기면 image_url 은 null 이다.
       })),
       ctx,

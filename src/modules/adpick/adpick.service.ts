@@ -28,6 +28,33 @@ export const STATUS_FALLBACK = 'fallback';
 
 const P_DATA_MAX = 50; // 애드픽 스펙: string(50)
 
+/**
+ * **애드픽에 광고주가 없는 제휴몰.** 변환을 아예 시도하지 않는다.
+ *
+ * 왜 "해보고 실패하면 되지" 가 아닌가 — 셋 다 손해다:
+ *
+ *   · 분당 60회 rate limit 을 확실히 실패할 호출에 쓴다. 그 한도는 같은 요청의
+ *     다른 줄이 써야 한다.
+ *   · `affiliate_links` 에 영영 성공하지 않을 실패 행이 쌓이고, TTL 이 지나면
+ *     같은 실패를 다시 한다.
+ *   · **`애드픽 변환 실패` 경고가 매 검색마다 뜬다.** 그 경고는 "수수료가 새고
+ *     있다" 는 신호인데, 샐 수수료가 애초에 없는 줄까지 섞이면 아무도 안 읽게
+ *     되고 그때부터는 진짜 누수도 안 보인다.
+ *
+ * 여기 있는 제휴몰은 **원본 주소로 그대로 보낸다.** 수익은 없지만 사용자는
+ * 멀쩡히 예약 페이지에 도착하고, 그게 줄을 빼는 것보다 낫다.
+ */
+export const ADPICK_UNSUPPORTED_MERCHANTS = [
+  // 메타서치라 자기가 파는 게 아니다. 애드픽 광고주 목록에 없는 것을 확인했다.
+  'skyscanner',
+];
+
+/** 이 제휴몰을 애드픽이 취급하는가. 모르는 이름은 취급한다고 본다(해보고 판단한다). */
+export function adpickCarries(merchant: string | null | undefined): boolean {
+  if (!merchant) return true;
+  return !ADPICK_UNSUPPORTED_MERCHANTS.includes(merchant.trim().toLowerCase());
+}
+
 export interface LinkResult {
   sourceUrl: string;
   affiliateUrl: string | null;

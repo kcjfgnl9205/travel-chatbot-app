@@ -223,6 +223,65 @@ describe('노출 기록 + 클릭 링크 발급', () => {
       warn.mockRestore();
     });
 
+    /**
+     * 도메인은 제휴를 타는데 **그 줄만 못 타는** 경우 (스카이스캐너 — 애드픽에
+     * 광고주가 없다). 이걸 실패로 세면 경고가 매 검색마다 떠서, "수수료가 샌다" 는
+     * 신호가 상시 경고가 되고 그때부터 진짜 누수도 안 보인다.
+     */
+    describe('제휴를 못 타는 줄이 섞여 있을 때', () => {
+      const META = 'https://www.skyscanner.co.kr/transport/flights/sel/tyoa/';
+      const meta = item({
+        label: '스카이스캐너 ICN→NRT',
+        sourceUrl: META,
+        title: '스카이스캐너에서 보기',
+        merchant: 'skyscanner',
+        monetizable: false,
+      });
+
+      it('변환 실패로 세지 않는다 — 샐 수수료가 애초에 없다', async () => {
+        const { service } = build();
+        const warn = jest.spyOn(service['logger'], 'warn');
+
+        await service.render([meta], CTX, {
+          provider: 'openai',
+          links: new Map<string, ResolvedLink>(),
+        });
+
+        expect(warn).not.toHaveBeenCalled();
+        warn.mockRestore();
+      });
+
+      it('같은 카드의 다른 줄이 변환에 실패하면 그건 센다', async () => {
+        const { service } = build();
+        const warn = jest.spyOn(service['logger'], 'warn');
+
+        await service.render([meta, hotel], CTX, {
+          provider: 'openai',
+          links: new Map<string, ResolvedLink>(),
+        });
+
+        // **분모가 2 가 아니라 1 이다.** 못 타는 줄을 분모에 넣으면 실패율이 실제보다
+        // 낮게 보여서, 전부 실패한 상황이 "절반만 실패" 로 읽힌다.
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('애드픽 변환 실패 1/1건'));
+        warn.mockRestore();
+      });
+
+      it('원본 주소로 그대로 보내고 subid 도 안 붙인다', async () => {
+        const { service, inserted } = build({ adpickSubidParam: 'subid' });
+
+        await service.render([meta], CTX, {
+          provider: 'openai',
+          links: new Map<string, ResolvedLink>(),
+        });
+
+        const row = inserted[0][0];
+        expect(row.target_url).toBe(META);
+        // ⚠️ 변환 실패도 null 이다. 집계에서 둘을 가르는 건 merchant 칸이다.
+        expect(row.affiliate_link_id).toBeNull();
+        expect(row.merchant).toBe('skyscanner');
+      });
+    });
+
     it('subid 를 설정했으면 목적지에 붙는다', async () => {
       const { service, inserted } = build({ adpickSubidParam: 'subid' });
 

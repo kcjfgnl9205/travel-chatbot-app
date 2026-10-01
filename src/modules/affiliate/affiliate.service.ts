@@ -4,6 +4,7 @@ import {
   AdpickService,
   LinkResult,
   STATUS_OK,
+  adpickCarries,
   linkOk,
 } from '../adpick/adpick.service';
 import { AppConfig, CONFIG } from '../../config/app.config';
@@ -34,15 +35,21 @@ export class AffiliateService {
     private readonly adpick: AdpickService,
   ) {}
 
-  /** [(sourceUrl, merchant), ...] → Map<sourceUrl, ResolvedLink> */
+  /**
+   * [(sourceUrl, merchant), ...] → Map<sourceUrl, ResolvedLink>
+   *
+   * ⚠️ **애드픽이 취급하지 않는 제휴몰은 아예 빠진다** (스카이스캐너). 결과 Map 에
+   *    없으면 호출부가 원본 주소로 보내는데, 그게 맞는 동작이다. 실패로 만들어
+   *    넘기면 rate limit 과 경고만 축낸다 — 이유는 ADPICK_UNSUPPORTED_MERCHANTS 에.
+   */
   async resolve(
     targets: { sourceUrl: string; merchant?: string | null }[],
   ): Promise<Map<string, ResolvedLink>> {
     const wanted = new Map<string, string | null>();
     for (const t of targets) {
-      if (t.sourceUrl && !wanted.has(t.sourceUrl)) {
-        wanted.set(t.sourceUrl, t.merchant ?? null);
-      }
+      if (!t.sourceUrl || wanted.has(t.sourceUrl)) continue;
+      if (!adpickCarries(t.merchant)) continue;
+      wanted.set(t.sourceUrl, t.merchant ?? null);
     }
 
     const resolved = new Map<string, ResolvedLink>();

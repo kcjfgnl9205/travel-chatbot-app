@@ -2,10 +2,12 @@ import {
   AdpickService,
   STATUS_FALLBACK,
   STATUS_OK,
+  adpickCarries,
   applySubid,
   pDataFor,
   renderTemplate,
 } from '../src/modules/adpick/adpick.service';
+import { AffiliateService } from '../src/modules/affiliate/affiliate.service';
 import { AppConfig, loadConfig } from '../src/config/app.config';
 
 const SOURCE = 'https://www.agoda.com/ko-kr/hotel/12345.html?cid=1';
@@ -162,5 +164,72 @@ describe('애드픽 커미션 링크', () => {
   it('빈 주소는 거절한다', async () => {
     const result = await new AdpickService(apiConfig()).convert('');
     expect(result.affiliateUrl).toBeNull();
+  });
+});
+
+/**
+ * **애드픽에 광고주가 없는 제휴몰** (스카이스캐너).
+ *
+ * 변환을 "해보고 실패하면 되지" 로 두면 분당 60회 한도를 확실히 실패할 호출에
+ * 쓰고, 영영 성공 못 할 행을 캐시에 쌓고, `애드픽 변환 실패` 경고를 상시로 띄운다.
+ * 셋째가 제일 나쁘다 — 그 경고는 수수료가 샌다는 신호인데, 매번 뜨면 아무도 안 읽는다.
+ */
+describe('애드픽이 취급하지 않는 제휴몰', () => {
+  it('모르는 이름은 취급한다고 본다 — 막는 건 확인된 곳뿐이다', () => {
+    expect(adpickCarries('trip')).toBe(true);
+    expect(adpickCarries('myrealtrip')).toBe(true);
+    expect(adpickCarries(null)).toBe(true);
+    expect(adpickCarries('처음보는곳')).toBe(true);
+
+    expect(adpickCarries('skyscanner')).toBe(false);
+    expect(adpickCarries('SkyScanner')).toBe(false); // 모델이 대소문자를 섞어 준다
+  });
+
+  it('변환 API 도 DB 도 아예 안 탄다', async () => {
+    const convert = jest.fn();
+    const repo = {
+      findUsable: () => {
+        throw new Error('DB 를 타면 안 된다');
+      },
+      upsertMany: () => {
+        throw new Error('DB 를 타면 안 된다');
+      },
+    } as never;
+    const service = new AffiliateService(config(), repo, { convert } as never);
+
+    const links = await service.resolve([
+      {
+        sourceUrl: 'https://www.skyscanner.co.kr/transport/flights/sel/tyoa/',
+        merchant: 'skyscanner',
+      },
+    ]);
+
+    // 빈 Map 이다. 호출부는 이걸 "변환 못 했다" 가 아니라 "이 줄은 원본으로 간다" 로
+    // 읽는다 — 그 구별은 ItemRow.monetizable 이 한다.
+    expect(links.size).toBe(0);
+    expect(convert).not.toHaveBeenCalled();
+  });
+
+  it('같은 요청의 다른 줄은 평소대로 변환한다', async () => {
+    const BOOKING = 'https://kr.trip.com/flights/seoul-to-tokyo/';
+    const convert = jest.fn(async (sourceUrl: string) => ({
+      sourceUrl,
+      affiliateUrl: 'https://link.adpick.co.kr/abcd',
+      status: STATUS_OK,
+    }));
+    const repo = {
+      findUsable: async () => new Map(),
+      upsertMany: async () => new Map([[BOOKING, { id: 'link-1' }]]),
+    } as never;
+    const service = new AffiliateService(config(), repo, { convert } as never);
+
+    const links = await service.resolve([
+      { sourceUrl: 'https://www.skyscanner.co.kr/transport/flights/sel/tyoa/', merchant: 'skyscanner' },
+      { sourceUrl: BOOKING, merchant: 'trip' },
+    ]);
+
+    expect(convert).toHaveBeenCalledTimes(1);
+    expect(convert).toHaveBeenCalledWith(BOOKING, 'trip');
+    expect(links.get(BOOKING)?.affiliateLinkId).toBe('link-1');
   });
 });

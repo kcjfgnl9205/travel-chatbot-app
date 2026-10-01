@@ -58,6 +58,15 @@ export interface ItemRow {
   price?: number | null;
   /** 판매처 (agoda | booking | trip …). */
   merchant?: string | null;
+  /**
+   * 이 줄이 제휴를 **탈 수 있는가.** 안 주면 탈 수 있는 것으로 본다.
+   *
+   * ⚠️ 도메인 단위(`links` 유무)로는 못 가르는 자리다. 항공권은 제휴를 타는
+   *    도메인인데 **스카이스캐너 줄만 못 탄다** (애드픽에 광고주가 없다). 이 칸이
+   *    없으면 그 줄이 매번 `애드픽 변환 실패` 로 세어져, 진짜 누수를 알리는 경고가
+   *    상시 경고가 되고 아무도 안 읽게 된다.
+   */
+  monetizable?: boolean;
 }
 
 export interface RenderOptions {
@@ -103,6 +112,8 @@ export class RecommendationRowsService {
     const listItems: t.Json[] = [];
     /** 제휴 변환이 안 돼 원본 주소로 나가는 줄. 수익화가 안 되는 노출이다. */
     const unconverted: string[] = [];
+    /** 변환을 **탈 수 있었던** 줄의 수. 실패 경고의 분모다. */
+    let payableCount = 0;
 
     items.forEach((item, position) => {
       const clickId = newClickId();
@@ -113,12 +124,16 @@ export class RecommendationRowsService {
         this.logger.warn(`no destination for ${ctx.meta.kind}=${item.label}, skipping row`);
         return;
       }
+      // 제휴를 타는 도메인이면서, 이 줄도 탈 수 있는가. 둘은 다른 질문이다 —
+      // 항공권은 타는 도메인인데 스카이스캐너 줄은 애드픽에 광고주가 없다.
+      const payable = monetized && item.monetizable !== false;
+      if (payable) payableCount += 1;
       // 목적지가 원본과 같다 = 커미션 링크가 아니다. 여기서 세지 않으면
       // "링크는 잘 열리는데 수수료가 안 들어온다" 를 영영 못 찾는다.
-      if (monetized && destination === item.sourceUrl) unconverted.push(item.label);
-      // ⚠️ 변환하지 않는 도메인에는 subid 도 붙이지 않는다. 지도 주소에 추적 파라미터를
-      //    달아봐야 아무도 읽지 않고 링크만 지저분해진다.
-      const targetUrl = monetized ? applySubid(destination, clickId, this.config) : destination;
+      if (payable && destination === item.sourceUrl) unconverted.push(item.label);
+      // ⚠️ 변환하지 않는 줄에는 subid 도 붙이지 않는다. 지도 주소나 메타서치 주소에
+      //    추적 파라미터를 달아봐야 아무도 읽지 않고 링크만 지저분해진다.
+      const targetUrl = payable ? applySubid(destination, clickId, this.config) : destination;
 
       dbRows.push({
         recommendation_id: recommendationId,
@@ -138,7 +153,11 @@ export class RecommendationRowsService {
         // ⚠️ **변환에 실패해도 null 을 적는다.** 제휴를 안 타는 도메인(undefined)과
         //    "타는데 실패했다"(null)를 가르는 값이라, 실패를 안 적으면 수수료가 새는
         //    노출이 집계에서 통째로 빠진다 — 찾으려던 것만 안 보이게 된다.
-        affiliate_link_id: monetized ? (link?.affiliateLinkId ?? null) : null,
+        //
+        //    ⚠️ 애초에 제휴를 못 타는 줄(스카이스캐너)도 null 이다. 집계에서 둘을
+        //       가르는 건 **merchant 칸**이다 — null 하나만 보고 "변환 실패" 로 세면
+        //       실패율이 실제보다 높게 나온다.
+        affiliate_link_id: payable ? (link?.affiliateLinkId ?? null) : null,
       });
 
       // DB 가 없어도 리다이렉트가 동작하도록 인메모리에도 남긴다.
@@ -164,8 +183,10 @@ export class RecommendationRowsService {
 
     if (unconverted.length) {
       // 경고로 남긴다. 배포를 막을 일은 아니지만 방치하면 그대로 매출이 샌다.
+      // ⚠️ 분모는 줄 수가 아니라 **변환을 탈 수 있었던 줄 수**다. 스카이스캐너처럼
+      //    애초에 못 타는 줄을 분모에 넣으면 실패율이 실제보다 낮게 보인다.
       this.logger.warn(
-        `애드픽 변환 실패 ${unconverted.length}/${listItems.length}건 — 원본 주소로 나간다: ` +
+        `애드픽 변환 실패 ${unconverted.length}/${payableCount}건 — 원본 주소로 나간다: ` +
           unconverted.join(', '),
       );
     }
