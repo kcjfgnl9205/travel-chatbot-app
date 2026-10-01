@@ -127,21 +127,6 @@ export interface FlightQuery {
 }
 
 /**
- * 'YYYY-MM-DD' 인지 확인하고 그대로 돌려준다. 아니면 null.
- *
- * ⚠️ 2026-02-30 같은 값은 Date 가 3월 2일로 조용히 굴려버린다. 되돌려 보고 같은지
- *    확인해야 없는 날짜가 카드에 찍히지 않는다.
- */
-export function isoDate(value: unknown): string | null {
-  const raw = typeof value === 'string' ? value.trim() : '';
-  if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
-  const parsed = new Date(`${raw}T00:00:00Z`);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed.toISOString().slice(0, 10) === raw ? raw : null;
-}
-
-
-/**
  * 같은 항공편인지 판정하는 키.
  *
  * sourceUrl 로는 못 한다 — 항공권은 여러 편이 같은 검색 결과 페이지를 가리키므로

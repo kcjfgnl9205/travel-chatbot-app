@@ -8,10 +8,24 @@ import { OpenAiService, parseJsonLoose } from './openai.service';
  * 웹 검색 2단 파이프라인. 호텔·항공권·관광지 provider 가 공유한다.
  *
  *   1차 : web_search 를 돌려 후보 10~20개를 긁는다 (구조화 JSON)
- *   2차 : 후보 안에서 상위 N개를 골라 구조화 JSON 으로 뽑는다
+ *   2차 : 후보에 번호를 붙여 보여주고 **번호만** 받는다 (구조화 JSON)
  *
  * **왜 두 번 부르나** — 한 번에 시키면 모델이 검색 결과를 요약하는 데 힘을 쓰고
  * 비교·선별은 대충 한다. 검색과 판단을 갈라두면 각 단계를 따로 계측·디버깅할 수 있다.
+ *
+ * ⚠️ **2차는 번호만 받는다. 항목을 다시 쓰게 하지 않는다.** 예전에는 고른 항목을
+ *    통째로 다시 출력하게 했는데, 셋 다 나빴다 —
+ *
+ *      · **지어낸 URL 이 들어온다.** 모델이 주소를 다시 타이핑하는 순간 고칠 기회가
+ *        생기고, provider 는 그걸 `dropped ... untrusted url` 로 버린다. 번호는
+ *        지어낼 자리가 없다 — 범위 밖이면 그냥 무시된다.
+ *      · **느리다.** 출력 토큰이 길어서 2차가 23~30초였다. 번호만 내면 짧아진다.
+ *      · **빈손이 된다.** `RANK_EFFORT=minimal` 에서 모델이 `source_url` 에 빈
+ *        문자열이나 "정보 없음" 을 채워, picks=10 인데 결과는 0건이 됐다.
+ *
+ *    그래서 **카드에 쓰는 값은 전부 1차 후보 스키마에 있어야 한다.** 2차가 채우던
+ *    칸(호텔 주소·성급, 항공편 시각)은 애초에 웹 검색을 한 1차만 알 수 있던 것이고,
+ *    2차는 그걸 지어내고 있었다.
  *
  * ⚠️ **두 호출 다 구조화 출력을 건다.** 1차를 자유 텍스트로 뒀더니 모델이
  *    "웹 검색을 진행해도 될까요? 날짜를 알려주세요" 라고 되묻고 끝나서 후보가 0개가 됐다.
@@ -54,10 +68,16 @@ export abstract class TwoStageSearch<TQuery> {
   protected abstract searchInput(query: TQuery, wanted: number): string;
 
   protected abstract readonly rankInstructions: string;
-  protected abstract readonly pickSchema: Record<string, unknown>;
-  /** 2차 응답에서 배열이 담겨 오는 키. 'hotels' | 'flights' | 'attractions' */
-  protected abstract readonly pickKey: string;
+  /**
+   * 번호를 붙인 후보 목록을 받아 2차 입력문을 만든다.
+   *
+   * ⚠️ **출력 형식은 여기서 말하지 마라.** 번호만 낸다는 규약은 모든 도메인이
+   *    같아야 해서 [INDEX_RULES](#INDEX_RULES) 가 들고 있다. 도메인이 적을 것은
+   *    "무엇을 기준으로 고르는가" 뿐이다.
+   */
   protected abstract rankInput(query: TQuery, candidates: string): string;
+  /** 몇 개를 고르게 할 것인가. 번호가 그보다 많이 와도 여기서 자른다. */
+  protected abstract limitOf(query: TQuery): number;
 
   // -------------------------------------------------- 1차: 웹 검색으로 후보 수집
   /**
@@ -66,7 +86,7 @@ export abstract class TwoStageSearch<TQuery> {
    * null 을 받은 호출부는 **2차를 부르지 않고 바로 끝낸다.** 후보가 없으면 고를 것도
    * 없는데 한 번 더 부르면 모델이 빈손에서 뭔가를 지어낸다.
    */
-  protected async findCandidates(query: TQuery, trace: TwoStageTrace): Promise<string | null> {
+  protected async findCandidates(query: TQuery, trace: TwoStageTrace): Promise<unknown[] | null> {
     const subject = this.subjectOf(query);
 
     const result = await this.openai.respond({
@@ -103,30 +123,37 @@ export abstract class TwoStageSearch<TQuery> {
       );
       return null;
     }
-    return JSON.stringify(candidates);
+    return candidates;
   }
 
   // ------------------------------------------------ 2차: 비교 후 상위 N개 선정
-  /** 후보 안에서 고른 것들. 아무것도 못 고르면 빈 배열. */
-  protected async rank<TPick>(
+  /**
+   * 후보 안에서 고른 것들. 아무것도 못 고르면 빈 배열.
+   *
+   * ⚠️ **빈손일 때 1차 후보를 대신 내보내지 않는다.** 그러면 모델의 비교·선별이
+   *    조용히 사라지는데, 로그 말고는 그 사실이 드러나는 자리가 없다. 비교를 그만둘
+   *    거라면 2차 호출 자체를 없애는 결정으로 해야지, 실패 경로에 숨기면 안 된다.
+   */
+  protected async rank<TCandidate>(
     query: TQuery,
-    candidates: string,
+    candidates: unknown[],
     trace: TwoStageTrace,
-  ): Promise<TPick[]> {
+  ): Promise<TCandidate[]> {
     const subject = this.subjectOf(query);
 
     const result = await this.openai.respond({
-      instructions: this.rankInstructions,
+      // 도메인은 "무엇을 기준으로 고르나" 만 말한다. 출력 형식은 공통이다.
+      instructions: [this.rankInstructions, INDEX_RULES].join(' '),
       effort: this.config.openaiRankEffort,
-      format: this.pickSchema,
-      input: this.rankInput(query, candidates),
+      format: PICK_INDEX_SCHEMA,
+      input: this.rankInput(query, numbered(candidates)),
     });
 
     trace.rankMs = result.ms;
 
-    const parsed = parseJsonLoose<Record<string, TPick[]>>(result.text);
-    const picks = parsed?.[this.pickKey];
-    if (!picks?.length) {
+    const parsed = parseJsonLoose<{ picks?: unknown[] }>(result.text);
+    const raw = Array.isArray(parsed?.picks) ? parsed.picks : [];
+    if (!raw.length) {
       this.logger.warn(
         `${this.label} rank produced no picks ${subject} status=${result.status} ` +
           `text=${clip(result.text, 200)}`,
@@ -134,10 +161,84 @@ export abstract class TwoStageSearch<TQuery> {
       return [];
     }
 
-    this.logger.log(`${this.label} rank ${subject} picks=${picks.length} ms=${result.ms}`);
-    trace.picks = picks.length;
-    return picks;
+    const limit = this.limitOf(query);
+    const seen = new Set<number>();
+    const chosen: TCandidate[] = [];
+    /** 범위 밖이거나 숫자가 아닌 번호. 모델이 규약에서 벗어나고 있다는 신호다. */
+    let invalid = 0;
+
+    for (const value of raw) {
+      const index = Number(value);
+      if (!Number.isInteger(index) || index < 0 || index >= candidates.length) {
+        invalid += 1;
+        continue;
+      }
+      // 같은 번호를 두 번 담으면 카드에 같은 줄이 두 번 나간다.
+      if (seen.has(index)) continue;
+      seen.add(index);
+      chosen.push(candidates[index] as TCandidate);
+      if (chosen.length >= limit) break;
+    }
+
+    trace.picks = chosen.length;
+    this.logger.log(
+      `${this.label} rank ${subject} picks=${chosen.length}/${raw.length} ` +
+        `invalid=${invalid} ms=${result.ms}`,
+    );
+    // ⚠️ 전부 범위 밖이면 2차가 번호를 "고른" 게 아니라 지어낸 것이다. 조용히 넘기면
+    //    빈 카드의 원인을 1차에서 찾게 된다.
+    if (invalid && !chosen.length) {
+      this.logger.warn(
+        `${this.label} rank 가 범위 밖 번호만 냈다 ${subject} ` +
+          `candidates=${candidates.length} raw=${clip(JSON.stringify(raw), 120)}`,
+      );
+    }
+    return chosen;
   }
+}
+
+/**
+ * 2차 응답 스키마. **도메인과 무관하게 하나다** — 번호만 받기 때문이다.
+ *
+ * 도메인마다 pick 스키마를 들고 있을 때는 필드를 하나 고칠 때마다 세 곳을 맞춰야
+ * 했고, 그중 하나가 1차 후보에 없는 필드를 요구하면 모델이 그 칸을 지어냈다.
+ */
+export const PICK_INDEX_SCHEMA = {
+  type: 'json_schema' as const,
+  name: 'picks',
+  strict: true,
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['picks'],
+    properties: {
+      picks: {
+        type: 'array',
+        items: { type: 'integer' },
+        description: '고른 후보의 번호. 추천하는 순서대로 담는다',
+      },
+    },
+  },
+};
+
+/**
+ * 번호 고르기 규약. **도메인이 바꿀 수 없다** — 출력 형식은 스키마와 한 몸이라,
+ * 한쪽만 고치면 응답이 통째로 버려진다.
+ */
+const INDEX_RULES = [
+  '출력은 고른 후보의 **번호 목록**뿐이다. 이름·URL·가격을 다시 쓰지 마라.',
+  '번호는 후보 목록 맨 앞에 적힌 그 번호다. 목록에 없는 번호는 쓰지 마라.',
+  '추천하는 순서대로 담고, 같은 번호를 두 번 담지 마라.',
+].join(' ');
+
+/**
+ * 후보에 번호를 붙인다. `0) {"name":"호텔 A",...}` 한 줄에 하나.
+ *
+ * 한 줄에 하나씩 두는 게 중요하다 — 배열을 통째로 들여쓰기 하면 모델이 몇 번째
+ * 객체인지 세다가 틀린다. 번호가 줄 맨 앞에 있으면 셀 일이 없다.
+ */
+function numbered(candidates: unknown[]): string {
+  return candidates.map((c, i) => `${i}) ${JSON.stringify(c)}`).join('\n');
 }
 
 /**
@@ -158,7 +259,7 @@ export interface TwoStageTrace {
   searchCalls: number;
   /** 1차 호출이 모아온 후보 개수. 0 이면 검색 프롬프트가 안 먹은 것이다. */
   candidates: number;
-  /** 2차 호출이 고른 개수 (필터 전). */
+  /** 2차 호출이 고른 **유효한** 번호의 개수 (provider 의 정규화·필터 전). */
   picks: number;
 }
 

@@ -126,7 +126,7 @@ describe('provider 가 예약 페이지에서 이미지를 붙인다', () => {
   const PHOTO = 'https://ak-d.tripcdn.com/images/220t18_R_960_660_R5_D.jpg';
   const HTML = `<html><body><img src="${PHOTO}"></body></html>`;
 
-  /** 모델은 이미지 주소를 모른다 — thumbnail_url 은 항상 null 로 온다. */
+  /** 모델은 이미지 주소를 모른다 — 1차 후보 스키마에 이미지 칸 자체가 없다. */
   const fakeOpenAi = {
     enabled: true,
     webSearchToolSpec: { type: 'web_search' },
@@ -144,23 +144,9 @@ describe('provider 가 예약 페이지에서 이미지를 붙인다', () => {
           ms: 1,
         };
       }
+      // 2차는 **번호만** 낸다. 항목을 다시 쓰게 하면 모델이 URL 을 고쳐 쓴다.
       return {
-        text: JSON.stringify({
-          hotels: [
-            {
-              name: '호텔 A',
-              source_url: HOTEL_URL,
-              merchant: 'trip',
-              address: null,
-              star_rating: null,
-              review_score: 9,
-              price_from: 100000,
-              thumbnail_url: null,
-              description: null,
-              tags: ['우메다'],
-            },
-          ],
-        }),
+        text: JSON.stringify({ picks: [0] }),
         searchCalls: 0,
         status: 'completed',
         ms: 1,

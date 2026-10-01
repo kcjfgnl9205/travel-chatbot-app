@@ -57,69 +57,6 @@ export function isAllowedSourceUrl(url: string): boolean {
  */
 export { chooseUrl, toKoreanUrl } from '../../../common/booking-url';
 
-/** 2차 호출에 거는 구조화 출력 스키마. strict 라 모든 키가 required 여야 한다. */
-export const HOTEL_SCHEMA = {
-  type: 'json_schema' as const,
-  name: 'hotel_picks',
-  strict: true,
-  schema: {
-    type: 'object',
-    additionalProperties: false,
-    required: ['hotels'],
-    properties: {
-      hotels: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          required: [
-            'name',
-            'source_url',
-            'merchant',
-            'address',
-            'star_rating',
-            'review_score',
-            'price_from',
-            'thumbnail_url',
-            'description',
-            'tags',
-          ],
-          properties: {
-            name: { type: 'string', description: '한국어 호텔명. 없으면 영문 그대로' },
-            source_url: {
-              type: 'string',
-              description:
-                `검색 결과에 실제로 나온 예약 페이지 URL. ${ALLOWED_SITES_TEXT} 중 하나여야 한다. ` +
-                '한국어 페이지 주소를 쓴다',
-            },
-            merchant: {
-              type: ['string', 'null'],
-              description: 'trip | myrealtrip | klook | hotels',
-            },
-            address: { type: ['string', 'null'] },
-            star_rating: { type: ['number', 'null'], description: '1~5' },
-            review_score: { type: ['number', 'null'], description: '10점 만점' },
-            price_from: {
-              type: ['integer', 'null'],
-              description: '1박 최저가(원). 검색 결과에서 확인한 값만. 모르면 null',
-            },
-            thumbnail_url: {
-              type: ['string', 'null'],
-              description: '검색 결과에 실제로 나온 이미지 URL. 모르면 null',
-            },
-            description: { type: ['string', 'null'] },
-            tags: {
-              type: 'array',
-              items: { type: 'string' },
-              description: '지역/특징 키워드. 첫 번째가 카드에 노출되므로 지역명을 앞에',
-            },
-          },
-        },
-      },
-    },
-  },
-};
-
 /**
  * 검색 한 번에 대한 계측. 공통 필드는 [TwoStageTrace](../../openai/two-stage.ts) 에 있다.
  *
@@ -143,17 +80,21 @@ export interface TracedSearch {
   candidates: string | null;
 }
 
-interface RawPick {
+/**
+ * 1차가 긁어온 후보 하나. **2차는 이 중에서 번호만 고른다.**
+ *
+ * 그래서 카드에 쓰는 값이 전부 여기 있어야 한다 — 카드 줄은
+ * `가격 · 평점 x.x · 지역` 이고([listDescription](../hotel.types.ts)), 사진은
+ * 예약 페이지에서 긁는다. 예전 2차 스키마가 요구하던 주소·성급·썸네일은 1차에
+ * 없던 값이라 **모델이 지어내거나 null 이었다.**
+ */
+interface RawCandidate {
   name?: unknown;
-  source_url?: unknown;
-  merchant?: unknown;
-  address?: unknown;
-  star_rating?: unknown;
-  review_score?: unknown;
+  url?: unknown;
   price_from?: unknown;
-  thumbnail_url?: unknown;
-  description?: unknown;
-  tags?: unknown;
+  review_score?: unknown;
+  area?: unknown;
+  note?: unknown;
 }
 
 const SEARCH_INSTRUCTIONS = [
@@ -213,11 +154,16 @@ export const CANDIDATE_SCHEMA = {
   },
 };
 
+/**
+ * 2차에 주는 지시. **무엇을 기준으로 고르는가만 적는다.**
+ *
+ * 출력 형식("번호만 낸다")은 [INDEX_RULES](../../openai/two-stage.ts) 가 들고 있다 —
+ * 스키마와 한 몸이라 도메인이 따로 말하면 어긋난다.
+ */
 const RANK_INSTRUCTIONS = [
   '너는 호텔 후보를 비교해 추천 목록을 만드는 어시스턴트다.',
-  '주어진 후보 목록 안에서만 고른다. 목록에 없는 호텔을 새로 만들지 않는다.',
-  '후보에 적히지 않은 URL·가격·평점은 null 로 둔다. 추측해서 채우지 않는다.',
-  '후보의 URL 을 그대로 옮긴다. 임의로 도메인이나 경로를 바꾸지 않는다.',
+  '가격·위치·평점·특징을 비교해 고른다.',
+  '비슷한 호텔만 고르지 말고 가격대와 지역을 섞어라.',
   '**요청한 개수를 반드시 채워라.** 후보가 그만큼 없으면 있는 것을 전부 낸다 — 임의로 줄이지 마라.',
 ].join(' ');
 
@@ -233,8 +179,6 @@ export class OpenAiHotelProvider
   protected readonly searchInstructions = SEARCH_INSTRUCTIONS;
   protected readonly candidateSchema = CANDIDATE_SCHEMA;
   protected readonly rankInstructions = RANK_INSTRUCTIONS;
-  protected readonly pickSchema = HOTEL_SCHEMA;
-  protected readonly pickKey = 'hotels';
 
   constructor(@Inject(CONFIG) config: AppConfig, openai: OpenAiService) {
     super(config, openai);
@@ -242,6 +186,10 @@ export class OpenAiHotelProvider
 
   protected subjectOf(query: HotelQuery): string {
     return `city=${query.cityName}`;
+  }
+
+  protected limitOf(query: HotelQuery): number {
+    return query.limit;
   }
 
   protected searchInput(query: HotelQuery, wanted: number): string {
@@ -257,13 +205,12 @@ export class OpenAiHotelProvider
   protected rankInput(query: HotelQuery, candidates: string): string {
     const guests = query.guests ? `투숙 인원은 ${query.guests}명이다.` : '';
     return [
-      `다음은 ${query.cityName} 호텔 후보 목록(JSON)이다.`,
+      `다음은 ${query.cityName} 호텔 후보 목록이다. 줄 맨 앞이 번호다.`,
       guests,
-      `가격·위치·평점·특징을 비교해 가장 추천할 만한 ${query.limit}곳을 골라라.`,
-      `예약 페이지 URL 이 없거나 ${ALLOWED_SITES_TEXT} 밖의 링크인 후보는 제외한다.`,
-      '비슷한 호텔만 고르지 말고 가격대와 지역을 섞어라.',
+      `가장 추천할 만한 ${query.limit}곳의 번호를 골라라.`,
+      `예약 페이지 URL 이 ${ALLOWED_SITES_TEXT} 밖인 후보는 고르지 마라.`,
       '',
-      '--- 후보 목록 (JSON) ---',
+      '--- 후보 목록 ---',
       candidates,
     ].join('\n');
   }
@@ -294,14 +241,17 @@ export class OpenAiHotelProvider
     const candidates = await this.findCandidates(query, trace);
     if (!candidates) return done([], null);
 
-    const picks = await this.rank<RawPick>(query, candidates, trace);
+    const picks = await this.rank<RawCandidate>(query, candidates, trace);
     const normalized = this.toHotels(picks, query);
 
-    return done(await this.withThumbnails(normalized, trace, query), candidates);
+    return done(
+      await this.withThumbnails(normalized, trace, query),
+      JSON.stringify(candidates),
+    );
   }
 
   // ------------------------------------------------------------ 정규화
-  private toHotels(picks: RawPick[], query: HotelQuery): Hotel[] {
+  private toHotels(picks: RawCandidate[], query: HotelQuery): Hotel[] {
     const hotels: Hotel[] = [];
     /** 어느 호스트에서 몇 개가 떨어졌나. 한 줄 요약에 쓴다. */
     const droppedHosts: Record<string, number> = {};
@@ -309,7 +259,7 @@ export class OpenAiHotelProvider
 
     for (const pick of picks) {
       const name = text(pick.name);
-      const sourceUrl = text(pick.source_url);
+      const sourceUrl = text(pick.url);
       if (!name || !sourceUrl) {
         // ⚠️ **조용히 버리면 안 된다.** 스키마상 필수인 값이라 빠질 리 없다고 생각했지만,
         //    effort 를 내리면 모델이 빈 문자열이나 "정보 없음" 을 채워 보낸다. 그러면
@@ -333,19 +283,22 @@ export class OpenAiHotelProvider
         citySlug: query.citySlug,
         // 한국어 페이지로 돌린다. 프롬프트가 안 먹었을 때의 마지막 방어선.
         sourceUrl: toKoreanUrl(sourceUrl),
-        merchant: text(pick.merchant) ?? merchantOf(sourceUrl),
+        merchant: merchantOf(sourceUrl),
         source: 'ai',
         sourceRef: null,
-        address: text(pick.address),
-        starRating: bounded(pick.star_rating, 1, 5),
+        // ⚠️ **주소·성급은 채우지 않는다.** 1차 후보 스키마에 없고 카드도 안 쓴다.
+        //    예전 2차 스키마는 이걸 요구했고, 웹을 본 적 없는 모델이 지어냈다.
+        address: null,
+        starRating: null,
         reviewScore: bounded(pick.review_score, 0, 10),
         priceFrom: positiveInt(pick.price_from),
         currency: 'KRW',
-        thumbnailUrl: text(pick.thumbnail_url),
-        description: text(pick.description),
-        tags: Array.isArray(pick.tags)
-          ? pick.tags.filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
-          : [],
+        // 모델은 이미지 주소를 사실상 못 준다 — 아래 withThumbnails 가 예약 페이지에서
+        // 직접 긁는다. 여기서 null 로 두는 게 "안 받았다" 는 사실에 맞다.
+        thumbnailUrl: null,
+        description: text(pick.note),
+        // 카드 줄의 마지막 조각이 tags[0] 이다. 1차가 준 지역을 그대로 쓴다.
+        tags: [text(pick.area)].filter((t): t is string => Boolean(t)),
       });
     }
 

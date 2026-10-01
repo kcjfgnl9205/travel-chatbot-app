@@ -5,7 +5,7 @@ import { positiveInt, text } from '../../../common/parse';
 import { AppConfig, CONFIG } from '../../../config/app.config';
 import { OpenAiService } from '../../openai/openai.service';
 import { TwoStageSearch, TwoStageTrace, newTwoStageTrace } from '../../openai/two-stage';
-import { Flight, FlightProvider, FlightQuery, isoDate } from '../flight.types';
+import { Flight, FlightProvider, FlightQuery } from '../flight.types';
 
 /**
  * gpt-5-mini + 웹 검색으로 항공권을 찾는 provider.
@@ -101,7 +101,15 @@ export const FLIGHT_CANDIDATE_SCHEMA = {
         items: {
           type: 'object',
           additionalProperties: false,
-          required: ['airline', 'flight_no', 'url', 'price_from', 'stops', 'note'],
+          required: [
+            'airline',
+            'flight_no',
+            'url',
+            'price_from',
+            'stops',
+            'duration_minutes',
+            'note',
+          ],
           properties: {
             airline: { type: 'string', description: '항공사 (한국어)' },
             flight_no: { type: ['string', 'null'], description: 'KE723 형식. 모르면 null' },
@@ -116,6 +124,12 @@ export const FLIGHT_CANDIDATE_SCHEMA = {
               description: '1인 총액(원). 확인된 값만',
             },
             stops: { type: ['integer', 'null'], description: '경유 횟수. 직항은 0' },
+            // ⚠️ 2차가 아니라 **여기서** 받아야 한다. 웹을 실제로 본 건 1차뿐이고,
+            //    2차에 물으면 후보에 없는 값을 지어낸다 (카드의 '직항 1시간 55분').
+            duration_minutes: {
+              type: ['integer', 'null'],
+              description: '편도 총 소요 시간(분). 확인된 값만',
+            },
             note: { type: ['string', 'null'], description: '시각·특징 한 줄' },
           },
         },
@@ -124,90 +138,16 @@ export const FLIGHT_CANDIDATE_SCHEMA = {
   },
 };
 
-/** 2차 호출에 거는 구조화 출력 스키마. strict 라 모든 키가 required 여야 한다. */
-export const FLIGHT_SCHEMA = {
-  type: 'json_schema' as const,
-  name: 'flight_picks',
-  strict: true,
-  schema: {
-    type: 'object',
-    additionalProperties: false,
-    required: ['flights'],
-    properties: {
-      flights: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          required: [
-            'airline',
-            'flight_no',
-            'origin_code',
-            'destination_code',
-            'depart_date',
-            'depart_time',
-            'arrive_time',
-            'return_date',
-            'return_depart_time',
-            'return_arrive_time',
-            'duration_minutes',
-            'stops',
-            'via',
-            'cabin',
-            'price_from',
-            'source_url',
-            'merchant',
-            'tags',
-          ],
-          properties: {
-            airline: { type: 'string', description: '항공사 (한국어)' },
-            flight_no: { type: ['string', 'null'], description: 'KE723 형식' },
-            origin_code: { type: 'string', description: '출발 공항 IATA 3자' },
-            destination_code: { type: 'string', description: '도착 공항 IATA 3자' },
-            depart_date: { type: ['string', 'null'], description: 'YYYY-MM-DD' },
-            depart_time: { type: ['string', 'null'], description: '현지 출발 시각 HH:MM' },
-            arrive_time: { type: ['string', 'null'], description: '현지 도착 시각 HH:MM' },
-            return_date: { type: ['string', 'null'], description: '왕복일 때만. YYYY-MM-DD' },
-            return_depart_time: { type: ['string', 'null'], description: 'HH:MM' },
-            return_arrive_time: { type: ['string', 'null'], description: 'HH:MM' },
-            duration_minutes: {
-              type: ['integer', 'null'],
-              description: '편도 총 소요 시간(분)',
-            },
-            stops: { type: ['integer', 'null'], description: '경유 횟수. 직항은 0' },
-            via: { type: ['string', 'null'], description: '경유지. 직항이면 null' },
-            cabin: {
-              type: ['string', 'null'],
-              enum: ['economy', 'premium', 'business', 'first', null],
-            },
-            price_from: {
-              type: ['integer', 'null'],
-              description: '1인 총액(원). 검색 결과에서 확인한 값만. 모르면 null',
-            },
-            source_url: {
-              type: 'string',
-              description:
-                `예약 페이지 URL. ${FLIGHT_ALLOWED_SITES_TEXT} 중 하나여야 한다. 한국어 페이지`,
-            },
-            merchant: { type: ['string', 'null'], description: 'trip | myrealtrip | skyscanner' },
-            tags: {
-              type: 'array',
-              items: { type: 'string' },
-              description: '특징 키워드 (최저가, 직항, 오전출발 등)',
-            },
-          },
-        },
-      },
-    },
-  },
-};
-
+/**
+ * 2차에 주는 지시. **무엇을 기준으로 고르는가만 적는다.**
+ *
+ * 출력 형식("번호만 낸다")은 [INDEX_RULES](../../openai/two-stage.ts) 가 들고 있다 —
+ * 스키마와 한 몸이라 도메인이 따로 말하면 어긋난다.
+ */
 const RANK_INSTRUCTIONS = [
   '너는 항공권 후보를 비교해 추천 목록을 만드는 어시스턴트다.',
-  '주어진 후보 목록 안에서만 고른다. 목록에 없는 항공편을 새로 만들지 않는다.',
-  '후보에 적히지 않은 편명·시각·가격은 null 로 둔다. 추측해서 채우지 않는다.',
-  '후보의 URL 을 그대로 옮긴다. 임의로 도메인이나 경로를 바꾸지 않는다.',
-  '가격만 보지 말고 직항 여부와 출발 시각을 섞어서 고른다.',
+  '가격만 보지 말고 직항 여부와 소요 시간을 섞어서 고른다.',
+  '같은 플랫폼만 고르지 마라 — 어디가 싼지는 플랫폼이 섞여야 드러난다.',
   '**요청한 개수를 반드시 채워라.** 후보가 그만큼 없으면 있는 것을 전부 낸다 — 임의로 줄이지 마라.',
 ].join(' ');
 
@@ -227,25 +167,20 @@ export interface TracedFlightSearch {
   candidates: string | null;
 }
 
-interface RawPick {
+/**
+ * 1차가 긁어온 후보 하나. **2차는 이 중에서 번호만 고른다.**
+ *
+ * 그래서 카드에 쓰는 값이 전부 여기 있어야 한다 — 예전에는 2차 스키마가 시각·경유지·
+ * 좌석등급까지 요구했는데, 웹을 본 적 없는 2차가 그걸 지어내고 있었다.
+ */
+interface RawCandidate {
   airline?: unknown;
   flight_no?: unknown;
-  origin_code?: unknown;
-  destination_code?: unknown;
-  depart_date?: unknown;
-  depart_time?: unknown;
-  arrive_time?: unknown;
-  return_date?: unknown;
-  return_depart_time?: unknown;
-  return_arrive_time?: unknown;
-  duration_minutes?: unknown;
-  stops?: unknown;
-  via?: unknown;
-  cabin?: unknown;
+  url?: unknown;
   price_from?: unknown;
-  source_url?: unknown;
-  merchant?: unknown;
-  tags?: unknown;
+  stops?: unknown;
+  duration_minutes?: unknown;
+  note?: unknown;
 }
 
 @Injectable()
@@ -260,8 +195,6 @@ export class OpenAiFlightProvider
   protected readonly searchInstructions = SEARCH_INSTRUCTIONS;
   protected readonly candidateSchema = FLIGHT_CANDIDATE_SCHEMA;
   protected readonly rankInstructions = RANK_INSTRUCTIONS;
-  protected readonly pickSchema = FLIGHT_SCHEMA;
-  protected readonly pickKey = 'flights';
 
   constructor(@Inject(CONFIG) config: AppConfig, openai: OpenAiService) {
     super(config, openai);
@@ -269,6 +202,10 @@ export class OpenAiFlightProvider
 
   protected subjectOf(query: FlightQuery): string {
     return `route=${routeText(query)}`;
+  }
+
+  protected limitOf(query: FlightQuery): number {
+    return query.limit;
   }
 
   protected searchInput(query: FlightQuery, wanted: number): string {
@@ -284,15 +221,12 @@ export class OpenAiFlightProvider
 
   protected rankInput(query: FlightQuery, candidates: string): string {
     return [
-      `다음은 ${routeText(query)} 항공권 후보 목록(JSON)이다.`,
+      `다음은 ${routeText(query)} 항공권 후보 목록이다. 줄 맨 앞이 번호다.`,
       conditionsText(query),
-      `가격·소요시간·경유·출발시각을 비교해 가장 추천할 만한 ${query.limit}편을 골라라.`,
-      `예약 페이지 URL 이 없거나 ${FLIGHT_ALLOWED_SITES_TEXT} 밖의 링크인 후보는 제외한다.`,
-      `출발 공항은 ${query.originCode ?? query.originName}, 도착 공항은 ${
-        query.destCode ?? query.destName
-      } 기준으로 채운다.`,
+      `가격·소요시간·경유를 비교해 가장 추천할 만한 ${query.limit}편의 번호를 골라라.`,
+      `예약 페이지 URL 이 ${FLIGHT_ALLOWED_SITES_TEXT} 밖인 후보는 고르지 마라.`,
       '',
-      '--- 후보 목록 (JSON) ---',
+      '--- 후보 목록 ---',
       candidates,
     ]
       .filter(Boolean)
@@ -320,17 +254,25 @@ export class OpenAiFlightProvider
     const candidates = await this.findCandidates(query, trace);
     if (!candidates) return done([], null);
 
-    const picks = await this.rank<RawPick>(query, candidates, trace);
-    return done(this.toFlights(picks, query), candidates);
+    const picks = await this.rank<RawCandidate>(query, candidates, trace);
+    return done(this.toFlights(picks, query), JSON.stringify(candidates));
   }
 
   // ------------------------------------------------------------ 정규화
-  private toFlights(picks: RawPick[], query: FlightQuery): Flight[] {
+  /**
+   * 고른 후보를 Flight 로 만든다.
+   *
+   * ⚠️ **시각·경유지·좌석등급은 채우지 않는다.** 1차 후보 스키마에 없는 값이고,
+   *    카드도 안 쓴다(시세 · 직항+소요시간 · 항공사). 예전에는 2차 스키마가 이걸
+   *    요구해서 모델이 지어냈다 — 필요해지면 **1차 후보 스키마에** 더해야지,
+   *    웹을 본 적 없는 2차에 물어서는 안 된다.
+   */
+  private toFlights(picks: RawCandidate[], query: FlightQuery): Flight[] {
     const flights: Flight[] = [];
 
     for (const pick of picks) {
       const airline = text(pick.airline);
-      const sourceUrl = text(pick.source_url);
+      const sourceUrl = text(pick.url);
       if (!airline || !sourceUrl) continue;
 
       // 링크가 없으면 카드를 만들 수 없다. 지어낸 호스트도 여기서 걸린다.
@@ -339,39 +281,32 @@ export class OpenAiFlightProvider
         continue;
       }
 
-      // 공항 코드는 카드 제목과 dedupe 키에 쓰인다. 모델이 안 주면 쿼리 값으로 채운다
-      // (검색 자체가 그 노선으로 나갔으므로 쿼리가 더 믿을 만하다).
-      const originCode = code(pick.origin_code) ?? query.originCode ?? query.originSlug.toUpperCase();
-      const destCode = code(pick.destination_code) ?? query.destCode ?? query.destSlug.toUpperCase();
-
-      const returnDate = isoDate(pick.return_date);
       flights.push({
         airline,
         flightNo: flightNumber(pick.flight_no),
-        originCode,
+        // 공항 코드는 쿼리가 정본이다 — 검색 자체가 그 노선으로 나갔다.
+        originCode: query.originCode ?? query.originSlug.toUpperCase(),
         originName: query.originName,
-        destCode,
+        destCode: query.destCode ?? query.destSlug.toUpperCase(),
         destName: query.destName,
-        departDate: isoDate(pick.depart_date),
-        departTime: hhmm(pick.depart_time),
-        arriveTime: hhmm(pick.arrive_time),
-        returnDate: query.tripType === 'round' ? returnDate : null,
-        returnDepartTime: query.tripType === 'round' ? hhmm(pick.return_depart_time) : null,
-        returnArriveTime: query.tripType === 'round' ? hhmm(pick.return_arrive_time) : null,
+        departDate: null,
+        departTime: null,
+        arriveTime: null,
+        returnDate: null,
+        returnDepartTime: null,
+        returnArriveTime: null,
         durationMinutes: positiveInt(pick.duration_minutes),
         stops: stops(pick.stops),
-        via: text(pick.via),
+        via: null,
         tripType: query.tripType,
-        cabin: text(pick.cabin),
+        cabin: null,
         priceFrom: positiveInt(pick.price_from),
         currency: 'KRW',
         // 한국어 페이지로 돌린다. 프롬프트가 안 먹었을 때의 마지막 방어선.
         sourceUrl: toKoreanUrl(sourceUrl),
-        merchant: text(pick.merchant) ?? flightMerchantOf(sourceUrl),
+        merchant: flightMerchantOf(sourceUrl),
         source: 'ai',
-        tags: Array.isArray(pick.tags)
-          ? pick.tags.filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
-          : [],
+        tags: [],
       });
     }
 
@@ -404,47 +339,12 @@ export function conditionsText(query: FlightQuery): string {
 }
 
 // ------------------------------------------------------------------ 헬퍼
-/** IATA 공항 코드는 영문 3자다. */
-function code(value: unknown): string | null {
-  const raw = text(value);
-  if (!raw) return null;
-  const match = /[A-Za-z]{3}/.exec(raw);
-  return match ? match[0].toUpperCase() : null;
-}
-
 /** 'ke 723' → 'KE723'. 편명은 dedupe 키라 표기를 통일해야 한다. */
 function flightNumber(value: unknown): string | null {
   const raw = text(value);
   if (!raw) return null;
   const match = /([A-Za-z]{2})\s*-?\s*(\d{1,4})/.exec(raw);
   return match ? `${match[1].toUpperCase()}${match[2]}` : raw.toUpperCase();
-}
-
-/**
- * 'HH:MM' 만 통과시킨다.
- *
- * 모델은 '09:20 (현지)', '오전 9시 20분', '9:20 AM' 을 섞어서 준다. 그대로 카드에
- * 넣으면 20자 줄이 터지고 편끼리 비교도 안 된다. 읽어낼 수 있으면 정규화하고,
- * 못 하면 버린다 — 시각 없는 카드가 틀린 시각보다 낫다.
- */
-export function hhmm(value: unknown): string | null {
-  const raw = text(value);
-  if (!raw) return null;
-
-  const ampm = /(오전|오후|AM|PM|am|pm)/.exec(raw)?.[1];
-  const match = /(\d{1,2})\s*[:시]\s*(\d{1,2})?/.exec(raw);
-  if (!match) return null;
-
-  let hour = Number(match[1]);
-  const minute = Number(match[2] ?? 0);
-  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
-  if (minute > 59) return null;
-
-  if (ampm && /오후|PM|pm/.test(ampm) && hour < 12) hour += 12;
-  if (ampm && /오전|AM|am/.test(ampm) && hour === 12) hour = 0;
-  if (hour > 23) return null;
-
-  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
 
 /** 경유 횟수. 0 은 유효한 값이므로 positiveInt 로 걸러선 안 된다. */

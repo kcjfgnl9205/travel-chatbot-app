@@ -18,6 +18,10 @@ import {
  * 프롬프트와 스키마는 도메인 것이라 여기서 안 본다. 여기서 지키는 건 **흐름**이다 —
  * 특히 "후보가 0개면 2차를 부르지 않는다". 빈손에서 한 번 더 부르면 모델이 없는 것을
  * 지어내고, 그 비용은 우리가 낸다.
+ *
+ * ⚠️ **2차는 번호만 받는다.** 항목을 다시 쓰게 하면 모델이 URL 을 고쳐 쓰고(그러면
+ *    provider 가 버린다), 출력이 길어 느리고, effort 를 내리면 필수 칸을 빈 문자열로
+ *    채워 결과가 0건이 된다. 번호는 범위 검사로 끝난다.
  */
 
 interface Query {
@@ -51,11 +55,15 @@ class TestSearch extends TwoStageSearch<Query> {
   protected readonly searchInstructions = '후보를 모아라';
   protected readonly candidateSchema = { name: 'test_candidates' };
   protected readonly rankInstructions = '골라라';
-  protected readonly pickSchema = { name: 'test_picks' };
-  protected readonly pickKey = 'items';
+
+  /** 테스트가 한 번에 몇 개까지 고르게 할지. 기본 2개면 자르기까지 확인된다. */
+  limit = 2;
 
   protected subjectOf(query: Query): string {
     return `city=${query.city}`;
+  }
+  protected limitOf(): number {
+    return this.limit;
   }
   protected searchInput(query: Query, wanted: number): string {
     return `${query.city} 에서 ${wanted}개를 찾아라`;
@@ -79,19 +87,67 @@ function build(script: Partial<ResponsesResult>[]) {
   return { search, openai };
 }
 
-const FOUND = { text: JSON.stringify({ candidates: [{ name: 'A' }, { name: 'B' }] }) };
-const PICKED = { text: JSON.stringify({ items: [{ name: 'A' }] }) };
+const FOUND = {
+  text: JSON.stringify({ candidates: [{ name: 'A' }, { name: 'B' }, { name: 'C' }] }),
+};
+/** 2차는 번호만 낸다. 1번 = 후보 B. */
+const PICKED = { text: JSON.stringify({ picks: [1] }) };
 
 describe('2단 웹 검색 파이프라인', () => {
-  it('1차에서 후보를 모으고 2차에서 고른다', async () => {
+  it('번호를 후보 객체로 돌려준다 — 모델이 항목을 다시 쓰지 않는다', async () => {
     const { search, openai } = build([FOUND, PICKED]);
 
     const { picks, trace } = await search.run({ city: '오사카' });
 
-    expect(picks).toEqual([{ name: 'A' }]);
+    expect(picks).toEqual([{ name: 'B' }]);
     expect(openai.calls).toHaveLength(2);
-    expect(trace.candidates).toBe(2);
+    expect(trace.candidates).toBe(3);
     expect(trace.picks).toBe(1);
+  });
+
+  it('후보에 번호를 붙여 보여준다 — 줄 맨 앞이 번호여야 세다가 안 틀린다', async () => {
+    const { search, openai } = build([FOUND, PICKED]);
+
+    await search.run({ city: '오사카' });
+
+    const input = String(openai.calls[1].input);
+    expect(input).toContain('0) {"name":"A"}');
+    expect(input).toContain('1) {"name":"B"}');
+  });
+
+  it('범위 밖 번호는 버린다 — 지어낼 자리가 없다는 게 번호를 쓰는 이유다', async () => {
+    const { search } = build([FOUND, { text: JSON.stringify({ picks: [7, 0, -1] }) }]);
+
+    const { picks } = await search.run({ city: '오사카' });
+
+    expect(picks).toEqual([{ name: 'A' }]);
+  });
+
+  it('같은 번호가 두 번 오면 한 번만 쓴다 — 카드에 같은 줄이 두 번 나간다', async () => {
+    const { search } = build([FOUND, { text: JSON.stringify({ picks: [2, 2, 0] }) }]);
+
+    const { picks } = await search.run({ city: '오사카' });
+
+    expect(picks).toEqual([{ name: 'C' }, { name: 'A' }]);
+  });
+
+  it('요청한 개수를 넘게 와도 잘라낸다', async () => {
+    const { search } = build([FOUND, { text: JSON.stringify({ picks: [0, 1, 2] }) }]);
+
+    const { picks } = await search.run({ city: '오사카' }); // limit = 2
+
+    expect(picks).toEqual([{ name: 'A' }, { name: 'B' }]);
+  });
+
+  it('전부 범위 밖이면 경고한다 — 빈 카드의 원인을 1차에서 찾지 않도록', async () => {
+    const { search } = build([FOUND, { text: JSON.stringify({ picks: [9, 10] }) }]);
+    const warn = jest.spyOn(search['logger'], 'warn');
+
+    const { picks } = await search.run({ city: '오사카' });
+
+    expect(picks).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('범위 밖 번호만 냈다'));
+    warn.mockRestore();
   });
 
   // ⚠️ 이 테스트가 이 파일의 이유다.
@@ -135,17 +191,20 @@ describe('2단 웹 검색 파이프라인', () => {
     expect(trace.searchCalls).toBe(0);
     // 경고는 하지만 버리지는 않는다 — 기억으로 답한 결과라도 없는 것보단 낫다.
     expect(picks).toHaveLength(1);
+    warn.mockRestore();
   });
 
   it('2차가 빈손이면 빈 배열 — 1차 후보를 대신 내보내지 않는다', async () => {
-    const { search } = build([FOUND, { text: JSON.stringify({ items: [] }), status: 'incomplete' }]);
+    const { search } = build([FOUND, { text: JSON.stringify({ picks: [] }), status: 'incomplete' }]);
 
     const { picks } = await search.run({ city: '오사카' });
 
+    // 비교·선별을 그만둘 거면 2차 호출을 없애는 결정으로 해야 한다. 실패 경로에
+    // 숨기면 모델이 고르기를 멈춘 날에도 카드는 멀쩡해 보인다.
     expect(picks).toEqual([]);
   });
 
-  it('pickKey 가 아닌 키로 오면 못 고른 것으로 본다', async () => {
+  it('picks 가 아닌 키로 오면 못 고른 것으로 본다', async () => {
     const { search } = build([FOUND, { text: JSON.stringify({ hotels: [{ name: 'A' }] }) }]);
 
     const { picks } = await search.run({ city: '오사카' });
