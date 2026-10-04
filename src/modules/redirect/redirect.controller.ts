@@ -2,7 +2,8 @@ import { Controller, Get, Logger, Param, ParseIntPipe, Res } from '@nestjs/commo
 import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 
-import { mapsUrl } from '../../common/maps-url';
+import { kakaoMapUrl, mapsUrl } from '../../common/maps-url';
+import { lookupCity } from '../places/city-table';
 import { MemoryStoreService } from '../database/memory-store.service';
 import { AttractionsRepository } from '../database/repositories/attractions.repository';
 import { RecommendationItemsRepository } from '../database/repositories/recommendations.repository';
@@ -135,11 +136,34 @@ export class RedirectController {
 
     // ⚠️ **주소를 여기서 만든다.** 노출 시점 값을 스냅샷해두지 않는 것이 요점이라
     //    (0012), 관리 화면에서 이름을 고치면 다음 클릭부터 새 이름으로 검색된다.
-    const targetUrl = mapsUrl(name, (row?.city_name as string) ?? null);
+    const cityName = (row?.city_name as string) ?? null;
+    const domestic = isDomestic(cityName);
+    const targetUrl = domestic ? kakaoMapUrl(name, cityName) : mapsUrl(name, cityName);
 
     this.logger.log(
-      `click attraction=${id} name=${name} count=${row?.clicks as number} via=db`,
+      `click attraction=${id} name=${name} count=${row?.clicks as number} ` +
+        `map=${domestic ? 'kakao' : 'google'} via=db`,
     );
     res.redirect(302, targetUrl);
   }
+}
+
+/**
+ * 국내 관광지인가. **모르면 false** — 그때는 구글맵으로 간다.
+ *
+ * 카카오맵은 해외 데이터가 거의 없어서 "모르겠으면 카카오맵" 은 빈 결과를 띄운다.
+ * 반대로 구글맵은 국내도 되므로, 모를 때 틀려도 손해가 작은 쪽이 구글맵이다.
+ *
+ * ⚠️ **세부 지역은 여기서 false 가 된다(의도한 것이다).** `register_attraction_click`
+ *    의 city_name 은 부모가 있으면 `"도톤보리 오사카"` 처럼 둘을 붙여서 준다
+ *    (0012 — 노출 때 만든 링크와 같은 주소가 나와야 해서 `searchName()` 과 규칙을
+ *    맞춘 것이다). `lookupCity` 는 전체 일치만 보므로 그런 값은 null 이 되고,
+ *    결과적으로 구글맵으로 간다. "해운대 부산" 이 카카오맵을 못 타는 건 아쉽지만
+ *    빈손보다 낫고, 지금 `attractions` 는 전부 도시 직속이라 실제로 걸릴 일이 없다.
+ *
+ * ⚠️ DB 가 아니라 사전을 본다. `places.country_code` 는 현재 **전부 null** 이고,
+ *    채운다 해도 이 경로에 DB 왕복을 하나 더 붙이게 된다 (사용자가 302 를 기다린다).
+ */
+function isDomestic(cityName: string | null): boolean {
+  return lookupCity(cityName)?.country === 'KR';
 }

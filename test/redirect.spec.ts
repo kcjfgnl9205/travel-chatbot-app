@@ -152,6 +152,61 @@ describe('관광지 클릭 리다이렉트', () => {
     expect(sent.redirect).toContain(encodeURIComponent('글리코 간판 도톤보리 오사카'));
   });
 
+  /**
+   * 국내는 카카오맵으로 보낸다. 상호·도로명이 정확하고 한국 사용자가 길찾기를
+   * 거기서 하기 때문이다. 판정은 도시 사전의 `country === 'KR'` 하나다.
+   */
+  it('국내 도시면 카카오맵으로 보낸다', async () => {
+    const { controller } = build(null, 0, {
+      attraction_name: '경복궁',
+      city_name: '서울',
+      clicks: 3,
+    });
+    const { res, sent } = fakeRes();
+
+    await controller.attraction(11, res as never);
+
+    expect(sent.redirect).toBe(
+      'https://map.kakao.com/link/search/' + encodeURIComponent('경복궁 서울'),
+    );
+  });
+
+  /**
+   * ⚠️ **카카오맵은 해외 데이터가 거의 없다.** 오사카성을 거기로 보내면 빈 결과가
+   *    뜨므로, 사전에 `country` 가 없는 도시는 전부 구글맵으로 간다 — 모를 때
+   *    틀려도 손해가 작은 쪽이다.
+   */
+  it('사전에 country 가 없는 도시는 구글맵으로 간다', async () => {
+    const { controller } = build(null, 0, {
+      attraction_name: '센토사',
+      city_name: '싱가포르',
+      clicks: 1,
+    });
+    const { res, sent } = fakeRes();
+
+    await controller.attraction(12, res as never);
+
+    expect(sent.redirect).toContain('google.com/maps');
+  });
+
+  /**
+   * 세부 지역은 city_name 이 "해운대 부산" 처럼 붙어 와서 전체 일치가 깨진다.
+   * 국내인데도 구글맵으로 가지만 빈손보다 낫고, 지금 attractions 는 전부 도시
+   * 직속이라 실제로 걸리지 않는다. 바뀌면 이 테스트가 알려준다.
+   */
+  it('국내 세부 지역은 아직 구글맵이다 — 전체 일치가 깨진다', async () => {
+    const { controller } = build(null, 0, {
+      attraction_name: '동백섬',
+      city_name: '해운대 부산',
+      clicks: 1,
+    });
+    const { res, sent } = fakeRes();
+
+    await controller.attraction(13, res as never);
+
+    expect(sent.redirect).toContain('google.com/maps');
+  });
+
   it('지워진 관광지면 안내를 띄운다 — 만료가 아니라 없어진 것이다', async () => {
     const { controller } = build(null, 0, null);
     const { res, sent } = fakeRes();

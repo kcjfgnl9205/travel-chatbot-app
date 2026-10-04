@@ -34,6 +34,18 @@ export interface CityEntry {
   iata: string | null;
   /** nameKo 외에 인정할 표기. 정규화(공백 제거·소문자)해서 넣는다. */
   aliases: string[];
+  /**
+   * ISO 3166-1 alpha-2. [country-table.ts](./country-table.ts) 의 `code` 와 같은 값이다.
+   *
+   * ⚠️ **채워진 것만 믿을 수 있다. 없다고 해외라는 뜻이 아니다** — 지금은 국내 판정이
+   *    필요해서 한국 21곳만 달았고, 나머지는 아직 아무도 묻지 않아 비어 있다.
+   *    그래서 쓰는 쪽은 반드시 `=== 'KR'` 처럼 **있는 값을 확인**해야 하고,
+   *    없을 때의 동작이 안전한 기본값이어야 한다 (지도 링크는 구글맵이 그 자리다).
+   *
+   * `places.country_code` 가 아니라 여기 두는 이유는 `iata` 와 같다 — 도시에 딸린
+   * 사실이고 사전이 정본이며, 요청 경로에서 DB 왕복 없이 0ms 로 읽혀야 한다.
+   */
+  country?: string;
 }
 
 export const CITY_TABLE: CityEntry[] = [
@@ -75,27 +87,27 @@ export const CITY_TABLE: CityEntry[] = [
   { slug: 'shimonoseki', nameKo: '시모노세키', iata: null, aliases: [] },
   { slug: 'kawaguchiko', nameKo: '가와구치코', iata: null, aliases: ['가와구치', '후지산'] },
   // ------------------------------------------------------------- 한국 21
-  { slug: 'seoul', nameKo: '서울', iata: 'ICN', aliases: [] },
-  { slug: 'busan', nameKo: '부산', iata: 'PUS', aliases: ['pusan'] },
-  { slug: 'jeju', nameKo: '제주', iata: 'CJU', aliases: ['제주도'] },
-  { slug: 'gangneung', nameKo: '강릉', iata: null, aliases: [] },
-  { slug: 'yeosu', nameKo: '여수', iata: 'RSU', aliases: [] },
-  { slug: 'incheon', nameKo: '인천', iata: 'ICN', aliases: [] },
-  { slug: 'daegu', nameKo: '대구', iata: 'TAE', aliases: [] },
-  { slug: 'gwangju', nameKo: '광주', iata: 'KWJ', aliases: [] },
-  { slug: 'daejeon', nameKo: '대전', iata: null, aliases: [] },
-  { slug: 'ulsan', nameKo: '울산', iata: 'USN', aliases: [] },
-  { slug: 'gyeongju', nameKo: '경주', iata: null, aliases: [] },
-  { slug: 'jeonju', nameKo: '전주', iata: null, aliases: [] },
-  { slug: 'sokcho', nameKo: '속초', iata: null, aliases: [] },
-  { slug: 'gapyeong', nameKo: '가평', iata: null, aliases: [] },
-  { slug: 'tongyeong', nameKo: '통영', iata: null, aliases: [] },
-  { slug: 'geoje', nameKo: '거제', iata: null, aliases: [] },
-  { slug: 'pohang', nameKo: '포항', iata: 'KPO', aliases: [] },
-  { slug: 'namhae', nameKo: '남해', iata: null, aliases: [] },
-  { slug: 'andong', nameKo: '안동', iata: null, aliases: [] },
-  { slug: 'damyang', nameKo: '담양', iata: null, aliases: [] },
-  { slug: 'boryeong', nameKo: '보령', iata: null, aliases: [] },
+  { slug: 'seoul', nameKo: '서울', iata: 'ICN', aliases: [], country: 'KR' },
+  { slug: 'busan', nameKo: '부산', iata: 'PUS', aliases: ['pusan'], country: 'KR' },
+  { slug: 'jeju', nameKo: '제주', iata: 'CJU', aliases: ['제주도'], country: 'KR' },
+  { slug: 'gangneung', nameKo: '강릉', iata: null, aliases: [], country: 'KR' },
+  { slug: 'yeosu', nameKo: '여수', iata: 'RSU', aliases: [], country: 'KR' },
+  { slug: 'incheon', nameKo: '인천', iata: 'ICN', aliases: [], country: 'KR' },
+  { slug: 'daegu', nameKo: '대구', iata: 'TAE', aliases: [], country: 'KR' },
+  { slug: 'gwangju', nameKo: '광주', iata: 'KWJ', aliases: [], country: 'KR' },
+  { slug: 'daejeon', nameKo: '대전', iata: null, aliases: [], country: 'KR' },
+  { slug: 'ulsan', nameKo: '울산', iata: 'USN', aliases: [], country: 'KR' },
+  { slug: 'gyeongju', nameKo: '경주', iata: null, aliases: [], country: 'KR' },
+  { slug: 'jeonju', nameKo: '전주', iata: null, aliases: [], country: 'KR' },
+  { slug: 'sokcho', nameKo: '속초', iata: null, aliases: [], country: 'KR' },
+  { slug: 'gapyeong', nameKo: '가평', iata: null, aliases: [], country: 'KR' },
+  { slug: 'tongyeong', nameKo: '통영', iata: null, aliases: [], country: 'KR' },
+  { slug: 'geoje', nameKo: '거제', iata: null, aliases: [], country: 'KR' },
+  { slug: 'pohang', nameKo: '포항', iata: 'KPO', aliases: [], country: 'KR' },
+  { slug: 'namhae', nameKo: '남해', iata: null, aliases: [], country: 'KR' },
+  { slug: 'andong', nameKo: '안동', iata: null, aliases: [], country: 'KR' },
+  { slug: 'damyang', nameKo: '담양', iata: null, aliases: [], country: 'KR' },
+  { slug: 'boryeong', nameKo: '보령', iata: null, aliases: [], country: 'KR' },
   // ------------------------------------------------------------ 동남아 37
   { slug: 'bangkok', nameKo: '방콕', iata: 'BKK', aliases: [] },
   { slug: 'chiang-mai', nameKo: '치앙마이', iata: 'CNX', aliases: [] },

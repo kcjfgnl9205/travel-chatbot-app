@@ -38,3 +38,26 @@ export function mapsUrl(
   // 봤을 때 어디로 가는지도 드러난다.
   return placeId ? `${url}&query_place_id=${encodeURIComponent(placeId)}` : url;
 }
+
+const KAKAO_SEARCH = 'https://map.kakao.com/link/search/';
+
+/**
+ * 국내 관광지용 카카오맵 검색 링크.
+ *
+ * **구글맵과 같은 방식이다** — 이름으로 검색시키는 것뿐이라 좌표도 장소 ID 도
+ * 필요 없고, 그래서 지어낼 자리도 죽은 링크도 없다. 고르는 기준 하나만 다르다.
+ *
+ * ⚠️ **국내에서만 쓴다.** 카카오맵은 해외 데이터가 거의 없어서, 오사카성을 여기로
+ *    보내면 "검색 결과가 없습니다" 가 뜬다. 구글맵은 국내도 되지만 국내에서는
+ *    카카오맵이 낫다 — 상호·도로명이 정확하고, 한국 사용자 대부분이 길찾기를
+ *    여기서 한다. 판정은 [city-table.ts](../modules/places/city-table.ts) 의
+ *    `country === 'KR'` 이고, 모르면 구글맵이다 (모르는 쪽이 안전한 기본값).
+ *
+ * 경로가 `?q=` 가 아니라 `/link/search/` 인 이유: 이쪽이 카카오맵 앱이 설치된
+ * 기기에서 앱으로 이어지는 공식 링크 규약이다.
+ * https://apis.map.kakao.com/web/guide/#urlscheme
+ */
+export function kakaoMapUrl(name: string, cityName?: string | null): string {
+  const query = [name.trim(), cityName?.trim()].filter(Boolean).join(' ');
+  return KAKAO_SEARCH + encodeURIComponent(query);
+}
