@@ -30,7 +30,15 @@ export const COUNTRY_TABLE: CountryEntry[] = [
   { nameKo: '대만', code: 'TW', aliases: ['taiwan', '타이완'] },
   { nameKo: '중국', code: 'CN', aliases: ['china'] },
   { nameKo: '필리핀', code: 'PH', aliases: ['philippines'] },
-  { nameKo: '싱가포르', code: 'SG', aliases: ['singapore', '싱가폴'] },
+  // ⚠️ **싱가포르를 여기 넣지 마라.** 나라이면서 도시지만 `kind` 는 값이 하나뿐이고,
+  //    라우터는 country 를 보면 **검색을 아예 안 탄다** — 도시를 되묻고 끝난다
+  //    ([router.controller.ts](../kakao/router.controller.ts) 5-b). 되물을 자식 도시가
+  //    없으니 citiesOf 가 모델에게 묻고, 모델은 센토사·마리나베이 같은 **구역을 도시로**
+  //    지어내 매단다. 그 구역에는 관광지가 없어서 사용자는 두 번 되묻고 빈손이 된다.
+  //    도시 사전에 slug=singapore / iata=SIN 으로 있고 그쪽이 맞다. 여기 있으면
+  //    `draftFromCountry(...) ?? draftFromTable(...)` 순서 때문에 그 행이 죽는다
+  //    (항공권 프롬프트가 SIN 을 못 받는 것도 같은 이유다).
+  //    홍콩·마카오도 같은 이유로 여기 없다 — 도시 사전에만 있다.
   { nameKo: '말레이시아', code: 'MY', aliases: ['malaysia', '말레이지아'] },
   { nameKo: '인도네시아', code: 'ID', aliases: ['indonesia'] },
   { nameKo: '캄보디아', code: 'KH', aliases: ['cambodia'] },
