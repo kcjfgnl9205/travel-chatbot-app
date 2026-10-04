@@ -1,0 +1,196 @@
+너는 한국인 여행자용 챗봇의 관광지 데이터를 만든다.
+맨 아래 "대상 도시" 116곳 전부에 대해 PostgreSQL INSERT 문을 작성해라.
+웹 검색으로 실재 여부와 영업 여부를 확인하고 써라.
+
+## 스키마 (이미 존재한다. CREATE TABLE 을 쓰지 마라)
+
+create table public.attractions (
+    id           bigserial primary key,
+    city_id      bigint not null references public.places (id),
+    name         text not null,        -- 카드 제목. 한국인이 검색할 표준 표기
+    name_en      text,                 -- 영어 위키백과 표제어 표기
+    area         text,                 -- 도시 안에서의 위치
+    image_url    text,                 -- 건드리지 마라
+    image_source text,                 -- 건드리지 마라
+    rank         integer not null default 0,
+    source       text not null check (source in ('manual','ai'))
+);
+-- unique index on (city_id, name)
+
+## 반드시 지킬 것
+
+1. city_id 를 숫자로 쓰지 마라. identity 컬럼이라 값을 알 수 없다.
+   반드시 slug 로 조회해 넣는다 (아래 출력 형식 참고).
+2. source 는 'ai' 로 고정한다. 'manual' 로 쓰지 마라 —
+   나중에 사람이 검수할 대상을 가리는 표식이라 거짓이 되면 안 된다.
+3. image_url / image_source 는 컬럼 목록에서 아예 빼라.
+   AI가 이미지 주소를 쓰면 반드시 존재하지 않는 주소를 지어낸다. 사진은 별도 공정이 채운다.
+4. name 에는 관광지 이름만 쓴다. 설명·비교·사족을 절대 섞지 마라.
+   금지: "무앙보란(아노타이) 제외 — 대신: 소운 팍깟 궁전 박물관"
+         "시암의 박물관: 뮤지엄 오브 시암"
+         "시암 스퀘어/쇼핑 거리 (시암 지역 대표)"
+   올바름: "오사카성", "도톤보리", "짐 톰슨 하우스"
+5. 한 도시 안에서 name 이 겹치면 안 된다. 띄어쓰기·가운뎃점만 다른 것도 같은 것으로 본다
+   ("오사카성" 과 "오사카 성" 은 둘 중 하나만).
+6. name_en 은 영어 위키백과에 실릴 공식 표기로 쓴다 (오사카성 -> Osaka Castle).
+   확실하지 않으면 지어내지 말고 null. 틀린 영문명은 엉뚱한 사진을 물고 온다.
+   ** 이 항목이 이 작업에서 가장 중요하다. 사진 적중률이 여기서 3배 가까이 갈린다. **
+7. area 는 그 도시 안에서의 위치다 (주오구, 난바, 텐진). 12자 이내.
+   도시 이름을 다시 쓰지 마라 — 사용자는 이미 그 도시를 물어봤다.
+   "오사카 주오구" (X) / "주오구" (O)
+8. rank 는 0부터 1씩 연속. 가장 유명하고 누구나 가는 곳이 0번이다.
+9. 명소·자연·쇼핑·시장·박물관이 고루 섞이게 한다. 사찰만 20개 같은 목록은 쓸모없다.
+10. 도시당 최대 20곳. 폐업·폐관했거나 실재가 불확실한 곳은 빼라.
+    20개를 억지로 채우지 마라. 확실한 곳이 12개면 12개만 내는 게 낫다.
+    강릉·비에이·담양처럼 작은 도시는 5~10곳이 정상이다.
+
+## 출력 형식 (도시마다 이 블록 하나씩. SQL 외에는 아무것도 쓰지 마라)
+
+insert into public.attractions (city_id, name, name_en, area, rank, source)
+select p.id, v.name, v.name_en, v.area, v.rank, 'ai'
+  from (values
+    ('오사카성',          'Osaka Castle'::text,     '주오구'::text, 0),
+    ('도톤보리',          'Dotonbori',              '난바',         1),
+    ('우메다 스카이빌딩',  'Umeda Sky Building',     '기타구',       2)
+  ) as v(name, name_en, area, rank)
+ cross join (select id from public.places where slug = 'osaka' and kind = 'city') p
+on conflict (city_id, name) do nothing;
+
+- 첫 행에만 ::text 캐스팅을 붙여라. null 이 섞이면 타입 추론이 실패한다.
+- null 은 따옴표 없이 null 로 쓴다.
+- 이름에 작은따옴표가 들어가면 '' 로 이스케이프한다.
+- slug 는 반드시 아래 목록에 적힌 값을 그대로 쓴다. 바꾸거나 추측하지 마라.
+
+## ⚠️ 한 번에 다 못 쓰면 — 이렇게 끊어라
+
+116곳이라 한 응답에 다 안 들어갈 수 있다. 그때 지켜야 할 것:
+
+- **목록에 적힌 순서 그대로** 위에서부터 작성한다. 건너뛰거나 순서를 바꾸지 마라.
+- **도시 블록 중간에서 끊지 마라.** 한 도시의 insert 문은 통째로 끝내고 멈춘다.
+  잘린 SQL 은 붙여 넣으면 문법 오류가 난다.
+- 멈출 때는 SQL 뒤에 이 한 줄만 덧붙인다:
+
+      -- STOP: <마지막으로 끝낸 도시 slug> 까지. 다음은 <그다음 도시 slug> 부터.
+
+- 내가 "계속" 이라고 하면 **그 다음 도시부터** 이어서 쓴다.
+  이미 쓴 도시를 다시 쓰지 마라. 인사말·요약·"이어서 작성하겠습니다" 같은 말도 쓰지 마라.
+- 전부 끝내면 마지막 줄에 `-- DONE: 116개 도시 완료` 만 쓴다.
+
+## 대상 도시 116곳 (slug / 한국어 도시명)
+
+osaka / 오사카
+tokyo-disney / 도쿄디즈니
+tokyo / 도쿄
+sapporo / 삿포로
+nagoya / 나고야
+kyoto / 교토
+okinawa / 오키나와
+fukuoka / 후쿠오카
+oita / 오이타
+yokohama / 요코하마
+beppu / 벳푸
+kobe / 고베
+kagoshima / 가고시마
+hiroshima / 히로시마
+kumamoto / 구마모토
+nagasaki / 나가사키
+shizuoka / 시즈오카
+nikko / 닛코
+yufuin / 유후인
+takamatsu / 다카마쓰
+hakone / 하코네
+kanazawa / 가나자와
+chitose / 치토세
+matsuyama / 마쓰야마
+otaru / 오타루
+furano / 후라노
+biei / 비에이
+ishigaki / 이시가키
+hakodate / 하코다테
+sendai / 센다이
+aomori / 아오모리
+nara / 나라
+miyakojima / 미야코지마
+kitakyushu / 기타큐슈
+kawaguchiko / 가와구치코
+busan / 부산
+seoul / 서울
+gangneung / 강릉
+shimonoseki / 시모노세키
+jeju / 제주
+incheon / 인천
+daejeon / 대전
+yeosu / 여수
+ulsan / 울산
+gwangju / 광주
+daegu / 대구
+gyeongju / 경주
+jeonju / 전주
+sokcho / 속초
+tongyeong / 통영
+gapyeong / 가평
+geoje / 거제
+andong / 안동
+pohang / 포항
+namhae / 남해
+damyang / 담양
+boryeong / 보령
+krabi / 크라비
+koh-samui / 코사무이
+pattaya / 파타야
+phuket / 푸껫
+chiang-mai / 치앙마이
+hua-hin / 후아힌
+bangkok / 방콕
+da-lat / 달랏
+phu-quoc / 푸꾸옥
+hanoi / 하노이
+nha-trang / 나트랑
+danang / 다낭
+ha-long / 하롱베이
+ho-chi-minh / 호치민
+hoi-an / 호이안
+phnom-penh / 프놈펜
+sapa / 사파
+siem-reap / 시엠립
+yangon / 양곤
+vientiane / 비엔티안
+luang-prabang / 루앙프라방
+kuala-lumpur / 쿠알라룸푸르
+bali / 발리
+johor-bahru / 조호르바루
+penang / 페낭
+jakarta / 자카르타
+kota-kinabalu / 코타키나발루
+langkawi / 랑카위
+yogyakarta / 족자카르타
+lombok / 롬복
+cebu / 세부
+manila / 마닐라
+palawan / 팔라완
+bohol / 보홀
+boracay / 보라카이
+hong-kong / 홍콩
+macau / 마카오
+clark / 클락
+tainan / 타이난
+taipei / 타이베이
+taichung / 타이중
+hualien / 화롄
+shanghai / 상하이
+qingdao / 칭다오
+beijing / 베이징
+kaohsiung / 가오슝
+harbin / 하얼빈
+shenzhen / 선전
+nanjing / 난징
+guangzhou / 광저우
+xian / 시안
+chongqing / 충칭
+hangzhou / 항저우
+chengdu / 청두
+paris / 파리
+lyon / 리옹
+nice / 니스
+bordeaux / 보르도
+singapore / 싱가포르
