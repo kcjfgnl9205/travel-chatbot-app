@@ -20,6 +20,8 @@
 | `prompt.txt` | **이것 하나를 통째로 복사해 다른 AI 에게 붙인다.** 116곳 전부가 들어 있다 |
 | `cities.txt` | 대상 도시 116곳. `places` 에서 직접 뽑았다 (`slug / 한국어명`) |
 | `fill-images.sh` | 5단계. 전 도시의 빈 사진을 위키미디어로 채운다 (무료·모델 안 부름) |
+| `prompt-name-en.txt` | 6단계. 사진을 못 찾은 줄의 영문명을 채운다 (아래 참고) |
+| `name-en-targets.tsv` | 그 대상 351건. DB 에서 뽑았다 (`id / 도시 / 이름`) |
 
 ### 끊기면 "계속" 이라고만 하면 된다
 
@@ -143,4 +145,45 @@ select p.canonical_name, a.name, a.name_en
 delete from attractions
  where source = 'ai'
    and city_id = (select id from places where slug = 'osaka' and kind = 'city');
+```
+
+---
+
+## 6. 사진을 못 찾은 줄의 영문명을 채운다
+
+5단계를 끝내고 집계했더니 `name_en` 유무가 사진 적중률을 거의 전부 설명했다:
+
+|  | `name_en` 있음 | `name_en` 없음 |
+|---|---|---|
+| **사진 있음** | 778 | 130 |
+| **사진 없음** | 31 | **351** |
+
+영문명이 있으면 **96%**(778/809)가 사진을 찾았고, 없으면 **27%**(130/481)였다.
+[0011](../../supabase/migrations/0011_attraction_image_source.sql) 의 후쿠오카
+실측(4/14 → 11/14)이 1,290건 규모에서 그대로 재현된 셈이다.
+
+이유는 [attraction-image.ts](../../src/modules/attraction/attraction-image.ts) 에
+있다 — `ko → en → commons` 중 `en` 은 영문명이 없으면 **통째로 건너뛰고**,
+커먼즈 파일명은 거의 영문이라 한국어로는 거의 안 걸린다.
+
+**그래서 남은 실패 382건 중 351건이 영문명 하나로 막혀 있다.** 나머지 31건은
+영문명이 있는데도 못 찾은 것이라 손댈 게 없다 (위키미디어에 사진이 없는 장소다).
+
+### 절차
+
+1. `prompt-name-en.txt` 를 통째로 다른 AI 에 붙인다. 끊기면 `계속`
+2. 받은 UPDATE 문을 Supabase SQL Editor 에서 실행
+3. `fill-images.sh` 를 **한 번 더** 돌린다 — 사진이 빈 칸만 다시 간다
+
+⚠️ **목록을 새로 만들라는 게 아니다.** 기존 행의 `name_en` 칸만 채운다. 그래서
+프롬프트가 id 로 UPDATE 하게 돼 있고, "모르면 그 줄을 통째로 빼라" 고 못 박았다 —
+틀린 영문명은 비어 있는 것보다 나쁘다. **엉뚱한 장소의 사진**을 물고 오기 때문이다.
+
+### 대상 목록을 다시 뽑으려면
+
+```sql
+select a.id, p.canonical_name, a.name, a.area
+  from attractions a join places p on p.id = a.city_id
+ where a.image_url is null and a.name_en is null
+ order by a.id;
 ```
