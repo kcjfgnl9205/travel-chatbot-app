@@ -190,19 +190,60 @@ describe('관광지 클릭 리다이렉트', () => {
   });
 
   /**
-   * 세부 지역은 city_name 이 "해운대 부산" 처럼 붙어 와서 전체 일치가 깨진다.
-   * 국내인데도 구글맵으로 가지만 빈손보다 낫고, 지금 attractions 는 전부 도시
-   * 직속이라 실제로 걸리지 않는다. 바뀌면 이 테스트가 알려준다.
+   * ⚠️ **사전에 없는 국내 도시가 이 분기의 존재 이유다.**
+   *
+   * 사전 경로는 country_code 를 null 로 넣고 모델 경로는 채운다. 그래서 춘천처럼
+   * 나중에 등록된 도시는 사전에 없고 DB 에만 'KR' 이 있다 — 사전만 보면 국내인데도
+   * 구글맵으로 간다.
    */
-  it('국내 세부 지역은 아직 구글맵이다 — 전체 일치가 깨진다', async () => {
+  it('사전에 없어도 DB 가 KR 이면 카카오맵으로 보낸다', async () => {
     const { controller } = build(null, 0, {
-      attraction_name: '동백섬',
-      city_name: '해운대 부산',
+      attraction_name: '남이섬',
+      city_name: '춘천',
+      country_code: 'KR',
       clicks: 1,
     });
     const { res, sent } = fakeRes();
 
     await controller.attraction(13, res as never);
+
+    expect(sent.redirect).toBe(
+      'https://map.kakao.com/link/search/' + encodeURIComponent('남이섬 춘천'),
+    );
+  });
+
+  /**
+   * 세부 지역은 city_name 이 "해운대 부산" 으로 붙어 와서 사전 전체 일치가 깨진다.
+   * RPC 가 부모의 country_code 를 폴백으로 주므로(0014) 그래도 국내로 잡힌다.
+   */
+  it('국내 세부 지역은 부모의 country_code 가 구해준다', async () => {
+    const { controller } = build(null, 0, {
+      attraction_name: '동백섬',
+      city_name: '해운대 부산',
+      country_code: 'KR',
+      clicks: 1,
+    });
+    const { res, sent } = fakeRes();
+
+    await controller.attraction(14, res as never);
+
+    expect(sent.redirect).toContain('map.kakao.com');
+  });
+
+  /**
+   * ⚠️ 반대 방향도 지켜야 한다. 해외 세부 지역은 country_code 가 'JP' 라서
+   *    카카오맵으로 가면 안 된다 — 빈 결과가 뜬다.
+   */
+  it('해외 세부 지역은 구글맵이다', async () => {
+    const { controller } = build(null, 0, {
+      attraction_name: '글리코 간판',
+      city_name: '도톤보리 오사카',
+      country_code: 'JP',
+      clicks: 1,
+    });
+    const { res, sent } = fakeRes();
+
+    await controller.attraction(15, res as never);
 
     expect(sent.redirect).toContain('google.com/maps');
   });
