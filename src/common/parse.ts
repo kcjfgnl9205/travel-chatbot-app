@@ -27,6 +27,34 @@ export function text(value: unknown): string | null {
 }
 
 /**
+ * 웹 검색 인용 표기를 지운 문자열. 비면 null.
+ *
+ * **`web_search` 를 켜면 모델이 출처를 본문에 박아 보낸다.** 구조화 출력이라 스키마는
+ * 지키는데, 그 string 안에 마크다운 링크가 들어 있다 — 실제로 저장된 값이다:
+ *
+ *   `중심 상업지구, 난바역 직결. ([kr.trip.com](https://kr.trip.com/...&utm_source=openai))`
+ *
+ * 카드 설명은 40자라 대부분 잘려 안 보이지만, **잘린 자리에 `([kr.trip` 같은 조각이
+ * 남는다.** 사용자에게는 그냥 깨진 글자다. 프롬프트로 "인용을 쓰지 마라" 고 시켜도
+ * 검색 도구를 켠 이상 샌다 — 받아서 지우는 게 확실하다.
+ *
+ * 둘을 다르게 다룬다:
+ *   `([라벨](주소))`  통째로 지운다 — 괄호째 붙은 건 인용이지 내용이 아니다
+ *   `[라벨](주소)`    라벨만 남긴다 — 문장 안에 녹아 있으면 그 글자는 내용이다
+ */
+export function textWithoutCitations(value: unknown): string | null {
+  const raw = text(value);
+  if (!raw) return null;
+  const cleaned = raw
+    .replace(/\s*\(\s*\[[^\]]*\]\([^)]*\)\s*\)/g, '')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    // 인용을 떼면 " ." 이나 중복 공백이 남는다.
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  return text(cleaned);
+}
+
+/**
  * 양의 정수만. 0·음수·NaN 은 null.
  *
  * ⚠️ **경유 횟수처럼 0 이 유효한 값에는 쓰면 안 된다** (직항이 0이다).

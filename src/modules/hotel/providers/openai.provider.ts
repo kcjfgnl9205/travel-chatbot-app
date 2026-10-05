@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import { allowedHost, merchantFrom, toKoreanUrl } from '../../../common/booking-url';
 import { fetchWithTimeout } from '../../../common/fetch';
-import { bounded, positiveInt, text } from '../../../common/parse';
+import { bounded, positiveInt, text, textWithoutCitations } from '../../../common/parse';
 import { AppConfig, CONFIG } from '../../../config/app.config';
 import { OpenAiService } from '../../openai/openai.service';
 import { TwoStageSearch, TwoStageTrace, newTwoStageTrace } from '../../openai/two-stage';
@@ -215,6 +215,25 @@ export class OpenAiHotelProvider
     ].join('\n');
   }
 
+  /**
+   * **허용 호스트 밖 후보를 2차에 넘기지 않는다.**
+   *
+   * 프롬프트가 1차·2차 양쪽에 "예약 링크는 네 곳 중 하나" 라고 적혀 있는데도 1차는
+   * 아고다·부킹닷컴을 섞어 온다. 그 풀을 그대로 2차에 넘기면 모델이 **버려질 후보
+   * 중에서** 20곳을 고르고, 정규화가 그중 대부분을 버린다 — 오사카에서 실제로
+   * `picks=20 kept=2` 가 나왔고 사용자는 두 줄짜리 카드를 받았다.
+   *
+   * ⚠️ **toHotels 의 검사를 대신하지 않는다.** 2차가 범위 밖 번호를 줄 수 있고,
+   *    링크를 지어낼 여지도 남아 있다. 여기는 **2차가 쓸모없는 선택을 하지 않게**
+   *    하는 자리다.
+   */
+  protected override usableCandidates(candidates: unknown[]): unknown[] {
+    return candidates.filter((c) => {
+      const url = text((c as RawCandidate)?.url);
+      return Boolean(url) && isAllowedSourceUrl(url as string);
+    });
+  }
+
   async search(query: HotelQuery): Promise<Hotel[]> {
     return (await this.searchTraced(query)).hotels;
   }
@@ -296,9 +315,12 @@ export class OpenAiHotelProvider
         // 모델은 이미지 주소를 사실상 못 준다 — 아래 withThumbnails 가 예약 페이지에서
         // 직접 긁는다. 여기서 null 로 두는 게 "안 받았다" 는 사실에 맞다.
         thumbnailUrl: null,
-        description: text(pick.note),
+        // ⚠️ **웹 검색 인용을 지운다.** web_search 를 켜면 모델이 출처를 본문에 박는다
+        //    ("난바역 직결. ([kr.trip.com](https://…utm_source=openai))"). 카드 설명은
+        //    40자라 대부분 잘리는데, 잘린 자리에 `([kr.trip` 같은 조각이 남는다.
+        description: textWithoutCitations(pick.note),
         // 카드 줄의 마지막 조각이 tags[0] 이다. 1차가 준 지역을 그대로 쓴다.
-        tags: [text(pick.area)].filter((t): t is string => Boolean(t)),
+        tags: [textWithoutCitations(pick.area)].filter((t): t is string => Boolean(t)),
       });
     }
 

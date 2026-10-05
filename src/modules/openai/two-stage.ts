@@ -123,6 +123,42 @@ export abstract class TwoStageSearch<TQuery> {
       );
       return null;
     }
+
+    // ⚠️ **2차에 넘기기 전에 쓸 수 없는 후보를 뺀다.** 프롬프트로 "예약 링크는 네 곳
+    //    중 하나" 라고 시켜도 1차는 아고다·부킹닷컴을 섞어 온다. 예전에는 그 오염된
+    //    풀을 그대로 2차에 넘겨, 모델이 **버려질 후보 중에서 20곳을 고르고** 정규화가
+    //    그중 18개를 버렸다 (운영에서 picks=20 kept=2). 2차 호출이 통째로 낭비되고,
+    //    사용자는 두 줄짜리 카드를 받는다.
+    const usable = this.usableCandidates(candidates);
+    trace.usableCandidates = usable.length;
+
+    if (usable.length !== candidates.length) {
+      this.logger.warn(
+        `${this.label} candidates filtered ${subject} ` +
+          `${candidates.length} → ${usable.length} (쓸 수 없는 후보를 2차 전에 뺐다)`,
+      );
+    }
+    if (!usable.length) {
+      // 1차가 전부 못 쓰는 것만 물어왔다. 2차를 부르면 빈손에서 지어낸다 —
+      // 후보가 0개일 때 부르지 않는 것과 같은 이유다.
+      this.logger.warn(
+        `${this.label} search produced no usable candidates ${subject} ` +
+          `(${candidates.length}곳 전부 걸러졌다 — 1차 프롬프트나 허용 목록을 봐야 한다)`,
+      );
+      return null;
+    }
+    return usable;
+  }
+
+  /**
+   * 2차에 넘길 만한 후보만 남긴다. **기본은 전부 통과**다.
+   *
+   * 도메인이 "이건 어차피 못 쓴다" 를 아는 경우에만 덮어쓴다 — 호텔은 허용 호스트
+   * 밖의 예약 링크가 그렇다. 정규화 단계에도 같은 검사가 남아 있어야 한다. 여기는
+   * **낭비를 줄이는 자리**이지 안전장치가 아니다 (2차가 범위 밖 번호를 줄 수 있고,
+   * 이 훅을 안 덮어쓰는 도메인도 있다).
+   */
+  protected usableCandidates(candidates: unknown[]): unknown[] {
     return candidates;
   }
 
@@ -260,11 +296,16 @@ export interface TwoStageTrace {
   searchCalls: number;
   /** 1차 호출이 모아온 후보 개수. 0 이면 검색 프롬프트가 안 먹은 것이다. */
   candidates: number;
+  /**
+   * 그중 **2차에 실제로 넘긴** 개수. `candidates` 보다 한참 작으면 1차가 못 쓰는 것을
+   * 물어온 것이고, 그건 2차·정규화가 아니라 **1차 프롬프트나 허용 목록**의 문제다.
+   */
+  usableCandidates: number;
   /** 2차 호출이 고른 **유효한** 번호의 개수 (provider 의 정규화·필터 전). */
   picks: number;
 }
 
 /** 공통 필드를 0으로. 도메인 필드는 호출부가 덧붙인다. */
 export function newTwoStageTrace(): TwoStageTrace {
-  return { searchMs: 0, rankMs: 0, searchCalls: 0, candidates: 0, picks: 0 };
+  return { searchMs: 0, rankMs: 0, searchCalls: 0, candidates: 0, usableCandidates: 0, picks: 0 };
 }

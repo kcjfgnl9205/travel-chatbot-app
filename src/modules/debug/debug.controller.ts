@@ -113,10 +113,15 @@ export class DebugController {
       '이 카드는 잠시 뒤 **콜백으로** 배달된다 — 여기 나오는 건 그 콜백 본문이다.\n\n' +
       '⚠️ 호출 한 번이 OpenAI 요금이다 (7~30초). 캐시를 읽지도 쓰지도 않는다.\n\n' +
       '`trace` 가 **왜 그 결과인지**를 말해준다 — `provider.searchCalls`(0 이면 모델이 ' +
-      '웹 검색을 건너뛴 것), `provider.candidates`(1차가 모은 수), `provider.picks`' +
-      '(2차가 고른 수), `kept`(정규화를 통과해 카드까지 간 수), `candidates`(1차 원문). ' +
-      '셋은 고치는 곳이 전부 다르다. 예전에는 이게 서버 로그에만 있어서 로그를 못 보면 ' +
-      '원인을 짚을 수 없었다.',
+      '웹 검색을 건너뛴 것), `provider.candidates`(1차가 모은 수), ' +
+      '`provider.usableCandidates`(그중 2차에 넘긴 수), `provider.picks`(2차가 고른 수), ' +
+      '`kept`(정규화를 통과해 카드까지 간 수), `candidates`(1차 원문). ' +
+      '고치는 곳이 전부 다르다. 예전에는 이게 서버 로그에만 있어서 로그를 못 보면 ' +
+      '원인을 짚을 수 없었다.\n\n' +
+      '⚠️ **`candidates` 와 `usableCandidates` 가 크게 벌어지면 1차가 범인이다** — ' +
+      '프롬프트로 "예약 링크는 네 곳 중 하나" 라고 시켜도 아고다·부킹닷컴을 섞어 온다. ' +
+      '그 차이가 크면 2차·정규화를 아무리 봐도 소용없고, 1차 프롬프트나 허용 목록을 ' +
+      '봐야 한다.',
   })
   @ApiBody({
     schema: { type: 'object', properties: { utterance: { type: 'string' } } },

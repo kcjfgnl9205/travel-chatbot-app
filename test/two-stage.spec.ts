@@ -72,6 +72,16 @@ class TestSearch extends TwoStageSearch<Query> {
     return `${query.city} 후보: ${candidates}`;
   }
 
+  /**
+   * 도메인이 덮어쓰는 "쓸 수 없는 후보" 규칙. 테스트가 세팅한다.
+   * null 이면 기본 동작(전부 통과)을 확인한다.
+   */
+  usableRule: ((c: unknown) => boolean) | null = null;
+
+  protected override usableCandidates(candidates: unknown[]): unknown[] {
+    return this.usableRule ? candidates.filter(this.usableRule) : super.usableCandidates(candidates);
+  }
+
   /** 도메인 provider 의 searchTraced 가 하는 일을 최소한으로 흉내 낸다. */
   async run(query: Query): Promise<{ picks: unknown[]; trace: TwoStageTrace }> {
     const trace = newTwoStageTrace();
@@ -151,6 +161,46 @@ describe('2단 웹 검색 파이프라인', () => {
   });
 
   // ⚠️ 이 테스트가 이 파일의 이유다.
+  /**
+   * ⚠️ **이 필터가 없으면 2차가 버려질 후보 중에서 고른다.**
+   *
+   * 호텔 프롬프트는 1차·2차 양쪽에 "예약 링크는 네 곳 중 하나" 라고 적혀 있는데도
+   * 1차가 아고다·부킹닷컴을 섞어 왔다. 그 풀을 그대로 넘겼더니 오사카에서
+   * `picks=20 kept=2` 가 나왔고, 사용자는 두 줄짜리 카드를 받았다.
+   */
+  it('쓸 수 없는 후보는 2차에 넘기지 않는다', async () => {
+    const { search, openai } = build([FOUND, PICKED]);
+    search.usableRule = (c) => (c as { name: string }).name !== 'A';
+
+    const { trace } = await search.run({ city: '오사카' });
+
+    expect(trace.candidates).toBe(3); // 1차가 가져온 것은 그대로 기록한다
+    expect(trace.usableCandidates).toBe(2); // 2차에 넘긴 것
+    // 2차 프롬프트에 걸러진 후보가 들어가면 안 된다 — 번호가 밀려 엉뚱한 걸 고른다.
+    expect(openai.calls[1].input).not.toContain('"A"');
+    expect(openai.calls[1].input).toContain('"B"');
+  });
+
+  it('필터를 안 덮어쓰면 전부 통과한다 — 항공권·관광지는 그대로다', async () => {
+    const { search } = build([FOUND, PICKED]);
+
+    const { trace } = await search.run({ city: '오사카' });
+
+    expect(trace.usableCandidates).toBe(trace.candidates);
+  });
+
+  it('전부 걸러지면 2차를 부르지 않는다 — 빈손에서 고르면 지어낸다', async () => {
+    const { search, openai } = build([FOUND, PICKED]);
+    search.usableRule = () => false;
+
+    const { picks, trace } = await search.run({ city: '오사카' });
+
+    expect(picks).toEqual([]);
+    expect(trace.candidates).toBe(3);
+    expect(trace.usableCandidates).toBe(0);
+    expect(openai.calls).toHaveLength(1); // 2차를 아예 안 불렀다 = 요금 0
+  });
+
   it('**후보가 0개면 2차를 부르지 않는다** — 빈손에서 고르라고 하면 지어낸다', async () => {
     const { search, openai } = build([{ text: JSON.stringify({ candidates: [] }) }, PICKED]);
 

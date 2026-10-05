@@ -1,3 +1,4 @@
+import { textWithoutCitations } from '../src/common/parse';
 import {
   ALLOWED_HOSTS,
   ALLOWED_SITES_TEXT,
@@ -272,5 +273,45 @@ describe('항공권 예약 링크', () => {
       const shown = host.startsWith('skyscanner') ? 'skyscanner.co.kr' : host;
       expect(FLIGHT_ALLOWED_SITES_TEXT).toContain(shown);
     }
+  });
+});
+
+/**
+ * 웹 검색 인용 제거.
+ *
+ * `web_search` 를 켜면 모델이 구조화 출력의 string 안에 출처를 마크다운 링크로
+ * 박아 보낸다. 프롬프트로 막아도 샌다 — 실제로 오사카 호텔 설명에 들어와
+ * DB 까지 저장됐다. 카드 설명은 40자라 대부분 잘리는데, **잘린 자리에
+ * `([kr.trip` 같은 조각이 남아** 사용자에게는 깨진 글자로 보인다.
+ */
+describe('웹 검색 인용 제거', () => {
+  it('괄호째 붙은 인용은 통째로 지운다 — 운영에서 실제로 저장된 값이다', () => {
+    expect(
+      textWithoutCitations(
+        '중심 상업지구, 난바역 직결. ([kr.trip.com](https://kr.trip.com/hotels/osaka-hotel-detail-976800/?utm_source=openai))',
+      ),
+    ).toBe('중심 상업지구, 난바역 직결.');
+  });
+
+  it('인용이 여러 개여도 전부 지운다', () => {
+    expect(
+      textWithoutCitations('도톤보리 인근. ([a.com](https://a.com)) 조식 포함. ([b.com](https://b.com))'),
+    ).toBe('도톤보리 인근. 조식 포함.');
+  });
+
+  /** 괄호 없이 문장에 녹아 있으면 그 글자는 내용이다 — 지우면 말이 끊긴다. */
+  it('문장 속 마크다운 링크는 라벨만 남긴다', () => {
+    expect(textWithoutCitations('[난바역](https://x.com) 도보 3분')).toBe('난바역 도보 3분');
+  });
+
+  it('인용이 없으면 그대로 둔다', () => {
+    expect(textWithoutCitations('난바역 직결, 조식 포함')).toBe('난바역 직결, 조식 포함');
+  });
+
+  /** text() 의 규칙을 그대로 물려받는다 — 인용만 남은 문자열은 빈손이다. */
+  it('지우고 나서 빈 문자열이면 null', () => {
+    expect(textWithoutCitations('([kr.trip.com](https://kr.trip.com))')).toBeNull();
+    expect(textWithoutCitations('정보 없음')).toBeNull();
+    expect(textWithoutCitations(null)).toBeNull();
   });
 });
