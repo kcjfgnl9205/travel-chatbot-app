@@ -404,6 +404,10 @@ export class SearchService {
         this.cursors.remember(req.userKey, { cacheKey, offset: nextOffset });
       }
     }
+    // ⚠️ **"더 보기" 다음에 넣어야 한다.** listCard 버튼은 2개가 한계이고
+    //    listCardWithNotice 가 slice(0, 2) 로 조용히 자른다. 순서를 뒤집으면 넘칠 때
+    //    페이지 넘김이 사라지는데, 공유보다 그쪽이 훨씬 중요하다.
+    buttons.push(t.shareButton());
 
     return t.listCardWithNotice(
       {

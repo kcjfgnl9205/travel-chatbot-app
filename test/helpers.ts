@@ -166,6 +166,9 @@ export const textOf = (body: any): string =>
 export const moreButtonOf = (body: any) =>
   listCardOf(body)?.buttons?.find((b: any) => b.label === '더 보기');
 
+export const shareButtonOf = (body: any) =>
+  listCardOf(body)?.buttons?.find((b: any) => b.action === 'share');
+
 /**
  * 카드가 나올 때까지 다시 물어본다.
  *

@@ -43,6 +43,25 @@ export function messageButton(label: string, messageText: string): Json {
   };
 }
 
+/**
+ * 말풍선을 다른 방으로 공유하는 버튼.
+ *
+ * **서버로 아무것도 안 돌아온다.** `message`·`block` 과 달리 카카오 클라이언트가
+ * 공유창을 띄우고 끝이라 `label` 외에 실을 것이 없고, 누가 공유했는지도 알 수 없다
+ * (추적이 필요하면 카드 안의 `/r/{clickId}` · `/a/{id}` 링크가 그 일을 한다).
+ *
+ * ⚠️ **공유된 카드의 링크는 그대로 살아 있어야 한다.** 관광지는 `/a/{id}` 라 괜찮지만
+ *    호텔·항공권의 `/r/{clickId}` 는 노출마다 발급되는 값이라, 공유받은 사람이 눌러도
+ *    **원래 공유한 사람의 클릭으로 집계된다.** 수수료는 어차피 애드픽 subid 단위라
+ *    문제가 없고, 그래서 지금 구조를 안 바꾼다 — 다만 통계를 볼 때 이걸 알아야 한다.
+ */
+export function shareButton(label = '공유하기'): Json {
+  return {
+    label: cut(label, MAX_BUTTON_LABEL),
+    action: 'share',
+  };
+}
+
 export function skillResponse(outputs: Json[], quickReplies?: Json[]): Json {
   const template: Json = { outputs };
   if (quickReplies?.length) {

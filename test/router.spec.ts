@@ -7,6 +7,7 @@ import {
   kakaoPayload,
   listCardOf,
   moreButtonOf,
+  shareButtonOf,
   noticeOf,
   post,
   textOf,
@@ -172,6 +173,40 @@ describe('POST /api/v1/kakao/router', () => {
     // provider 가 12곳을 주므로 11~12번째가 마지막이다.
     expect(listCardOf(last.body).items).toHaveLength(2);
     expect(moreButtonOf(last.body)).toBeUndefined();
+  });
+
+  // ---------------------------------------------------------- 공유하기
+  /**
+   * 공유 버튼은 서버로 아무것도 안 돌려준다 — 카카오 클라이언트가 공유창을 띄우고
+   * 끝이라 label 과 action 외에 실을 것이 없다.
+   */
+  it('카드에 공유 버튼을 단다', async () => {
+    const body = await askUntilCard(ctx.app, '오사카 호텔 추천해줘');
+
+    expect(shareButtonOf(body)).toEqual({ label: '공유하기', action: 'share' });
+  });
+
+  /**
+   * ⚠️ **순서가 기능이다.** listCard 버튼은 2개가 한계고 템플릿이 slice(0, 2) 로
+   *    조용히 자른다. 공유가 앞에 오면 넘칠 때 페이지 넘김이 사라진다.
+   */
+  it('더 보기가 공유보다 앞에 온다 — 넘치면 공유가 잘려야 한다', async () => {
+    const body = await askUntilCard(ctx.app, '오사카 호텔 추천해줘');
+
+    expect(listCardOf(body).buttons.map((b: any) => b.label)).toEqual(['더 보기', '공유하기']);
+  });
+
+  it('마지막 페이지에도 공유 버튼은 남는다', async () => {
+    const first = await askUntilCard(ctx.app, '오사카 호텔 추천해줘');
+    const cacheKey = moreButtonOf(first).extra.cache_key;
+
+    const last = await post(
+      ctx.app,
+      kakaoPayload('오사카 호텔 더 보기', { clientExtra: { cache_key: cacheKey, offset: 10 } }),
+    );
+
+    expect(moreButtonOf(last.body)).toBeUndefined();
+    expect(shareButtonOf(last.body)).toBeDefined();
   });
 
   // ---------------------------------------------------------- 항공권
