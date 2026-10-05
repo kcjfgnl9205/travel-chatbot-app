@@ -5,7 +5,7 @@
  * 검색 폼이다. 사용자는 카드에서 "32만원" 을 보고 눌렀는데 다시 날짜를 입력해야 한다.
  * 그 한 단계가 이탈 지점이다.
  *
- * **고정값으로 검색된 상태를 연다 — 오늘 ~ 7일 뒤, 1인.**
+ * **고정값으로 검색된 상태를 연다 — 내일 출발, 7일 뒤 귀국, 1인.**
  *
  * ⚠️ **저장하면 안 된다. 카드를 그릴 때마다 만든다.**
  *    `search_results` 는 날짜를 캐시 키에 넣지 않고 24시간 산다(0004). URL 에 오늘
@@ -13,8 +13,9 @@
  *    받는다. 관광지 `/a/{id}` 가 목적지를 스냅샷하지 않는 것과 같은 이유다.
  *
  * ⚠️ **형식을 아는 제휴몰만 바꾼다.** 모르면 null 을 주고 호출부가 원본을 쓴다 —
- *    지어낸 주소로 바꾸는 것은 빈 폼을 여는 것보다 나쁘다. 마이리얼트립이 지금
- *    그 경우다.
+ *    지어낸 주소로 바꾸는 것은 빈 폼을 여는 것보다 나쁘다. 지금은 셋 다 안다
+ *    (트립닷컴 · 스카이스캐너 · 마이리얼트립). 넷째가 생기면 **실제로 검색해서
+ *    주소창을 복사한 형식**만 넣는다.
  *
  * ⚠️ **가격은 이 날짜로 조사한 값이 아니다.** 1차 검색은 날짜 없이 일반 요금대를
  *    훑으므로, 링크를 열면 카드의 숫자와 다를 수 있다. 그 사실을 카드 아래 고지에
@@ -23,7 +24,16 @@
 
 import { TripType } from './flight.types';
 
-/** 돌아오는 날을 며칠 뒤로 둘지. 왕복 검색에만 쓴다. */
+/**
+ * 떠나는 날을 며칠 뒤로 둘지.
+ *
+ * ⚠️ **오늘이 아니라 내일이다.** 오늘 출발하는 항공권은 대부분 이미 못 사거나
+ *    당일 요금이라 비정상적으로 비싸다. 검색 결과 첫 줄이 "오늘 밤 11시 출발
+ *    180만원" 이면 카드에 적힌 시세와 너무 벌어져서 링크가 오히려 불신을 준다.
+ */
+export const DEPART_AFTER_DAYS = 1;
+
+/** 돌아오는 날을 **떠나는 날로부터** 며칠 뒤로 둘지. 왕복 검색에만 쓴다. */
 export const RETURN_AFTER_DAYS = 7;
 
 /**
@@ -58,6 +68,9 @@ export interface FlightRoute {
   tripType: TripType;
   /** 어느 제휴몰의 주소인가 (trip | skyscanner | myrealtrip …). */
   merchant?: string | null;
+  /** 화면 라벨용 도시명 (서울 · 오사카). 마이리얼트립만 쓰고, 없어도 검색은 된다. */
+  originName?: string | null;
+  destName?: string | null;
 }
 
 /**
@@ -71,9 +84,9 @@ export function datedSearchUrl(route: FlightRoute, now: Date = new Date()): stri
   // 공항 코드가 없으면 노선을 특정할 수 없다. 원본 주소가 그나마 맞다.
   if (!/^[a-z]{3}$/.test(from) || !/^[a-z]{3}$/.test(to)) return null;
 
-  const depart = seoulDate(now);
+  const depart = seoulDate(now, DEPART_AFTER_DAYS);
   const roundTrip = route.tripType === 'round';
-  const back = roundTrip ? seoulDate(now, RETURN_AFTER_DAYS) : null;
+  const back = roundTrip ? seoulDate(now, DEPART_AFTER_DAYS + RETURN_AFTER_DAYS) : null;
 
   switch (route.merchant) {
     case 'skyscanner': {
@@ -101,8 +114,30 @@ export function datedSearchUrl(route: FlightRoute, now: Date = new Date()): stri
       if (back) params.set('rdate', back);
       return `https://kr.trip.com/flights/showfarefirst?${params}`;
     }
+    case 'myrealtrip': {
+      // 구간을 `/` 로 잇는다. 한 구간이 `{출발종류}.{코드}.{도착종류}.{코드}.{날짜}` 이고
+      // `A` 가 공항, `C` 가 도시다. 사이트가 만드는 주소는 도착지를 도시로 쓰기도
+      // 하는데(`A.ICN.C.OSA`), 우리는 IATA **공항** 코드만 들고 있으므로 전부 `A` 다.
+      // 둘 다 결과가 뜨는 것을 확인했다. 왕복은 두 번째 구간이 역방향이다.
+      const up = (code: string) => code.toUpperCase();
+      const legs = [`A.${up(from)}.A.${up(to)}.${depart}`];
+      if (back) legs.push(`A.${up(to)}.A.${up(from)}.${back}`);
+
+      const params = new URLSearchParams({
+        trip: legs.join('/'),
+        adult: '1',
+        cabins: 'ECONOMY',
+        tripType: roundTrip ? 'ROUND_TRIP' : 'ONE_WAY',
+        useProgressUi: 'false',
+      });
+      // 화면에 찍는 라벨이라 없어도 검색은 된다. 있으면 "서울, 오사카" 로 보인다.
+      const names = [route.originName, route.destName].filter(Boolean);
+      if (names.length === 2) params.set('cityNames', names.join(','));
+
+      return `https://air-web.myrealtrip.com/results?${params}`;
+    }
     default:
-      // 마이리얼트립 등 — 형식을 확인한 적이 없다. 지어내지 않는다.
+      // 형식을 확인한 적 없는 제휴몰. 지어내지 않는다.
       return null;
   }
 }
