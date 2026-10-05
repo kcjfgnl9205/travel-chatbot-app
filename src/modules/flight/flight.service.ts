@@ -6,6 +6,7 @@ import { AffiliateService } from '../affiliate/affiliate.service';
 import { AppConfig, CONFIG } from '../../config/app.config';
 import * as cards from '../kakao/cards';
 import * as t from '../kakao/templates';
+import { datedSearchUrl } from './search-url';
 import { RecommendationRowsService } from '../recommendation/rows.service';
 import {
   RenderContext,
@@ -153,19 +154,32 @@ export class FlightService implements SearchDomain<FlightOffer> {
    *    어긋나지 않는다.
    */
   async rows(offers: FlightOffer[], ctx: RenderContext): Promise<t.Json[]> {
+    // ⚠️ **여기서 주소를 다시 만든다. 저장된 값을 그대로 쓰지 않는다.**
+    //    모델이 주는 건 빈 검색 폼(노선 페이지)이라, 카드에서 가격을 보고 누른
+    //    사람이 날짜를 다시 입력해야 한다. 오늘~7일 뒤·1인으로 **검색된 상태**를 연다.
+    //
+    //    렌더 시점인 것이 핵심이다 — 캐시는 날짜를 키에 넣지 않고 24시간 살기 때문에
+    //    (0004), 저장해 두면 내일 캐시를 맞은 사람이 어제 날짜를 받는다.
+    const dated = offers.map((offer) => ({
+      offer,
+      sourceUrl: datedSearchUrl(offer, new Date(ctx.started)) ?? offer.sourceUrl,
+    }));
+
     // 원본 주소 → 애드픽 커미션 링크. 캐시에 있으면 API 를 안 탄다.
+    // ⚠️ 변환도 **날짜가 박힌 주소**로 한다. 원본으로 변환하면 사용자가 도착하는 곳은
+    //    여전히 빈 폼이다 — 애드픽이 돌려주는 건 그 주소로 가는 링크이기 때문이다.
     const links =
       ctx.links ??
       (await this.affiliate.resolve(
-        offers
-          .filter((o) => o.sourceUrl)
-          .map((o) => ({ sourceUrl: o.sourceUrl, merchant: o.merchant })),
+        dated
+          .filter((d) => d.sourceUrl)
+          .map((d) => ({ sourceUrl: d.sourceUrl, merchant: d.offer.merchant })),
       ));
 
     return this.renderer.render(
-      offers.map((offer) => ({
+      dated.map(({ offer, sourceUrl }) => ({
         label: offerLabel(offer),
-        sourceUrl: offer.sourceUrl,
+        sourceUrl,
         title: offerTitle(offer),
         description: offerDescription(offer),
         // ⚠️ **1인 총액의 하한**이다. 범위의 아래쪽을 남긴다 — 확정 운임이 아니라
