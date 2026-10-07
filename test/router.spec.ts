@@ -6,6 +6,7 @@ import {
   createApp,
   kakaoPayload,
   listCardOf,
+  mentionCardOf,
   moreButtonOf,
   shareButtonOf,
   noticeOf,
@@ -53,7 +54,31 @@ describe('POST /api/v1/kakao/router', () => {
     const res = await post(ctx.app, kakaoPayload('호텔 추천해줘'));
 
     expect(textOf(res.body)).toContain('어느 지역');
-    expect(res.body.template.quickReplies.length).toBeGreaterThan(0);
+    // ⚠️ **누를 것이 같이 나가야 한다.** 되묻는 말만 있고 누를 게 없으면 거기서
+    //    대화가 끊긴다 — 단톡방에서는 멘션 없는 답장이 봇에게 오지 않기 때문이다.
+    expect(mentionCardOf(res.body)).toBeDefined();
+  });
+
+  /**
+   * ⚠️ **팀채팅 챗봇은 QuickReplies 를 지원하지 않는다** (그룹 챗봇 beta 가이드 표 3).
+   *    한동안 모든 응답에 달아뒀는데 단톡방에서는 아무것도 안 보였다. 되살아나면
+   *    안 보이는 기능을 다시 믿게 되므로 여기서 막는다.
+   */
+  it('퀵리플라이를 쓰지 않는다 — 팀채팅에서 보이지 않는다', async () => {
+    for (const utterance of ['안녕하세요', '호텔 추천해줘', '오사카 호텔 추천해줘']) {
+      const res = await post(ctx.app, kakaoPayload(utterance));
+      expect(res.body.template.quickReplies).toBeUndefined();
+    }
+  });
+
+  it('멘션 버튼은 action 이 mention 이고 라벨이 @봇이름 이다', async () => {
+    const res = await post(ctx.app, kakaoPayload('호텔 추천해줘'));
+    const card = mentionCardOf(res.body);
+
+    expect(card.description).toBe('가자고 TST에게 이어서 말하기');
+    // ⚠️ 문서에 없는 값(talk_mention)을 쓰면 **응답 전체가 렌더링되지 않는다.**
+    //    그룹 챗봇 beta 가이드의 봇 응답 버튼 플러그인 표에 있는 이름은 mention 이다.
+    expect(card.buttons).toEqual([{ label: '@가자고 TST', action: 'mention' }]);
   });
 
   // ------------------------------------------------------------ 호텔 흐름
@@ -99,8 +124,10 @@ describe('POST /api/v1/kakao/router', () => {
     const body = await askUntilCard(ctx.app, '오사카 호텔 추천해줘');
 
     // 매 카드마다 같은 문장을 반복하지 않는다 — 말풍선이 두 개씩 쌓인다.
-    expect(body.template.outputs).toHaveLength(1);
+    // 카드 + 멘션 버튼 둘뿐이고, 고지 말풍선이 그 사이에 끼지 않는다.
+    expect(body.template.outputs).toHaveLength(2);
     expect(noticeOf(body)).toBe('');
+    expect(mentionCardOf(body)).toBeDefined();
   });
 
   it('같은 지역을 다시 물으면 저장된 결과가 나간다 — AI 는 한 번만 돈다', async () => {
@@ -275,18 +302,19 @@ describe('POST /api/v1/kakao/router', () => {
     expect(ctx.attractionProvider.calls).toHaveLength(0);
   });
 
-  it('카드 뒤에 "다른 도시" 안내가 글로만 따라온다', async () => {
+  it('카드 뒤에 "다른 도시" 안내가 멘션 버튼과 함께 따라온다', async () => {
     const res = await post(ctx.app, kakaoPayload('베트남 호텔 추천해줘'));
     const outputs = res.body.template.outputs;
 
     expect(outputs).toHaveLength(2);
-    const guide = outputs[1].simpleText.text;
-    expect(guide).toContain('다른 도시를 찾고 있나요?');
-    // ⚠️ 멘션부터 적는다. 단톡방에서는 멘션 없는 발화가 봇에게 오지 않는다.
-    //    나라와 상관없는 도시를 예로 들면 안내가 아니라 딴소리다.
-    expect(guide).toContain('「@가자고 TST 하롱베이 호텔 추천해줘」');
-    // ⚠️ 버튼으로는 입력창을 못 채운다. 문서에 없는 action 은 응답 전체를 죽인다.
-    expect(outputs[1].textCard).toBeUndefined();
+    const guide = outputs[1].textCard;
+    expect(guide.description).toContain('다른 도시를 찾고 있나요?');
+    // 나라와 상관없는 도시를 예로 들면 안내가 아니라 딴소리다.
+    expect(guide.description).toContain('「하롱베이 호텔 추천해줘」');
+    // ⚠️ **예문에서 @봇이름 을 뺀다.** 버튼이 멘션을 넣어주는데 예문에도 적어두면
+    //    그대로 따라 친 사람의 입력창에 멘션이 두 번 들어간다.
+    expect(guide.description).not.toContain('@가자고');
+    expect(guide.buttons).toEqual([{ label: '@가자고 TST', action: 'mention' }]);
   });
 
   it('항공권은 줄에 출발지까지 박는다 — 누르면 되묻기가 또 생기지 않는다', async () => {

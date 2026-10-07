@@ -128,10 +128,10 @@
   "template": {
     "outputs": [
       { "listCard": {
-          "header": { "title": "서울→오사카 항공권 5편" },
+          "header": { "title": "서울→오사카 항공권" },
           "items": [
-            { "title": "대한항공 KE723 · 325,000원",
-              "description": "10/3(토) 09:20 ↔ 10/7(수) 12:30 · 직항",
+            { "title": "트립닷컴에서 보기",
+              "description": "12~18만원대 · 직항 1시간 55분 · 피치항공 외 3곳",
               "link": { "web": "https://bot.nolmoa.com/r/Kq7mZ1vTx8Bd" } }
           ],
           "buttons": [
@@ -139,15 +139,16 @@
               "messageText": "오사카 항공권 더 보기",
               "extra": { "cache_key": "flight:7>42:rt", "offset": 5 } }
           ] } },
-      { "simpleText": { "text": "서울 출발 기준이에요. 다른 곳이면 \"부산에서 출발\" 처럼 알려주세요." } }
-    ],
-    "quickReplies": [
-      { "label": "도쿄 항공권", "action": "message", "messageText": "도쿄 항공권 찾아줘" },
-      { "label": "후쿠오카 항공권", "action": "message", "messageText": "후쿠오카 항공권 찾아줘" }
+      { "simpleText": { "text": "가격은 검색 시점 기준이라 실제 결제 금액과 다를 수 있어요." } },
+      { "textCard": {
+          "description": "가자고에게 이어서 말하기",
+          "buttons": [ { "label": "@가자고", "action": "mention" } ] } }
     ]
   }
 }
 ```
+
+**줄 하나가 편이 아니라 플랫폼 하나다** (아래 "예약 링크" 절). 세 번째 말풍선의 `mention` 버튼은 입력창에 `@봇이름` 을 넣어준다 — 팀채팅 챗봇은 퀵리플라이를 지원하지 않아서 누를 것이 이것뿐이다.
 
 **썸네일이 없다.** 항공권에는 보여줄 사진이 없다.
 

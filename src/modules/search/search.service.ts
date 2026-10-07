@@ -112,7 +112,7 @@ export class SearchService {
           return null;
         });
       if (instant) {
-        if (!instant.length) return cards.emptyText(meta);
+        if (!instant.length) return cards.emptyText(meta, req.botName);
         await this.store.complete(cacheKey, instant, this.ttlOf(kind), meta);
         this.logger.log(`instant key=${cacheKey} items=${instant.length}`);
         return this.respond(instant, meta, 0, cacheKey, req, {
@@ -145,7 +145,7 @@ export class SearchService {
     }
 
     // 누군가 이미 같은 걸 찾고 있다. AI 를 한 번 더 부르지 않는다.
-    if (row && this.store.isBusy(row)) return cards.busyText(meta);
+    if (row && this.store.isBusy(row)) return cards.busyText(meta, req.botName);
 
     // ⚠️ 검색을 할 수 없는 상태면 **여기서 끊는다.** 선점도, 대기 응답도 만들지 않는다.
     //    "30초쯤 뒤에 다시 물어봐 주세요" 는 결과가 영원히 안 오는데 기다리게 하는
@@ -154,11 +154,11 @@ export class SearchService {
       this.logger.error(
         `${kind} 검색 불가 — provider 에 키가 없다. /health 의 openai 필드를 확인하라.`,
       );
-      return cards.unavailableText(meta);
+      return cards.unavailableText(meta, req.botName);
     }
 
     // 방금 실패했거나 빈손이었다. 짧은 TTL 이 지나면 다시 찾아본다.
-    if (row?.status === 'failed' && !isExpired(row)) return cards.emptyText(meta);
+    if (row?.status === 'failed' && !isExpired(row)) return cards.emptyText(meta, req.botName);
 
     const claimed = await this.store.claim(
       {
@@ -172,7 +172,7 @@ export class SearchService {
       },
       row,
     );
-    if (!claimed) return cards.busyText(meta);
+    if (!claimed) return cards.busyText(meta, req.botName);
 
     void this.runSearch(
       ctx(kind, place, parent, from, parsed, this.config),
@@ -187,7 +187,7 @@ export class SearchService {
       // ⚠️ 콜백은 오픈빌더에서 그 블록의 [콜백 사용] 을 켠 경우에만 실린다. 꺼져 있으면
       //    사용자는 같은 질문을 두 번 해야 한다 — 서버가 아니라 설정 문제이므로 남긴다.
       this.logger.warn('callbackUrl 없음 — 오픈빌더에서 폴백 블록의 [콜백 사용] 이 꺼져 있다');
-      return cards.searchStartedText(meta);
+      return cards.searchStartedText(meta, req.botName);
     }
     return t.callbackAck(`${cards.withObjectParticle(cards.subject(meta))} 찾고 있어요. 잠시만요 🔍`);
   }
@@ -199,7 +199,7 @@ export class SearchService {
     const row = await this.store.get(cacheKey);
     if (!row || !row.items.length) {
       this.logger.log(`more requested but nothing stored key=${cacheKey}`);
-      return cards.helpCard();
+      return cards.helpCard(req.botName);
     }
     return this.respond(row.items, row.meta, offset, cacheKey, req, {
       ignored: [],
@@ -266,7 +266,7 @@ export class SearchService {
             '실패 카드를 보낸다. 콜백 URL 을 그냥 태우면 사용자는 아무것도 못 받는다.',
         );
         await this.store.fail(cacheKey, 'timeout', this.config.failedTtlMinutes, meta);
-        await pushOnce(cards.failedText(meta));
+        await pushOnce(cards.failedText(meta, req.botName));
         this.storeLate(search, cacheKey, meta);
         return;
       }
@@ -279,7 +279,7 @@ export class SearchService {
         const ttl = streak >= 2 ? this.config.failedTtlMinutes : 1;
         await this.store.fail(cacheKey, 'empty result', ttl, { ...meta, emptyStreak: streak });
         this.logger.warn(`search empty key=${cacheKey} streak=${streak} ttl=${ttl}m`);
-        await pushOnce(cards.emptyText(meta));
+        await pushOnce(cards.emptyText(meta, req.botName));
         return;
       }
 
@@ -295,7 +295,7 @@ export class SearchService {
     } catch (err) {
       this.logger.error(`background search failed key=${cacheKey} err=${err}`);
       await this.store.fail(cacheKey, String(err), this.config.failedTtlMinutes, meta);
-      await pushOnce(cards.failedText(meta));
+      await pushOnce(cards.failedText(meta, req.botName));
     } finally {
       // 검색이 이겼으면 타이머가 남는다. 안 치우면 그만큼 프로세스가 안 죽는다.
       clearTimeout(timer);
@@ -375,7 +375,7 @@ export class SearchService {
     // 저장 당시와 필드가 달라졌을 수 있다(배포 직후). 모양이 안 맞는 항목은 버린다.
     const valid = items.filter((item) => domain.isItem(item));
     const { page, start } = pageOf(valid, offset, this.config.resultMaxItems);
-    if (!page.length) return cards.emptyText(meta);
+    if (!page.length) return cards.emptyText(meta, req.botName);
 
     const render: RenderContext = {
       meta,
@@ -385,7 +385,7 @@ export class SearchService {
       cacheHit: opts.cacheHit,
     };
     const rows = await domain.rows(page, render);
-    if (!rows.length) return cards.emptyText(meta);
+    if (!rows.length) return cards.emptyText(meta, req.botName);
 
     const buttons: t.Json[] = [];
     if (hasNextPage(valid.length, start, this.config.resultMaxItems)) {
@@ -416,7 +416,7 @@ export class SearchService {
         buttons,
       },
       cards.noticeText({ ignored: opts.ignored, meta }),
-      domain.quickReplies(meta),
+      req.botName,
     );
   }
 

@@ -32,24 +32,22 @@ export const KIND_LABEL: Record<SearchKind, string> = {
 };
 
 /**
- * 퀵리플라이로 보여줄 **예시** 지역.
+ * 예문에 쓰는 **예시** 지역.
  *
  * 허용 목록이 아니다. 여기 없는 지역도 전부 검색된다 — "이런 걸 물어보면 된다"를
  * 보여주는 용도일 뿐이다.
+ *
+ * ⚠️ 예전에는 이걸로 퀵리플라이를 만들어 모든 카드에 달았는데, **팀채팅 챗봇은
+ *    QuickReplies 를 지원하지 않는다**(그룹 챗봇 beta 가이드 표 3). 단톡방에서는
+ *    아무것도 안 보였고, 누를 게 없으니 되묻기에서 대화가 그대로 끊겼다.
+ *    지금은 멘션 버튼([templates.ts](./templates.ts) mentionCard)이 그 자리에 있다.
  */
-export const EXAMPLE_PLACES = ['오사카', '도쿄', '후쿠오카'] as const;
+export const EXAMPLE_PLACE = '오사카';
 
 /** '오사카 호텔 추천해줘' 처럼 그대로 다시 보낼 수 있는 문장. */
 export function exampleUtterance(place: string, kind: SearchKind): string {
   if (kind === 'flight') return `${place} 항공권 찾아줘`;
   return `${place} ${KIND_LABEL[kind]} 추천해줘`;
-}
-
-/** 예시 지역 퀵리플라이. 결과 카드에 붙어 "다음 질문"을 한 번의 탭으로 만든다. */
-export function placeQuickReplies(kind: SearchKind, exclude?: string | null): t.Json[] {
-  return EXAMPLE_PLACES.filter((place) => place !== exclude).map((place) =>
-    t.quickReply(`${place} ${KIND_LABEL[kind]}`, exampleUtterance(place, kind)),
-  );
 }
 
 /**
@@ -59,20 +57,18 @@ export function placeQuickReplies(kind: SearchKind, exclude?: string | null): t.
  *    오류로 취급하면 단톡방이 딱딱해진다. 할 수 있는 세 가지를 예시와 함께 보여주면
  *    그 자체가 안내가 된다 — 사용자는 틀렸다는 말 대신 다음에 뭘 물을지를 얻는다.
  */
-export function helpCard(): t.Json {
-  return t.listCard({
-    headerTitle: '가자고가 도와드릴 수 있는 것',
-    items: [
-      t.listItem({ title: '🏨 호텔 찾기', description: '오사카 호텔 추천해줘' }),
-      t.listItem({ title: '✈️ 항공권 찾기', description: '오사카 항공권 찾아줘' }),
-      t.listItem({ title: '📍 관광지·맛집', description: '오사카 관광지 추천해줘' }),
-    ],
-    quickReplies: [
-      t.quickReply('오사카 호텔', '오사카 호텔 추천해줘'),
-      t.quickReply('오사카 항공권', '오사카 항공권 찾아줘'),
-      t.quickReply('오사카 관광지', '오사카 관광지 추천해줘'),
-    ],
-  });
+export function helpCard(botName: string | null): t.Json {
+  return t.listCard(
+    {
+      headerTitle: '가자고가 도와드릴 수 있는 것',
+      items: [
+        t.listItem({ title: '🏨 호텔 찾기', description: '오사카 호텔 추천해줘' }),
+        t.listItem({ title: '✈️ 항공권 찾기', description: '오사카 항공권 찾아줘' }),
+        t.listItem({ title: '📍 관광지·맛집', description: '오사카 관광지 추천해줘' }),
+      ],
+    },
+    botName,
+  );
 }
 
 /**
@@ -92,7 +88,7 @@ export function askCityInCountry(
   botName: string | null,
 ): t.Json {
   // 도시를 못 구했으면(모델 실패) 일반 되묻기로 떨어진다 — 예시라도 주는 게 낫다.
-  if (!cities.length) return askPlaceCard(kind);
+  if (!cities.length) return askPlaceCard(kind, botName);
 
   const label = KIND_LABEL[kind];
 
@@ -121,15 +117,15 @@ export function askCityInCountry(
 }
 
 /**
- * "다른 도시" 안내. **버튼 없이 글로만 알려준다.**
+ * "다른 도시" 안내. **멘션 버튼이 달린 카드다.**
  *
- * ⚠️ 버튼으로는 이 일을 못 한다. 카카오 버튼은 누르는 즉시 전송되고(action:"message"),
- *    입력창을 채워주는 액션은 문서에 없다. 문서에 없는 값(talk_mention)을 써봤더니
- *    **응답 전체가 렌더링되지 않아** 카드까지 같이 사라졌다.
+ * 예전에는 버튼 없이 글로만 "「@가자고 삿포로 호텔 추천해줘」처럼 보내주세요" 라고
+ * 적었다. 입력창을 채워주는 액션이 문서에 없다고 봤기 때문인데, 사실은 있었다 —
+ * 그룹 챗봇 beta 가이드의 봇 응답 버튼 플러그인 `mention` 이다. 당시 짐작으로 쓴
+ * `talk_mention` 은 없는 값이라 **응답 전체가 렌더링되지 않았다.**
  *
- * ⚠️ 예문에 **멘션부터** 적는다. 단톡방에서는 봇을 멘션한 메시지만 서버로 온다 —
- *    "삿포로 호텔 추천해줘" 라고만 치면 봇이 아예 듣지 못하고, 사용자에게는 봇이 죽은
- *    것처럼 보인다. 그대로 따라 칠 수 있는 한 줄이 가장 확실한 안내다.
+ * ⚠️ 버튼이 넣어주는 건 **멘션까지**다. 그래서 예문은 여전히 필요하다 — 다만 이제
+ *    예문에서 `@봇이름` 을 뺀다. 버튼이 넣어줄 것을 사람에게 또 치게 하면 두 번 들어간다.
  */
 function otherCityCard(
   kind: SearchKind,
@@ -138,13 +134,11 @@ function otherCityCard(
   botName: string | null,
 ): t.Json {
   const example = pickUtterance(otherCityExample(country), kind, origin);
-  const full = botName ? `@${botName} ${example}` : example;
 
-  return {
-    simpleText: {
-      text: `다른 도시를 찾고 있나요?\n「${full}」처럼 보내주세요.`,
-    },
-  };
+  return t.textCard({
+    description: `다른 도시를 찾고 있나요?\n아래 버튼을 누르고 「${example}」처럼 보내주세요.`,
+    buttons: [t.mentionButton(botName)],
+  });
 }
 
 /**
@@ -186,8 +180,8 @@ const OTHER_CITY_EXAMPLE: Record<string, string> = {
 /**
  * "다른 도시" 를 누른 사람에게. **다음 발화를 지명으로 받겠다는 약속이다.**
  *
- * ⚠️ 카카오에는 입력창을 미리 채우는 버튼이 없다. 버튼은 누르면 그 문장이 그대로
- *    전송될 뿐이라 `/호텔 ` 을 넣어줄 수 없다. 그래서 봇이 한 번 되묻고, 서버가
+ * ⚠️ 버튼이 문장까지 넣어주지는 못한다. 멘션 버튼은 입력창에 `@봇이름` 까지만
+ *    넣으므로 도시 이름은 사용자가 친다. 그래서 봇이 한 번 되묻고, 서버가
  *    **그 사람의 다음 발화**를 지명으로 해석한다 ([pending.ts](./pending.ts)).
  */
 export function askPlaceNameOnly(
@@ -199,22 +193,20 @@ export function askPlaceNameOnly(
   const where = country ? `${country} 어디로 가세요?` : `어느 도시 ${withObjectParticle(label)} 찾으세요?`;
 
   // ⚠️ **멘션을 빼먹으면 봇이 아예 못 듣는다.** 단톡방에서는 봇을 멘션한 메시지만
-  //    서버로 온다. "도시 이름만 보내주세요" 라고만 하면 사용자는 "오사카" 라고 치고,
-  //    아무 일도 일어나지 않는 화면을 보게 된다 — 실제로 그렇게 대화가 끊겼다.
-  const how = botName
-    ? `@${botName} 다낭 처럼 도시 이름을 보내주세요.`
-    : '봇을 멘션하고 도시 이름을 보내주세요. 예) 다낭';
+  //    서버로 온다. 버튼이 그 멘션을 넣어주므로, 글은 **그 뒤에 뭘 치면 되는지**만
+  //    말하면 된다 — 버튼이 없던 때는 "@봇이름 부터 치세요" 를 글로 설명해야 했다.
+  const how = '아래 버튼을 누르고 도시 이름을 보내주세요. 예) 다낭';
 
-  // 퀵리플라이는 예시로 남겨둔다 — 되묻는 말만 있고 누를 게 없으면 대화가 끊긴다.
-  return t.simpleText(`${where}\n${how}`, placeQuickReplies(kind));
+  return t.simpleTextWithMention(`${where}\n${how}`, botName);
 }
 
 /** 무엇을 묻는지는 알겠는데 지역이 없다. 되묻되 예시로 답을 쉽게 만든다. */
-export function askPlaceCard(kind: SearchKind): t.Json {
+export function askPlaceCard(kind: SearchKind, botName: string | null): t.Json {
   const label = KIND_LABEL[kind];
-  return t.simpleText(
-    `어느 지역 ${withObjectParticle(label)} 찾으세요?\n예) ${exampleUtterance('오사카', kind)}`,
-    placeQuickReplies(kind),
+  return t.simpleTextWithMention(
+    `어느 지역 ${withObjectParticle(label)} 찾으세요?\n` +
+      `아래 버튼을 누르고 「${exampleUtterance(EXAMPLE_PLACE, kind)}」처럼 보내주세요.`,
+    botName,
   );
 }
 
@@ -283,10 +275,10 @@ function conditionLabel(ignored: string[]): string {
 }
 
 /** 다른 사람이 먼저 같은 걸 물어 검색이 돌고 있는 경우. */
-export function busyText(meta: SearchMeta): t.Json {
-  return t.simpleText(
+export function busyText(meta: SearchMeta, botName: string | null): t.Json {
+  return t.simpleTextWithMention(
     `${withObjectParticle(subject(meta))} 먼저 찾고 있어요 🔍\n잠시 뒤 다시 물어봐 주세요!`,
-    placeQuickReplies(meta.kind, meta.placeName),
+    botName,
   );
 }
 
@@ -296,10 +288,10 @@ export function busyText(meta: SearchMeta): t.Json {
  * 검색은 이미 백그라운드에서 돈다. 다시 물으면 저장된 결과가 바로 나간다 —
  * 콜백 없이 20초를 기다리게 할 방법이 없어서 둔 차선책이다.
  */
-export function searchStartedText(meta: SearchMeta): t.Json {
-  return t.simpleText(
+export function searchStartedText(meta: SearchMeta, botName: string | null): t.Json {
+  return t.simpleTextWithMention(
     `${withObjectParticle(subject(meta))} 찾고 있어요 🔍\n30초쯤 뒤에 다시 물어봐 주세요!`,
-    placeQuickReplies(meta.kind, meta.placeName),
+    botName,
   );
 }
 
@@ -310,10 +302,10 @@ export function searchStartedText(meta: SearchMeta): t.Json {
  *    검색이 실패한 경우가 대부분이라, 그렇게 말하면 사용자는 자기가 틀린 줄 알고
  *    같은 질문을 다르게 쓰며 헤맨다. 원인이 다르면 문구도 달라야 한다.
  */
-export function emptyText(meta: SearchMeta): t.Json {
-  return t.simpleText(
+export function emptyText(meta: SearchMeta, botName: string | null): t.Json {
+  return t.simpleTextWithMention(
     `${subject(meta)} 정보를 지금은 정리하지 못했어요 🙏\n잠시 뒤 다시 물어봐 주세요.`,
-    placeQuickReplies(meta.kind, meta.placeName),
+    botName,
   );
 }
 
@@ -324,19 +316,18 @@ export function emptyText(meta: SearchMeta): t.Json {
  *    기다리게 하는 것이고, 사용자는 그 사이 같은 질문을 반복한다. 운영자에게는
  *    /health 의 openai 필드와 서버 로그가 신호다.
  */
-export function unavailableText(meta: SearchMeta): t.Json {
-  return t.simpleText(
-    `지금은 ${subject(meta)} 검색이 안 되고 있어요 🙏
-` + '고쳐두는 대로 다시 알려드릴게요.',
-    placeQuickReplies(meta.kind, meta.placeName),
+export function unavailableText(meta: SearchMeta, botName: string | null): t.Json {
+  return t.simpleTextWithMention(
+    `지금은 ${subject(meta)} 검색이 안 되고 있어요 🙏\n고쳐두는 대로 다시 알려드릴게요.`,
+    botName,
   );
 }
 
 /** 검색 자체가 실패했을 때 (모델 오류·타임아웃). */
-export function failedText(meta: SearchMeta): t.Json {
-  return t.simpleText(
+export function failedText(meta: SearchMeta, botName: string | null): t.Json {
+  return t.simpleTextWithMention(
     `${withObjectParticle(subject(meta))} 불러오지 못했어요 🙏\n잠시 뒤 다시 시도해 주세요.`,
-    placeQuickReplies(meta.kind, meta.placeName),
+    botName,
   );
 }
 

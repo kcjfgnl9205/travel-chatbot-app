@@ -54,8 +54,10 @@ describe('스웨거 예시 = 실제 응답', () => {
     // 날짜·인원을 말해야 고지가 붙는다 (예시와 같은 모양이 되려면 필요하다).
     const body = await askUntilCard(ctx.app, '오사카 호텔 4명 9월 22~24일 추천해줘');
 
-    // ⚠️ 순서가 중요하다. 고지가 위에 오면 결과를 가린다.
-    expect(shapeOf(CARD_RESPONSE_EXAMPLE)).toEqual(['listCard', 'simpleText']);
+    // ⚠️ 순서가 중요하다. 고지가 위에 오면 결과를 가린다. 멘션 버튼은 맨 뒤다.
+    // ⚠️ **이 셋이 카카오의 outputs 한계(3개)를 꽉 채운다.** 하나를 더 얹으면
+    //    MAX_OUTPUTS 에서 잘려 멘션 버튼이 조용히 사라진다.
+    expect(shapeOf(CARD_RESPONSE_EXAMPLE)).toEqual(['listCard', 'simpleText', 'textCard']);
     expect(shapeOf(body)).toEqual(shapeOf(CARD_RESPONSE_EXAMPLE));
 
     const example = (CARD_RESPONSE_EXAMPLE.template.outputs[0] as any).listCard;

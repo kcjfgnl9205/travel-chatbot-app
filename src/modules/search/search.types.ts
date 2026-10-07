@@ -138,8 +138,6 @@ export interface SearchDomain<T = unknown> {
   rows(items: T[], ctx: RenderContext): Promise<t.Json[]>;
   /** "더 보기" 버튼이 보낼 문장. '오사카 호텔 더 보기' */
   moreText(meta: SearchMeta): string;
-  /** 카드에 붙일 퀵리플라이. */
-  quickReplies(meta: SearchMeta): t.Json[];
 }
 
 /**

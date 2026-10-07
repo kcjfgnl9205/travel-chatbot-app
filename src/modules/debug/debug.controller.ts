@@ -41,6 +41,15 @@ import {
  * ⚠️ **통계를 남기지 않는다** (`persist: false`). 진단 호출이 섞이면 전환율이 틀어진다.
  *    다만 clickId 는 인메모리에 남으므로 `/r/{clickId}` 로 이동까지 확인할 수 있다.
  */
+/**
+ * 진단 응답에 쓰는 봇 이름.
+ *
+ * 진짜 이름은 카카오 payload(`bot.name`)에만 있고 여기엔 payload 가 없다. 멘션
+ * 버튼은 이름과 무관하게 동작하므로 라벨만 일반 문구로 나간다 — 지어내면 운영
+ * 카드와 다른 글자가 찍혀서 "왜 다르지" 를 보게 된다.
+ */
+const BOT_NAME = null;
+
 @ApiTags('진단')
 @ApiHeader({
   name: 'X-Debug-Token',
@@ -142,11 +151,11 @@ export class DebugController {
 
     const parsed = await this.intent.extract(utterance);
     if (parsed.intent === 'unknown' || !parsed.place) {
-      return { utterance, intent: parsed, response: cards.helpCard() };
+      return { utterance, intent: parsed, response: cards.helpCard(BOT_NAME) };
     }
 
     const place = await this.places.resolve(parsed.place);
-    if (!place) return { utterance, intent: parsed, response: cards.helpCard() };
+    if (!place) return { utterance, intent: parsed, response: cards.helpCard(BOT_NAME) };
 
     const kind = parsed.intent;
     const parent = await this.places.parentOf(place);
@@ -193,7 +202,7 @@ export class DebugController {
         //    셋은 고치는 곳이 전부 다르다.
         trace,
         timing: { searchMs, totalMs: Date.now() - started },
-        response: cards.emptyText(meta),
+        response: cards.emptyText(meta, BOT_NAME),
       };
     }
 
@@ -222,7 +231,7 @@ export class DebugController {
           items: rows,
         },
         cards.noticeText({ ignored: parsed.ignored, meta }),
-        domain.quickReplies(meta),
+        BOT_NAME,
       ),
     };
   }

@@ -7,9 +7,15 @@
  * 그래서 빌더 단계에서 잘라 넣는다.
  */
 
-export const MAX_QUICK_REPLIES = 10;
-export const MAX_QUICK_REPLY_LABEL = 14;
 export const MAX_BUTTON_LABEL = 14;
+
+/**
+ * 한 응답에 넣을 수 있는 말풍선 수.
+ *
+ * ⚠️ 넘기면 **응답 전체가 렌더링되지 않는다.** 결과 카드 + 고지 + 멘션 버튼이
+ *    정확히 3개라 여유가 없다. 여기서 잘라 넣어 카드까지 같이 사라지는 일을 막는다.
+ */
+export const MAX_OUTPUTS = 3;
 
 // --- listCard
 export const MAX_LIST_ITEMS = 5; // 한 카드에 5줄. 이 한계가 곧 페이지 크기다
@@ -27,12 +33,41 @@ export function cut(text: string | null | undefined, limit: number): string {
 }
 
 // ------------------------------------------------------------------ 공통 조각
-export function quickReply(label: string, messageText?: string): Json {
+/**
+ * **챗봇을 멘션하는 버튼.** 누르면 입력창에 `@봇이름` 이 들어간다.
+ *
+ * 단톡방에서는 봇을 멘션한 메시지만 서버로 온다. 그래서 "오사카 호텔 추천해줘" 라고만
+ * 치면 **봇이 아예 듣지 못하고**, 사용자에게는 봇이 죽은 것처럼 보인다 — 실제로 그렇게
+ * 대화가 끊겼다. 이 버튼이 그 턱을 없앤다.
+ *
+ * ⚠️ **문장까지 넣어주지는 않는다.** 들어가는 건 멘션뿐이고 나머지는 사용자가 친다.
+ *    그래서 이 버튼을 다는 자리에는 "뭐라고 치면 되는지" 예문이 같이 있어야 한다.
+ *
+ * ⚠️ 액션 이름은 **`mention`** 이다. 예전에 문서에 없는 `talk_mention` 을 써봤더니
+ *    응답 전체가 렌더링되지 않아 카드까지 같이 사라졌다. 그룹 챗봇 beta 개발 가이드의
+ *    "봇 응답 버튼 플러그인" 표에 있는 이름이 이것이다.
+ */
+export function mentionButton(botName: string | null): Json {
+  const name = botName?.trim();
   return {
-    label: cut(label, MAX_QUICK_REPLY_LABEL),
-    action: 'message',
-    messageText: messageText ?? label,
+    label: cut(name ? `@${name}` : '챗봇 멘션하기', MAX_BUTTON_LABEL),
+    action: 'mention',
   };
+}
+
+/**
+ * 멘션 버튼을 담은 말풍선. **퀵리플라이가 있던 자리를 대신한다.**
+ *
+ * ⚠️ 팀채팅 챗봇은 **QuickReplies 를 지원하지 않는다**(그룹 챗봇 beta 가이드 표 3).
+ *    한동안 모든 응답에 퀵리플라이를 달아뒀는데 단톡방에서는 아무것도 안 보였다 —
+ *    되묻는 말만 있고 누를 게 없으니 거기서 대화가 끊겼다.
+ */
+export function mentionCard(botName: string | null): Json {
+  const name = botName?.trim() ?? '챗봇';
+  return textCard({
+    description: `${name}에게 이어서 말하기`,
+    buttons: [mentionButton(botName)],
+  });
 }
 
 export function messageButton(label: string, messageText: string): Json {
@@ -62,16 +97,23 @@ export function shareButton(label = '공유하기'): Json {
   };
 }
 
-export function skillResponse(outputs: Json[], quickReplies?: Json[]): Json {
-  const template: Json = { outputs };
-  if (quickReplies?.length) {
-    template.quickReplies = quickReplies.slice(0, MAX_QUICK_REPLIES);
-  }
-  return { version: '2.0', template };
+export function skillResponse(outputs: Json[]): Json {
+  return { version: '2.0', template: { outputs: outputs.slice(0, MAX_OUTPUTS) } };
 }
 
-export function simpleText(text: string, quickReplies?: Json[]): Json {
-  return skillResponse([{ simpleText: { text } }], quickReplies);
+/** 글만 있는 응답. 누를 것이 필요하면 `simpleTextWithMention` 을 쓴다. */
+export function simpleText(text: string): Json {
+  return skillResponse([{ simpleText: { text } }]);
+}
+
+/**
+ * 글 + "이어서 말하기" 버튼.
+ *
+ * 되묻기와 오류 문구가 전부 이걸 쓴다. **대화가 거기서 끊기면 안 되는 자리**라,
+ * 누를 것을 같이 줘야 한다 — 퀵리플라이로 하던 일이다.
+ */
+export function simpleTextWithMention(text: string, botName: string | null): Json {
+  return skillResponse([{ simpleText: { text } }, mentionCard(botName)]);
 }
 
 /**
@@ -130,11 +172,15 @@ export interface ListCardInput {
   headerTitle: string;
   items: Json[];
   buttons?: Json[];
-  quickReplies?: Json[];
 }
 
 /** 제목 + 항목 리스트 말풍선. `items` 는 최소 1개 필요하다. */
-export function listCard(input: ListCardInput): Json {
+export function listCard(input: ListCardInput, botName: string | null): Json {
+  return skillResponse([{ listCard: listCardOf(input) }, mentionCard(botName)]);
+}
+
+/** listCard 말풍선 하나. 길이 제한은 여기서 한 번만 건다. */
+function listCardOf(input: ListCardInput): Json {
   const card: Json = {
     header: { title: cut(input.headerTitle, MAX_LIST_HEADER_TITLE) },
     items: input.items.slice(0, MAX_LIST_ITEMS),
@@ -142,7 +188,7 @@ export function listCard(input: ListCardInput): Json {
   if (input.buttons?.length) {
     card.buttons = input.buttons.slice(0, MAX_LIST_BUTTONS);
   }
-  return skillResponse([{ listCard: card }], input.quickReplies);
+  return card;
 }
 
 /**
@@ -154,21 +200,19 @@ export function listCard(input: ListCardInput): Json {
  *    그래서 말풍선을 하나 더 세운다 (카카오는 outputs 를 3개까지 받는다).
  *
  * 순서가 중요하다 — **카드가 먼저다.** 안내가 위에 오면 결과를 가린다.
+ *
+ * ⚠️ 카드 + 고지 + 멘션 버튼이면 **정확히 3개로 꽉 찬다.** 여기에 말풍선을 하나 더
+ *    얹으면 MAX_OUTPUTS 에서 잘려 멘션 버튼이 조용히 사라진다.
  */
 export function listCardWithNotice(
   input: ListCardInput,
   notice: string,
-  quickReplies?: Json[],
+  botName: string | null,
 ): Json {
-  const card: Json = {
-    header: { title: cut(input.headerTitle, MAX_LIST_HEADER_TITLE) },
-    items: input.items.slice(0, MAX_LIST_ITEMS),
-  };
-  if (input.buttons?.length) card.buttons = input.buttons.slice(0, MAX_LIST_BUTTONS);
-
-  const outputs: Json[] = [{ listCard: card }];
+  const outputs: Json[] = [{ listCard: listCardOf(input) }];
   if (notice.trim()) outputs.push({ simpleText: { text: notice.trim() } });
-  return skillResponse(outputs, quickReplies ?? input.quickReplies);
+  outputs.push(mentionCard(botName));
+  return skillResponse(outputs);
 }
 
 // ------------------------------------------------------------------- textCard

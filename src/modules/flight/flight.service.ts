@@ -4,7 +4,6 @@ import { dedupeBy } from '../../common/dedupe';
 import { adpickCarries } from '../adpick/adpick.service';
 import { AffiliateService } from '../affiliate/affiliate.service';
 import { AppConfig, CONFIG } from '../../config/app.config';
-import * as cards from '../kakao/cards';
 import * as t from '../kakao/templates';
 import { datedSearchUrl } from './search-url';
 import { RecommendationRowsService } from '../recommendation/rows.service';
@@ -138,9 +137,6 @@ export class FlightService implements SearchDomain<FlightOffer> {
     return `${meta.placeName} 항공권 더 보기`;
   }
 
-  quickReplies(meta: SearchMeta): t.Json[] {
-    return cards.placeQuickReplies('flight', meta.placeName);
-  }
 
   /**
    * 줄 하나가 **플랫폼 하나**다.

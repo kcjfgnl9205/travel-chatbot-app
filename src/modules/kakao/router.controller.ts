@@ -129,7 +129,8 @@ export class RouterController {
         `router failed utterance=${JSON.stringify(utteranceOf(request))} err=${err}`,
       );
       // 무엇이 터졌든 사용자에게는 "다음에 뭘 물으면 되는지" 를 준다.
-      return cards.helpCard();
+      // ⚠️ 여기는 `request()` 가 터졌을 수도 있는 자리라 payload 에서 직접 읽는다.
+      return cards.helpCard(botNameOf(request));
     }
   }
 
@@ -191,16 +192,16 @@ export class RouterController {
     }
 
     // 3. 1차 필터 — 여행과 무관하면 AI 를 아예 부르지 않는다.
-    if (!TRAVEL_HINT.test(req.utterance)) return cards.helpCard();
+    if (!TRAVEL_HINT.test(req.utterance)) return cards.helpCard(req.botName);
 
     // 4. 의도 + 지역.
     const parsed = await this.intent.extract(req.utterance);
-    if (parsed.intent === 'unknown') return cards.helpCard();
-    if (!parsed.place) return cards.askPlaceCard(parsed.intent);
+    if (parsed.intent === 'unknown') return cards.helpCard(req.botName);
+    if (!parsed.place) return cards.askPlaceCard(parsed.intent, req.botName);
 
     // 5. 지역 정규화. 모르는 지명도 등록해서 검색까지는 가본다.
     const place = await this.places.resolve(parsed.place);
-    if (!place) return cards.askPlaceCard(parsed.intent);
+    if (!place) return cards.askPlaceCard(parsed.intent, req.botName);
 
     // 5-b. 나라를 말했으면 검색하지 않고 **그 나라의 도시**로 되묻는다.
     //      나라 단위 검색은 다낭·하노이가 섞인 목록이 되어 아무에게도 쓸모가 없다.

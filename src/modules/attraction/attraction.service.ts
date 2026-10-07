@@ -4,7 +4,6 @@ import { dedupeBy } from '../../common/dedupe';
 import { AppConfig, CONFIG, attractionRedirectUrl } from '../../config/app.config';
 import { AttractionBackfillService } from './attraction-backfill';
 import { AttractionsRepository } from '../database/repositories/attractions.repository';
-import * as cards from '../kakao/cards';
 import * as t from '../kakao/templates';
 import { RecommendationRowsService } from '../recommendation/rows.service';
 import { searchName } from '../search/search-name';
@@ -136,9 +135,6 @@ export class AttractionService implements SearchDomain<Attraction> {
     return `${meta.placeName} 관광지 더 보기`;
   }
 
-  quickReplies(meta: SearchMeta): t.Json[] {
-    return cards.placeQuickReplies('attraction', meta.placeName);
-  }
 
   /**
    * ⚠️ **노출마다 행을 쌓지 않는다** — 그게 호텔·항공권과 가장 다른 점이다.

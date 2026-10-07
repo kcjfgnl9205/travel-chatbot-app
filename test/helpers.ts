@@ -160,6 +160,15 @@ export const listCardOf = (body: any) =>
 export const noticeOf = (body: any): string =>
   body?.template?.outputs?.find((o: any) => o.simpleText)?.simpleText?.text ?? '';
 
+/**
+ * "이어서 말하기" 말풍선. 퀵리플라이가 있던 자리다.
+ *
+ * ⚠️ 팀채팅 챗봇은 QuickReplies 를 지원하지 않는다 — 단톡방에서 누를 것은 이것뿐이다.
+ */
+export const mentionCardOf = (body: any): any =>
+  body?.template?.outputs?.find((o: any) => o.textCard?.buttons?.[0]?.action === 'mention')
+    ?.textCard;
+
 export const textOf = (body: any): string =>
   body?.template?.outputs?.[0]?.simpleText?.text ?? '';
 

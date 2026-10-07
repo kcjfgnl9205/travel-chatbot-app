@@ -2,7 +2,6 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import { dedupeBy } from '../../common/dedupe';
 import { AffiliateService } from '../affiliate/affiliate.service';
-import * as cards from '../kakao/cards';
 import * as t from '../kakao/templates';
 import { RecommendationRowsService } from '../recommendation/rows.service';
 import { searchName } from '../search/search-name';
@@ -177,9 +176,6 @@ export class HotelService implements SearchDomain<Hotel> {
     return `${meta.placeName} 호텔 더 보기`;
   }
 
-  quickReplies(meta: SearchMeta): t.Json[] {
-    return cards.placeQuickReplies('hotel', meta.placeName);
-  }
 
   /**
    * 한 페이지를 listCard 줄로 만든다. **노출 기록과 클릭 링크 발급이 여기서 일어난다.**

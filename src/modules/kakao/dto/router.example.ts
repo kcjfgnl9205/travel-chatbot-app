@@ -54,11 +54,15 @@ export const HELP_RESPONSE_EXAMPLE = {
           ],
         },
       },
-    ],
-    quickReplies: [
-      { label: '오사카 호텔', action: 'message', messageText: '오사카 호텔 추천해줘' },
-      { label: '오사카 항공권', action: 'message', messageText: '오사카 항공권 찾아줘' },
-      { label: '오사카 관광지', action: 'message', messageText: '오사카 관광지 추천해줘' },
+      // ⚠️ **퀵리플라이 자리를 대신하는 말풍선이다.** 팀채팅 챗봇은 QuickReplies 를
+      // 지원하지 않아서(그룹 챗봇 beta 가이드 표 3) 단톡방에서는 아무것도 안 보였다.
+      // 누르면 입력창에 `@봇이름` 이 들어간다 — 멘션이 없으면 봇이 아예 못 듣는다.
+      {
+        textCard: {
+          description: '가자고 TST에게 이어서 말하기',
+          buttons: [{ label: '@가자고 TST', action: 'mention' }],
+        },
+      },
     ],
   },
 };
@@ -92,10 +96,15 @@ export const CARD_RESPONSE_EXAMPLE = {
       // 고지 말풍선은 **할 말이 있을 때만** 붙는다. 날짜·인원을 말하지 않은 질문이면
       // 이 말풍선 없이 카드 하나만 나간다.
       { simpleText: { text: '날짜·인원(4명, 9월 22~24일)은 반영되지 않았어요.' } },
-    ],
-    quickReplies: [
-      { label: '도쿄 호텔', action: 'message', messageText: '도쿄 호텔 추천해줘' },
-      { label: '후쿠오카 호텔', action: 'message', messageText: '후쿠오카 호텔 추천해줘' },
+      // ⚠️ **퀵리플라이 자리를 대신하는 말풍선이다.** 팀채팅 챗봇은 QuickReplies 를
+      // 지원하지 않아서(그룹 챗봇 beta 가이드 표 3) 단톡방에서는 아무것도 안 보였다.
+      // 누르면 입력창에 `@봇이름` 이 들어간다 — 멘션이 없으면 봇이 아예 못 듣는다.
+      {
+        textCard: {
+          description: '가자고 TST에게 이어서 말하기',
+          buttons: [{ label: '@가자고 TST', action: 'mention' }],
+        },
+      },
     ],
   },
 };
@@ -113,6 +122,15 @@ export const SEARCH_STARTED_EXAMPLE = {
   template: {
     outputs: [
       { simpleText: { text: '오사카 호텔을 찾고 있어요 🔍\n30초쯤 뒤에 다시 물어봐 주세요!' } },
+      // ⚠️ **퀵리플라이 자리를 대신하는 말풍선이다.** 팀채팅 챗봇은 QuickReplies 를
+      // 지원하지 않아서(그룹 챗봇 beta 가이드 표 3) 단톡방에서는 아무것도 안 보였다.
+      // 누르면 입력창에 `@봇이름` 이 들어간다 — 멘션이 없으면 봇이 아예 못 듣는다.
+      {
+        textCard: {
+          description: '가자고 TST에게 이어서 말하기',
+          buttons: [{ label: '@가자고 TST', action: 'mention' }],
+        },
+      },
     ],
   },
 };
@@ -123,6 +141,15 @@ export const BUSY_EXAMPLE = {
   template: {
     outputs: [
       { simpleText: { text: '오사카 호텔을 먼저 찾고 있어요 🔍\n잠시 뒤 다시 물어봐 주세요!' } },
+      // ⚠️ **퀵리플라이 자리를 대신하는 말풍선이다.** 팀채팅 챗봇은 QuickReplies 를
+      // 지원하지 않아서(그룹 챗봇 beta 가이드 표 3) 단톡방에서는 아무것도 안 보였다.
+      // 누르면 입력창에 `@봇이름` 이 들어간다 — 멘션이 없으면 봇이 아예 못 듣는다.
+      {
+        textCard: {
+          description: '가자고 TST에게 이어서 말하기',
+          buttons: [{ label: '@가자고 TST', action: 'mention' }],
+        },
+      },
     ],
   },
 };
