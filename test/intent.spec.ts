@@ -58,6 +58,32 @@ describe('키워드 해석', () => {
 
   it('지명이 둘이면 모델에 넘긴다 — 어느 쪽이 목적지인지 사전으로는 못 가린다', () => {
     expect(fromKeywords('부산에서 오사카 항공권')).toBeNull();
+    // 호텔·관광지는 순서가 뜻하는 바가 없다. 둘이면 그냥 모델이 가른다.
+    expect(fromKeywords('부산 하노이 호텔')).toBeNull();
+  });
+
+  it('⚠️ 항공권은 도시가 둘이면 앞이 출발지다 — "부산 하노이 항공권"', () => {
+    // 실제로 이렇게 들어왔다. 긴 쪽(하노이)만 남기고 부산을 버려서 부산 사람에게
+    // 서울 출발 항공권이 나갔고, 추측했다는 고지조차 안 붙었다.
+    expect(fromKeywords('부산 하노이 항공권 추천해줘')).toMatchObject({
+      intent: 'flight',
+      place: '하노이',
+      from: '부산',
+    });
+    expect(fromKeywords('대구 다낭 편도 항공권')).toMatchObject({
+      place: '다낭',
+      from: '대구',
+      tripType: 'ow',
+    });
+  });
+
+  it('⚠️ 항공사 이름은 출발지가 아니다 — "제주항공 타고 오사카"', () => {
+    // 앞 도시를 출발지로 읽기 때문에, 안 지우면 오사카 가는 사람이 제주 출발이 된다.
+    expect(fromKeywords('제주항공 타고 오사카 항공권')).toMatchObject({
+      place: '오사카',
+      from: null,
+    });
+    expect(fromKeywords('에어부산 다낭 항공권')).toMatchObject({ place: '다낭', from: null });
   });
 
   it('사전에 없는 지명도 모델에 넘긴다', () => {

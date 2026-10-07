@@ -319,8 +319,13 @@ export const CITY_ALIASES: ReadonlyMap<string, CityEntry> = new Map(
  *   "사파리 투어 있어?"  → **파리**(사파리 안에 들어 있다) · 사파
  *   "테니스 코트 있는"   → 니스
  *   "포르투갈 여행지"    → 포르투 (나라 이름이지 도시가 아니다)
+ *   "제주항공 타고 오사카" → 제주 (항공사 이름이지 출발지가 아니다)
  *
- * **문장 파서(findCityInText)에만 적용된다.** 전체 일치로 보는 lookupCity 는 이미
+ * ⚠️ **항공사 이름이 특히 위험해졌다.** 항공권 발화에서 도시가 둘이면 앞을 출발지로
+ *    읽기 때문에(findCitiesInText · intent.fromKeywords), "제주항공" 을 안 지우면
+ *    오사카 가는 사람이 제주 출발로 검색된다.
+ *
+ * **문장 파서(findCitiesInText)에만 적용된다.** 전체 일치로 보는 lookupCity 는 이미
  * 뽑힌 지명 하나를 받으므로 이런 덫에 걸릴 일이 없다.
  */
 const AMBIGUOUS: RegExp[] = [
@@ -329,6 +334,9 @@ const AMBIGUOUS: RegExp[] = [
   /테니스/g,
   /피사체/g,
   /포르투갈/g,
+  // ⚠️ "제주항공권" 은 빼지 않는다 — 그건 제주로 가는 항공권이지 항공사가 아니다.
+  /제주항공(?!권)/g,
+  /에어\s*(부산|서울)/g,
 ];
 
 /**
@@ -367,16 +375,22 @@ export function lookupCity(text: string | null | undefined): CityEntry | null {
 }
 
 /**
- * 문장에서 도시를 찾는다. **가장 긴 별칭이 이긴다.**
+ * 문장에 나온 도시를 **나온 순서대로 전부** 돌려준다. **가장 긴 별칭이 이긴다.**
  *
  * 짧은 별칭부터 훑으면 "도쿄디즈니" 가 "도쿄" 로 잡히고, 그러면 디즈니랜드
- * 근처를 물은 사람에게 신주쿠 호텔이 나간다.
+ * 근처를 물은 사람에게 신주쿠 호텔이 나간다. 그래서 긴 별칭부터 자리를 잡고,
+ * 그 자리에 겹치는 짧은 별칭은 버린다.
  *
  * 한 글자 별칭(괌·빈)은 substring 으로 보지 않는다. "빈 방 있어?" 가 오스트리아
  * 빈이 되기 때문이다. 대신 띄어쓰기로 끊은 토큰이 정확히 그 도시일 때만 인정한다.
+ *
+ * ⚠️ **순서가 뜻을 가진다.** "부산 하노이 항공권" 의 앞은 출발지다
+ *    ([intent.service.ts](../intent/intent.service.ts) fromKeywords). 하나만
+ *    돌려주던 시절엔 더 긴 "하노이" 가 이겨 부산이 조용히 사라졌고, 부산 사람이
+ *    서울 출발 항공권을 받았다.
  */
-export function findCityInText(utterance: string): CityEntry | null {
-  if (!utterance.trim()) return null;
+export function findCitiesInText(utterance: string): CityEntry[] {
+  if (!utterance.trim()) return [];
 
   const cleaned = AMBIGUOUS.reduce((text, trap) => text.replace(trap, ' '), utterance);
   const compact = normalizeAlias(cleaned);
@@ -387,27 +401,39 @@ export function findCityInText(utterance: string): CityEntry | null {
       .filter(Boolean),
   );
 
-  let found: CityEntry | null = null;
-  let foundLength = 0;
-  let ambiguous = false;
-
+  const hits: { at: number; alias: string; city: CityEntry }[] = [];
   for (const [alias, city] of CITY_ALIASES) {
-    if (alias.length < foundLength || UTTERANCE_UNSAFE.has(alias)) continue;
-    const hit = alias.length >= 2 ? compact.includes(alias) : tokens.has(alias);
-    if (!hit) continue;
-
-    if (alias.length === foundLength && found && found.slug !== city.slug) {
-      ambiguous = true;
-      continue;
-    }
-    if (alias.length > foundLength) {
-      found = city;
-      foundLength = alias.length;
-      ambiguous = false;
-    }
+    if (UTTERANCE_UNSAFE.has(alias)) continue;
+    const at = alias.length >= 2 ? compact.indexOf(alias) : tokens.has(alias) ? compact.indexOf(alias) : -1;
+    if (at < 0) continue;
+    hits.push({ at, alias, city });
   }
 
-  // 같은 길이로 두 도시가 걸렸다 ("서울에서 세부 가는"). 어느 쪽이 목적지인지
-  // 사전으로는 못 가린다 — 모델에 넘긴다. 틀린 도시로 검색하는 것보다 낫다.
-  return ambiguous ? null : found;
+  // 긴 별칭이 먼저 자리를 잡고, 그 자리에 겹치는 짧은 별칭은 버린다.
+  hits.sort((a, b) => b.alias.length - a.alias.length || a.at - b.at);
+  const taken: { from: number; to: number }[] = [];
+  const found: { at: number; city: CityEntry }[] = [];
+  for (const hit of hits) {
+    const span = { from: hit.at, to: hit.at + hit.alias.length };
+    if (taken.some((t) => span.from < t.to && t.from < span.to)) continue;
+    taken.push(span);
+    // 같은 도시를 두 표기로 말했으면(제주·제주도) 한 번만 센다. 자리는 앞선 쪽이다.
+    const already = found.find((f) => f.city.slug === hit.city.slug);
+    if (already) already.at = Math.min(already.at, hit.at);
+    else found.push({ at: hit.at, city: hit.city });
+  }
+
+  return found.sort((a, b) => a.at - b.at).map((f) => f.city);
+}
+
+/**
+ * 문장에 도시가 **하나뿐일 때** 그 도시. 둘 이상이면 null 이다.
+ *
+ * 어느 쪽이 목적지인지 사전으로는 못 가린다("서울에서 세부 가는") — 모델에 넘기는
+ * 게 틀린 도시로 검색하는 것보다 낫다. 방향을 아는 자리(항공권)는 순서를 읽을 수
+ * 있으므로 findCitiesInText 를 직접 쓴다.
+ */
+export function findCityInText(utterance: string): CityEntry | null {
+  const cities = findCitiesInText(utterance);
+  return cities.length === 1 ? cities[0] : null;
 }

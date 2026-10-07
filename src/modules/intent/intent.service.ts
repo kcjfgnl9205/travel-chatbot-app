@@ -5,7 +5,7 @@ import { clip, text } from '../../common/parse';
 import { AppConfig, CONFIG } from '../../config/app.config';
 import { IntentCacheRepository } from '../database/repositories/intent-cache.repository';
 import { OpenAiService, parseJsonLoose } from '../openai/openai.service';
-import { findCityInText } from '../places/city-table';
+import { findCitiesInText } from '../places/city-table';
 import { findCountryInText, stripDomainWord } from '../places/country-table';
 import { SearchKind } from '../search/search.types';
 import {
@@ -251,27 +251,41 @@ export class IntentService {
 /**
  * 모델 없이 끝낼 수 있는 발화인가.
  *
- * 조건이 셋 다 맞아야 한다 — 의도가 키워드로 분명하고, 사전에 있는 도시가 하나 잡히고,
- * 출발지 표현이 없어야 한다. "서울에서 오사카" 처럼 지명이 둘이면 어느 쪽이 목적지인지
- * 사전으로는 못 가리므로 모델에 넘긴다. 틀린 지역으로 검색하는 것보다 낫다.
+ * 의도가 키워드로 분명하고, 지명이 사전에 있고, 출발지 표현("에서"·"출발")이 없어야
+ * 한다. 조사가 붙은 "서울에서 오사카" 는 모델이 가른다 — 조사 자리까지 사전으로
+ * 읽으려 들면 "제주에서 묵을" 같은 말에서 엉뚱한 출발지가 생긴다.
+ *
+ * ⚠️ **항공권에서 도시가 둘이면 앞이 출발지다** ("부산 하노이 항공권"). 노선을
+ *    말하는 순서가 그렇고, 실제로 이렇게 들어온다. 예전에는 긴 쪽("하노이")만
+ *    남기고 부산을 버려서 **부산 사람에게 서울 출발 항공권이 나갔다** — 게다가
+ *    출발지를 추측했다는 고지(originAssumed)도 안 붙어 고칠 단서조차 없었다.
+ *
+ * 호텔·관광지는 둘이면 여전히 모델에 넘긴다. 거기엔 순서가 뜻하는 바가 없다.
  */
 export function fromKeywords(utterance: string): ParsedIntent | null {
   const intent = intentFromKeywords(utterance);
   if (intent === 'unknown') return null;
   if (/에서|출발/.test(utterance)) return null;
 
-  // 도시가 먼저다. "일본 오사카 호텔" 은 오사카를 찾아야지 일본을 되물으면 안 된다.
-  // 나라는 그다음 — 그러면 "일본 호텔 추천해줘" 도 모델 없이 되묻기까지 간다.
-  const place = findCityInText(utterance)?.nameKo ?? findCountryInText(utterance)?.nameKo ?? null;
-  if (!place) return null;
-
-  return {
+  const cities = findCitiesInText(utterance);
+  const base = {
     intent,
-    place,
-    from: null,
     tripType: tripTypeOf(utterance),
     ignored: ignoredConditions(utterance),
   };
+
+  if (intent === 'flight' && cities.length === 2) {
+    return { ...base, place: cities[1].nameKo, from: cities[0].nameKo };
+  }
+
+  // 도시가 먼저다. "일본 오사카 호텔" 은 오사카를 찾아야지 일본을 되물으면 안 된다.
+  // 나라는 그다음 — 그러면 "일본 호텔 추천해줘" 도 모델 없이 되묻기까지 간다.
+  // 도시가 둘 이상이면(위 항공권 경우가 아니면) 사전으로는 못 가린다 — 모델에 넘긴다.
+  const city = cities.length === 1 ? cities[0].nameKo : null;
+  const place = city ?? (cities.length ? null : (findCountryInText(utterance)?.nameKo ?? null));
+  if (!place) return null;
+
+  return { ...base, place, from: null };
 }
 
 /** 모델(또는 캐시)이 준 값을 ParsedIntent 로 다듬는다. */

@@ -6,7 +6,7 @@ import {
   post,
   textOf,
 } from './helpers';
-import { findCityInText, lookupCity } from '../src/modules/places/city-table';
+import { findCitiesInText, findCityInText, lookupCity } from '../src/modules/places/city-table';
 
 /**
  * 지역 인식 회귀 테스트.
@@ -129,6 +129,32 @@ describe('도시 사전', () => {
     expect(lookupCity('Cebu')?.slug).toBe('cebu');
     expect(lookupCity(' 싱가폴 ')?.nameKo).toBe('싱가포르');
     expect(lookupCity('없는도시')).toBeNull();
+  });
+
+  it('문장에 도시가 둘이면 나온 순서대로 준다 — 긴 쪽만 남기지 않는다', () => {
+    // ⚠️ "하노이"(3자)가 "부산"(2자)보다 길다는 이유로 부산이 사라지면,
+    //    항공권 쪽에서 출발지를 읽을 방법이 없어진다.
+    expect(findCitiesInText('부산 하노이 항공권 추천해줘').map((c) => c.slug)).toEqual([
+      'busan',
+      'hanoi',
+    ]);
+    // 겹치는 짧은 별칭은 여전히 진다 — "도쿄디즈니" 안의 "도쿄" 는 따로 세지 않는다.
+    expect(findCitiesInText('도쿄디즈니 호텔').map((c) => c.slug)).toEqual(['tokyo-disney']);
+    // 같은 도시를 두 표기로 말해도 한 번이다.
+    expect(findCitiesInText('제주도 제주 호텔').map((c) => c.slug)).toEqual(['jeju']);
+  });
+
+  it('findCityInText 는 하나뿐일 때만 답한다 — 둘이면 부르는 쪽이 가린다', () => {
+    expect(findCityInText('부산 하노이 호텔')).toBeNull();
+    expect(findCityInText('하노이 호텔')?.slug).toBe('hanoi');
+  });
+
+  it('⚠️ 항공사 이름 안의 도시는 긁지 않는다', () => {
+    expect(findCitiesInText('제주항공 타고 오사카').map((c) => c.slug)).toEqual(['osaka']);
+    expect(findCitiesInText('에어부산 다낭 항공권').map((c) => c.slug)).toEqual(['danang']);
+    // ⚠️ 제주로 **가는** 항공권은 살아야 한다. 띄어 쓰든 붙여 쓰든 항공사가 아니다.
+    expect(findCitiesInText('제주 항공권 추천').map((c) => c.slug)).toEqual(['jeju']);
+    expect(findCitiesInText('제주항공권 추천').map((c) => c.slug)).toEqual(['jeju']);
   });
 
   it('전체 일치만 본다 — 문장은 findCityInText 가 맡는다', () => {

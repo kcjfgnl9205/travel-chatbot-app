@@ -256,6 +256,21 @@ describe('POST /api/v1/kakao/router', () => {
     });
   });
 
+  /**
+   * ⚠️ 조사 없이 "부산 하노이" 로 들어온다. 이게 안 되면 부산 사람이 서울 출발
+   *    항공권을 받고, 출발지를 추측했다는 고지조차 안 붙어 고칠 단서가 없다.
+   */
+  it('조사 없이 말한 출발지도 읽는다 — "부산 하노이 항공권"', async () => {
+    const body = await askUntilCard(ctx.app, '부산 하노이 항공권 찾아줘');
+
+    expect(ctx.flightProvider.calls[0]).toMatchObject({
+      originName: '부산',
+      originCode: 'PUS',
+      destName: '하노이',
+    });
+    expect(noticeOf(body)).not.toContain('출발 기준');
+  });
+
   it('편도는 왕복과 다른 캐시를 쓴다', async () => {
     await askUntilCard(ctx.app, '오사카 편도 항공권 찾아줘');
     expect(ctx.flightProvider.calls[0].tripType).toBe('oneway');
