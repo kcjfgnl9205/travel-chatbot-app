@@ -4,7 +4,7 @@
 # 수동 배포도 같은 스크립트를 쓴다:  bash deploy/remote.sh
 set -euo pipefail
 
-APP_DIR="${APP_DIR:-$HOME/travel-chatbot-app}"
+APP_DIR="${APP_DIR:-/opt/gajago}"
 cd "$APP_DIR"
 
 # 배포가 겹치면 안 된다.
