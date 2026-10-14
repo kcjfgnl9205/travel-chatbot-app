@@ -5,6 +5,7 @@ import { adpickCarries } from '../adpick/adpick.service';
 import { AffiliateService } from '../affiliate/affiliate.service';
 import { AppConfig, CONFIG } from '../../config/app.config';
 import * as t from '../kakao/templates';
+import { routeAirports } from './airports';
 import { datedSearchUrl } from './search-url';
 import { RecommendationRowsService } from '../recommendation/rows.service';
 import {
@@ -194,18 +195,25 @@ export class FlightService implements SearchDomain<FlightOffer> {
   /**
    * 검색 질의.
    *
-   * 출발지는 라우터가 채워준다 — 사용자가 말하지 않았으면 서울(ICN)이고, 그 사실은
+   * 출발지는 라우터가 채워준다 — 사용자가 말하지 않았으면 서울이고, 그 사실은
    * 카드 아래 안내에 적힌다(cards.noticeText). 되묻지 않는 대신 고쳐 말할 단서를 준다.
+   *
+   * ⚠️ **공항 코드는 `from.iata` 가 아니라 노선을 보고 정한다** — 서울은 공항이
+   *    둘이라 국내선이면 김포다 ([airports.ts](./airports.ts)).
    */
   queryOf(ctx: SearchContext): FlightQuery {
     const from = ctx.from;
+    const { originCode, destCode } = routeAirports(from, ctx.place, {
+      name: this.config.flightDefaultOriginName,
+      code: this.config.flightDefaultOriginCode,
+    });
     return {
       originSlug: from?.slug ?? 'seoul',
       originName: from?.canonicalName ?? this.config.flightDefaultOriginName,
-      originCode: from?.iata ?? this.config.flightDefaultOriginCode,
+      originCode,
       destSlug: ctx.place.slug,
       destName: ctx.place.canonicalName,
-      destCode: ctx.place.iata,
+      destCode,
       tripType: ctx.tripType === 'ow' ? 'oneway' : 'round',
       limit: ctx.limit,
       originAssumed: !from,

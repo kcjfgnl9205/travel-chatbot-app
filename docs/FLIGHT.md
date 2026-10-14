@@ -63,6 +63,29 @@
 
 기본값은 `FLIGHT_DEFAULT_ORIGIN_NAME=서울` / `FLIGHT_DEFAULT_ORIGIN_CODE=ICN`.
 
+### ⚠️ 서울은 공항이 둘이다 — 국내선은 김포, 국제선은 인천
+
+사전은 서울의 대표 공항을 인천(ICN) 하나로 들고 있다. 그대로 쓰면 "제주 항공권" 이
+`ICN → CJU` 로 나가서, 편수가 몇 배인 김포 노선을 통째로 못 보여준다.
+
+그래서 **노선이 국내선이면 서울 쪽 끝을 김포(GMP)로 바꾼다**
+([airports.ts](../src/modules/flight/airports.ts)).
+
+| 발화 | 노선 |
+|---|---|
+| "제주 항공권" | `GMP → CJU` |
+| "오사카 항공권" | `ICN → KIX` |
+| "서울에서 제주" | `GMP → CJU` |
+| "인천에서 제주" | `ICN → CJU` (공항을 콕 집었다) |
+| "부산에서 서울" | `PUS → GMP` (도착지도 같이 내린다) |
+
+바꾸는 건 **공항 코드뿐**이다. 도시명은 "서울" 그대로라 고지("서울 출발 기준이에요")도
+캐시 키(place id)도 그대로다. 같은 (출발지, 도착지) 쌍이면 코드도 매번 같으므로 캐시가
+갈리지 않는다.
+
+⚠️ **국내인지 모르면 인천이다.** 국내인 줄 몰라 인천으로 나가면 "노선이 적다" 지만,
+해외인데 김포로 나가면 노선이 아예 없는 공항으로 검색이 나간다.
+
 ---
 
 ## 2. 발화 → 응답 전체 흐름
@@ -74,7 +97,7 @@
   │
   ├─ 의도·지명 추출            → intent=flight, place=오사카, from=null
   ├─ 지역 정규화 (도착지)      "오사카" → place_id=42, iata=KIX
-  ├─ 지역 정규화 (출발지)      말 안 했으면 "서울" → place_id=7, iata=ICN
+  ├─ 지역 정규화 (출발지)      말 안 했으면 "서울" → place_id=7, iata=ICN (국내선이면 GMP)
   │                            originAssumed=true → 고지에 반영
   ├─ 캐시 조회                 flight:7>42:rt
   │    ├ 히트 → listCard 즉시 ✅
@@ -307,7 +330,7 @@ flight:{출발 place_id}>{도착 place_id}:{rt|ow}
 |---|---|---|
 | `FLIGHT_CACHE_TTL_MINUTES` | `360` (6h) | 검색 결과 수명 |
 | `FLIGHT_DEFAULT_ORIGIN_NAME` | `서울` | 출발지를 말 안 했을 때 |
-| `FLIGHT_DEFAULT_ORIGIN_CODE` | `ICN` | 〃 |
+| `FLIGHT_DEFAULT_ORIGIN_CODE` | `ICN` | 〃 (국내선이면 김포로 바뀐다) |
 | `FLIGHT_PROVIDER` | `openai` | GDS 가 붙으면 여기를 바꾼다 |
 | `RESULT_MAX_ITEMS` | `20` | 4페이지 |
 | `OPENAI_CANDIDATE_COUNT` | `30` | 1차 후보 수 |

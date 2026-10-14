@@ -3,7 +3,7 @@ import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 
 import { kakaoMapUrl, mapsUrl } from '../../common/maps-url';
-import { lookupCity } from '../places/city-table';
+import { isKorea } from '../places/city-table';
 import { MemoryStoreService } from '../database/memory-store.service';
 import { AttractionsRepository } from '../database/repositories/attractions.repository';
 import { RecommendationItemsRepository } from '../database/repositories/recommendations.repository';
@@ -137,7 +137,10 @@ export class RedirectController {
     // ⚠️ **주소를 여기서 만든다.** 노출 시점 값을 스냅샷해두지 않는 것이 요점이라
     //    (0012), 관리 화면에서 이름을 고치면 다음 클릭부터 새 이름으로 검색된다.
     const cityName = (row?.city_name as string) ?? null;
-    const domestic = isDomestic(cityName, (row?.country_code as string) ?? null);
+    // ⚠️ **모르면 구글맵이다.** 카카오맵은 해외 데이터가 거의 없어서 "모르겠으면
+    //    카카오맵" 은 빈 결과를 띄운다. 구글맵은 국내도 되므로, 모를 때 틀려도
+    //    손해가 작은 쪽이 구글맵이다 — isKorea 가 모르면 false 인 이유이기도 하다.
+    const domestic = isKorea(cityName, (row?.country_code as string) ?? null);
     const targetUrl = domestic ? kakaoMapUrl(name, cityName) : mapsUrl(name, cityName);
 
     this.logger.log(
@@ -148,31 +151,3 @@ export class RedirectController {
   }
 }
 
-/**
- * 국내 관광지인가. **모르면 false** — 그때는 구글맵으로 간다.
- *
- * 카카오맵은 해외 데이터가 거의 없어서 "모르겠으면 카카오맵" 은 빈 결과를 띄운다.
- * 반대로 구글맵은 국내도 되므로, 모를 때 틀려도 손해가 작은 쪽이 구글맵이다.
- *
- * **재료가 둘인데 커버리지가 엇갈려서 둘 다 본다.** 등록 경로가 둘이기 때문이다 —
- * 사전 경로는 `countryCode: null` 로 넣고, 모델 경로는 모델이 준 값을 채운다
- * ([places.service.ts](../places/places.service.ts)).
- *
- *   사전(city-table)   서울·부산 등 21곳     DB 왕복 0, 판정이 매번 같다
- *   DB(country_code)   춘천·목포 등 새 도시   사전에 없는 도시를 여기가 받는다
- *
- * 사전만 보면 새로 등록된 국내 도시가 구글맵으로 가고, DB 만 보면 기존 116곳이
- * 그렇게 된다. ⚠️ **둘 중 하나를 지우지 마라** — 지금 `places` 116행이 전부
- * country_code null 인 걸 보고 "DB 는 쓸모없다" 고 판단하기 쉬운데, 그건 그 116곳이
- * 전부 씨앗(사전)으로 들어왔기 때문이지 컬럼이 안 쓰여서가 아니다.
- *
- * DB 값은 **모델이 준 것이라 틀릴 수 있다.** 틀려도 손해는 작다 — 한국이 아닌 곳이
- * 'KR' 로 들어와야 빈 카카오맵이 뜨는데, 그건 모델이 도시 자체를 잘못 안 경우라
- * 더 큰 문제가 먼저 드러난다.
- *
- * 세부 지역("해운대 부산")은 `lookupCity` 가 전체 일치만 봐서 null 이지만,
- * RPC 가 부모의 country_code 를 폴백으로 주므로(0014) 국내로 잡힌다.
- */
-function isDomestic(cityName: string | null, countryCode: string | null): boolean {
-  return countryCode === 'KR' || lookupCity(cityName)?.country === 'KR';
-}

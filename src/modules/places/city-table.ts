@@ -375,6 +375,34 @@ export function lookupCity(text: string | null | undefined): CityEntry | null {
 }
 
 /**
+ * 국내인가. **모르면 false** — 쓰는 쪽은 모를 때 안전한 기본값을 가져야 한다
+ * (지도 링크는 구글맵, 항공권 출발 공항은 인천이 그 자리다).
+ *
+ * **재료가 둘인데 커버리지가 엇갈려서 둘 다 본다.** 지역 등록 경로가 둘이기 때문이다 —
+ * 사전 경로는 `countryCode: null` 로 넣고, 모델 경로는 모델이 준 값을 채운다
+ * ([places.service.ts](./places.service.ts)).
+ *
+ *   사전(city-table)   서울·부산 등 21곳     DB 왕복 0, 판정이 매번 같다
+ *   DB(country_code)   춘천·목포 등 새 도시   사전에 없는 도시를 여기가 받는다
+ *
+ * 사전만 보면 새로 등록된 국내 도시가 해외로 잡히고, DB 만 보면 기존 116곳이
+ * 그렇게 된다. ⚠️ **둘 중 하나를 지우지 마라** — 지금 `places` 116행이 전부
+ * country_code null 인 걸 보고 "DB 는 쓸모없다" 고 판단하기 쉬운데, 그건 그 116곳이
+ * 전부 씨앗(사전)으로 들어왔기 때문이지 컬럼이 안 쓰여서가 아니다.
+ *
+ * DB 값은 **모델이 준 것이라 틀릴 수 있다.**
+ *
+ * 세부 지역("해운대 부산")은 `lookupCity` 가 전체 일치만 봐서 null 이지만,
+ * 관광지 경로는 RPC 가 부모의 country_code 를 폴백으로 준다(0014).
+ */
+export function isKorea(
+  cityName: string | null | undefined,
+  countryCode: string | null | undefined,
+): boolean {
+  return countryCode === 'KR' || lookupCity(cityName)?.country === 'KR';
+}
+
+/**
  * 문장에 나온 도시를 **나온 순서대로 전부** 돌려준다. **가장 긴 별칭이 이긴다.**
  *
  * 짧은 별칭부터 훑으면 "도쿄디즈니" 가 "도쿄" 로 잡히고, 그러면 디즈니랜드
