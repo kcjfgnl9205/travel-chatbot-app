@@ -169,6 +169,11 @@ export const mentionCardOf = (body: any): any =>
   body?.template?.outputs?.find((o: any) => o.textCard?.buttons?.[0]?.action === 'mention')
     ?.textCard;
 
+/** 못 알아들었을 때의 안내 카드. 도움말(`guide`) 버튼이 달린 textCard 다. */
+export const notUnderstoodCardOf = (body: any): any =>
+  body?.template?.outputs?.find((o: any) => o.textCard?.buttons?.[0]?.action === 'guide')
+    ?.textCard;
+
 export const textOf = (body: any): string =>
   body?.template?.outputs?.[0]?.simpleText?.text ?? '';
 

@@ -7,6 +7,7 @@ import {
   kakaoPayload,
   listCardOf,
   mentionCardOf,
+  notUnderstoodCardOf,
   moreButtonOf,
   shareButtonOf,
   noticeOf,
@@ -36,13 +37,14 @@ describe('POST /api/v1/kakao/router', () => {
   });
 
   // ------------------------------------------------------------ 1차 필터
-  it('여행과 무관한 잡담에는 도움말 카드를 주고 AI 를 아예 부르지 않는다', async () => {
+  it('여행과 무관한 잡담에는 안내 카드를 주고 AI 를 아예 부르지 않는다', async () => {
     const res = await post(ctx.app, kakaoPayload('@가자고 안녕 다들 뭐해?'));
 
     expect(res.status).toBe(201);
-    const card = listCardOf(res.body);
-    expect(card.header.title).toContain('가자고');
-    expect(card.items).toHaveLength(3);
+    const card = notUnderstoodCardOf(res.body);
+    expect(card.title).toBe('🤔 어떤 여행을 찾으시나요?');
+    // 예시는 챗봇 설정의 도움말이 가진다 — 카드에는 그걸 여는 버튼 하나뿐이다.
+    expect(card.buttons).toEqual([{ label: '도움말', action: 'guide' }]);
     // ⚠️ 오류 문구를 쓰지 않는다. 인사말까지 오류로 취급하면 단톡방이 딱딱해진다.
     expect(JSON.stringify(res.body)).not.toMatch(/잘못|오류|실패/);
     // 1차 필터가 잡아냈으므로 모델도 provider 도 안 돌았다 = 요금 0원.
@@ -461,8 +463,8 @@ describe('POST /api/v1/kakao/router', () => {
 
     const stranger = await post(ctx.app, kakaoPayload('다낭', { userKey: 'b' }));
 
-    // B 는 되묻기를 받은 적이 없다. 그냥 도움말이 나가야 한다.
-    expect(listCardOf(stranger.body)?.header?.title).toContain('가자고');
+    // B 는 되묻기를 받은 적이 없다. 그냥 안내 카드가 나가야 한다.
+    expect(notUnderstoodCardOf(stranger.body)).toBeDefined();
   });
 
   it('되묻기 상태여도 새 질문은 새 질문으로 받는다', async () => {
@@ -481,7 +483,7 @@ describe('POST /api/v1/kakao/router', () => {
     const res = await post(ctx.app, kakaoPayload('ㅋㅋㅋ 거기 어디였지?'));
 
     // 아무 말이나 지명으로 등록하면 places 가 쓰레기로 찬다.
-    expect(listCardOf(res.body)?.header?.title).toContain('가자고');
+    expect(notUnderstoodCardOf(res.body)).toBeDefined();
   });
 
   // ---------------------------------------------------------- 실패 경로

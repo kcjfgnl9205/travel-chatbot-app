@@ -80,12 +80,12 @@ describe('스웨거 예시 = 실제 응답', () => {
     );
   });
 
-  it('도움말 — 세 가지를 예시와 함께 보여준다', async () => {
+  it('도움말 — 안내 문구와 도움말(guide) 버튼을 보여준다', async () => {
     const res = await post(ctx.app, kakaoPayload('안녕하세요'));
 
     expect(shapeOf(res.body)).toEqual(shapeOf(HELP_RESPONSE_EXAMPLE));
-    expect(listCardOf(res.body).items).toHaveLength(
-      (HELP_RESPONSE_EXAMPLE.template.outputs[0] as any).listCard.items.length,
+    expect(res.body.template.outputs[0].textCard.buttons).toEqual(
+      (HELP_RESPONSE_EXAMPLE.template.outputs[0] as any).textCard.buttons,
     );
   });
 
