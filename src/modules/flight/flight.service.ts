@@ -6,6 +6,7 @@ import { AffiliateService } from '../affiliate/affiliate.service';
 import { AppConfig, CONFIG } from '../../config/app.config';
 import * as t from '../kakao/templates';
 import { routeAirports } from './airports';
+import { linkOffers } from './link-offers';
 import { datedSearchUrl } from './search-url';
 import { RecommendationRowsService } from '../recommendation/rows.service';
 import {
@@ -76,9 +77,26 @@ export class FlightService implements SearchDomain<FlightOffer> {
     return this.provider.name;
   }
 
-  /** 지금 검색할 수 있는가. 키가 없으면 false — 라우터가 헛된 대기를 안 만든다. */
+  /**
+   * 지금 검색할 수 있는가. 키가 없으면 false — 라우터가 헛된 대기를 안 만든다.
+   *
+   * 링크 카드만 내는 모드에서는 **항상 true 다.** 모델을 안 부르므로 키와 무관하다.
+   */
   get ready(): boolean {
-    return this.provider.enabled !== false;
+    return this.config.flightLinkOnly || this.provider.enabled !== false;
+  }
+
+  /**
+   * 즉답. **AI 를 부르지 않고 카드를 만든다.**
+   *
+   * 줄 링크는 어차피 우리가 조립하므로, 시세 한 줄을 포기하면 항공권은 검색이
+   * 필요 없다 ([link-offers.ts](./link-offers.ts)에 그 판단이 적혀 있다).
+   *
+   * ⚠️ null 을 주면 라우터가 느린 경로(모델)로 보낸다. 그래서 끄면 예전 동작이다.
+   */
+  async peek(ctx: SearchContext): Promise<FlightOffer[] | null> {
+    if (!this.config.flightLinkOnly) return null;
+    return linkOffers(this.queryOf(ctx));
   }
 
   /**
@@ -153,13 +171,14 @@ export class FlightService implements SearchDomain<FlightOffer> {
   async rows(offers: FlightOffer[], ctx: RenderContext): Promise<t.Json[]> {
     // ⚠️ **여기서 주소를 다시 만든다. 저장된 값을 그대로 쓰지 않는다.**
     //    모델이 주는 건 빈 검색 폼(노선 페이지)이라, 카드에서 가격을 보고 누른
-    //    사람이 날짜를 다시 입력해야 한다. 내일 출발·7일 뒤 귀국·1인으로 **검색된 상태**를 연다.
+    //    사람이 날짜를 다시 입력해야 한다. **사용자가 말한 날짜·인원으로** 검색된
+    //    상태를 연다 — 말하지 않았으면 내일 출발·7일 뒤 귀국·1인이다.
     //
     //    렌더 시점인 것이 핵심이다 — 캐시는 날짜를 키에 넣지 않고 24시간 살기 때문에
     //    (0004), 저장해 두면 내일 캐시를 맞은 사람이 어제 날짜를 받는다.
     const dated = offers.map((offer) => ({
       offer,
-      sourceUrl: datedSearchUrl(offer, new Date(ctx.started)) ?? offer.sourceUrl,
+      sourceUrl: datedSearchUrl(offer, new Date(ctx.started), ctx.trip) ?? offer.sourceUrl,
     }));
 
     // 원본 주소 → 애드픽 커미션 링크. 캐시에 있으면 API 를 안 탄다.

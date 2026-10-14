@@ -245,15 +245,25 @@ describe('POST /api/v1/kakao/router', () => {
     expect(listCardOf(body).header.title).toContain('항공권');
   });
 
+  /**
+   * ⚠️ **항공권은 모델을 부르지 않는다.** 줄 링크는 어차피 우리가 IATA 코드로
+   *    조립하므로, 시세 한 줄을 포기하면 검색할 것이 없다
+   *    ([link-offers.ts](../src/modules/flight/link-offers.ts)).
+   *    이게 깨지면 단톡방 질문마다 7~30초와 웹 검색 요금이 다시 나간다.
+   */
+  it('모델을 부르지 않고 바로 카드가 나온다', async () => {
+    const res = await post(ctx.app, kakaoPayload('오사카 항공권 찾아줘'));
+
+    // 한 번의 요청으로 카드가 나왔다 — "찾고 있어요" 도 콜백도 없다.
+    expect(listCardOf(res.body)).toBeDefined();
+    expect(ctx.flightProvider.calls).toHaveLength(0);
+  });
+
   it('출발지를 말하지 않으면 서울 출발로 보고 그 사실을 적는다', async () => {
     const body = await askUntilCard(ctx.app, '오사카 항공권 찾아줘');
 
     expect(noticeOf(body)).toContain('서울 출발 기준');
-    expect(ctx.flightProvider.calls[0]).toMatchObject({
-      originName: '서울',
-      destName: '오사카',
-      tripType: 'round',
-    });
+    expect(listCardOf(body).header.title).toContain('서울→오사카');
   });
 
   /**
@@ -263,22 +273,53 @@ describe('POST /api/v1/kakao/router', () => {
   it('조사 없이 말한 출발지도 읽는다 — "부산 하노이 항공권"', async () => {
     const body = await askUntilCard(ctx.app, '부산 하노이 항공권 찾아줘');
 
-    expect(ctx.flightProvider.calls[0]).toMatchObject({
-      originName: '부산',
-      originCode: 'PUS',
-      destName: '하노이',
-    });
+    expect(listCardOf(body).header.title).toContain('부산→하노이');
     expect(noticeOf(body)).not.toContain('출발 기준');
   });
 
-  it('편도는 왕복과 다른 캐시를 쓴다', async () => {
-    await askUntilCard(ctx.app, '오사카 편도 항공권 찾아줘');
-    expect(ctx.flightProvider.calls[0].tripType).toBe('oneway');
+  /**
+   * ⚠️ **반영한 조건을 "반영하지 않았어요" 라고 적으면 안 된다.** 맞는 링크를 받고도
+   *    틀렸다고 읽는다. 날짜·인원은 이제 링크에 들어가므로 고지에서 빠져야 한다.
+   */
+  it('말한 날짜·인원을 고지에 그대로 적는다', async () => {
+    const body = await askUntilCard(ctx.app, '오사카 항공권 10월 20일~24일 4명');
 
-    await askUntilCard(ctx.app, '오사카 항공권 찾아줘');
-    expect(ctx.flightProvider.calls).toHaveLength(2);
-    expect(ctx.flightProvider.calls[1].tripType).toBe('round');
+    const notice = noticeOf(body);
+    expect(notice).toContain('10월 20일 출발');
+    expect(notice).toContain('24일 귀국');
+    expect(notice).toContain('4인');
+    expect(notice).not.toContain('반영되지 않았어요');
   });
+
+  it('편도는 귀국일 없이 연다', async () => {
+    const body = await askUntilCard(ctx.app, '오사카 편도 항공권 찾아줘');
+
+    expect(noticeOf(body)).toContain('편도');
+    expect(noticeOf(body)).not.toContain('귀국');
+  });
+
+  it('편도는 왕복과 다른 캐시를 쓴다', async () => {
+    await withAiFlights(async () => {
+      await askUntilCard(ctx.app, '오사카 편도 항공권 찾아줘');
+      expect(ctx.flightProvider.calls[0].tripType).toBe('oneway');
+
+      await askUntilCard(ctx.app, '오사카 항공권 찾아줘');
+      expect(ctx.flightProvider.calls).toHaveLength(2);
+      expect(ctx.flightProvider.calls[1].tripType).toBe('round');
+    });
+  });
+
+  /** 시세를 조사하는 예전 동작. 설정 하나로 되돌아온다. */
+  async function withAiFlights(run: () => Promise<void>): Promise<void> {
+    const config = ctx.app.get<AppConfig>(CONFIG);
+    config.flightLinkOnly = false;
+    try {
+      await run();
+    } finally {
+      config.flightLinkOnly = true;
+      ctx.reset();
+    }
+  }
 
   // ---------------------------------------------------------- 관광지
   it('관광지는 지도 링크로 간다', async () => {

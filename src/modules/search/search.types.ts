@@ -1,6 +1,7 @@
 import { ResolvedLink } from '../affiliate/affiliate.service';
 import * as t from '../kakao/templates';
 import { Place } from '../places/places.types';
+import { TripParams } from '../flight/search-url';
 
 /** 우리가 처리하는 세 가지. 그 외는 도움말 카드로 간다. */
 export type SearchKind = 'hotel' | 'flight' | 'attraction';
@@ -89,6 +90,14 @@ export interface RenderContext {
    * 그 302 목적지로만 쓰인다. (진단 엔드포인트가 쓴다)
    */
   links?: Map<string, ResolvedLink>;
+  /**
+   * 발화에서 읽은 날짜·인원 (항공권만).
+   *
+   * ⚠️ **행에 저장하지 않는다.** 행은 모두가 공유하므로 A 가 말한 10월 20일이
+   *    B 의 링크에 묻어 나간다. 카드를 그리는 순간 그 사람의 발화에서 다시 읽는다
+   *    ([trip-params.ts](../flight/trip-params.ts)).
+   */
+  trip?: TripParams | null;
 }
 
 /**

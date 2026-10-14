@@ -154,11 +154,20 @@ describe('줄 문구', () => {
 
   it('없는 조각은 건너뛴다', () => {
     expect(routeText(offer({ nonstop: null, durationMinutes: null }))).toBe('');
-    expect(
-      offerDescription(
-        offer({ nonstop: null, durationMinutes: null, airlines: [], priceLow: null, priceHigh: null }),
-      ),
-    ).toBe('');
+  });
+
+  /**
+   * 링크 카드에는 조사한 값이 하나도 없다. **비워두면 세 줄이 똑같아 보인다** —
+   * 제목이 전부 "…에서 보기" 라 고를 단서가 사라진다.
+   */
+  it('조사한 값이 없으면 플랫폼 설명을 쓴다', () => {
+    const bare = { nonstop: null, durationMinutes: null, airlines: [], priceLow: null, priceHigh: null };
+
+    expect(offerDescription(offer({ ...bare, merchant: 'skyscanner' }))).toBe(
+      '여러 예약처 가격을 한 번에 비교',
+    );
+    // 모르는 플랫폼은 빈 줄이다. 지어내지 않는다.
+    expect(offerDescription(offer({ ...bare, merchant: '처음보는곳' }))).toBe('');
   });
 
   /** DB·로그에 남는 이름. 나중에 무엇이 노출됐는지 알아볼 수 있어야 한다. */

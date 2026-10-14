@@ -293,10 +293,31 @@ export function offerTitle(offer: FlightOffer): string {
  * 사용자가 줄을 고르는 기준이라, 머리글로 올려 하나로 합치면 그 차이가 지워진다.
  */
 export function offerDescription(offer: FlightOffer): string {
-  return [priceRangeText(offer), routeText(offer), airlinesText(offer, 1)]
+  const researched = [priceRangeText(offer), routeText(offer), airlinesText(offer, 1)]
     .filter(Boolean)
     .join(' · ');
+  // 조사한 값이 하나도 없는 줄이다 (링크 카드). **비워두면 세 줄이 똑같아 보인다** —
+  // 제목이 전부 "…에서 보기" 라 고를 단서가 사라진다. 지어낼 수는 없으니 플랫폼이
+  // 서로 어떻게 다른지를 적는다. 이건 조사가 필요 없는 사실이다.
+  return researched || merchantTagline(offer.merchant);
 }
+
+/**
+ * 플랫폼이 서로 어떻게 다른가. **가격을 모를 때 줄을 고르는 단서다.**
+ *
+ * ⚠️ 셋의 성격이 실제로 다르다 — 스카이스캐너는 여러 예약처를 모아 보여주는
+ *    메타서치고(그래서 애드픽 광고주가 없다), 나머지 둘은 자기가 파는 곳이다.
+ *    모르는 플랫폼은 빈 줄로 둔다. 지어내면 그게 곧 거짓말이다.
+ */
+export function merchantTagline(merchant: string): string {
+  return MERCHANT_TAGLINES[merchant.toLowerCase()] ?? '';
+}
+
+const MERCHANT_TAGLINES: Record<string, string> = {
+  skyscanner: '여러 예약처 가격을 한 번에 비교',
+  trip: '그 자리에서 예약·결제까지',
+  myrealtrip: '한국어 고객센터 · 원화 결제',
+};
 
 /** DB·로그에 남는 이름. 나중에 무엇이 노출됐는지 알아볼 수 있어야 한다. */
 export function offerLabel(offer: FlightOffer): string {

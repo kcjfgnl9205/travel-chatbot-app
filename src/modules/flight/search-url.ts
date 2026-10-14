@@ -5,7 +5,9 @@
  * 검색 폼이다. 사용자는 카드에서 "32만원" 을 보고 눌렀는데 다시 날짜를 입력해야 한다.
  * 그 한 단계가 이탈 지점이다.
  *
- * **고정값으로 검색된 상태를 연다 — 내일 출발, 7일 뒤 귀국, 1인.**
+ * **검색된 상태를 연다 — 사용자가 말한 날짜·인원으로.** 말하지 않았으면 내일 출발,
+ * 7일 뒤 귀국, 1인이다 ([trip-params.ts](./trip-params.ts) 가 발화에서 읽고,
+ * 못 읽은 칸의 기본값은 `resolveTrip` 한 곳에만 있다).
  *
  * ⚠️ **저장하면 안 된다. 카드를 그릴 때마다 만든다.**
  *    `search_results` 는 날짜를 캐시 키에 넣지 않고 24시간 산다(0004). URL 에 오늘
@@ -56,6 +58,57 @@ function compact(isoDate: string): string {
   return isoDate.slice(2).replace(/-/g, '');
 }
 
+/**
+ * 발화에서 읽은 여행 조건. **읽지 못한 칸은 null 이다** — 기본값은 `resolveTrip` 이
+ * 한 번만 채운다.
+ */
+export interface TripParams {
+  /** 가는 날 `YYYY-MM-DD`. */
+  departDate: string | null;
+  /** 오는 날 `YYYY-MM-DD`. 왕복인데 안 말했으면 null 이고 기본값이 채운다. */
+  returnDate: string | null;
+  /** '3박' 의 3. 귀국일을 안 말했을 때 출발일에서 이만큼 뒤로 민다. */
+  nights: number | null;
+  /** 어른 수. 플랫폼 파라미터가 1~9 라 그 범위만 읽는다. */
+  adults: number | null;
+  /** 반영한 표현 그대로. "반영하지 않았어요" 고지에서 빼는 데 쓴다. */
+  used: string[];
+}
+
+/** 실제로 링크에 박히는 값. 카드 고지도 **같은 함수**를 보고 적는다. */
+export interface ResolvedTrip {
+  depart: string;
+  /** 편도면 null. */
+  back: string | null;
+  adults: number;
+}
+
+/**
+ * 못 읽은 칸을 기본값으로 채운다.
+ *
+ * ⚠️ **기본값이 사는 유일한 곳이다.** 링크를 만드는 쪽과 고지를 적는 쪽이 각자
+ *    채우면 "내일 출발로 검색됩니다" 라고 적어놓고 다른 날짜로 여는 카드가 나온다.
+ */
+export function resolveTrip(
+  tripType: TripType,
+  trip: TripParams | null | undefined,
+  now: Date,
+): ResolvedTrip {
+  const depart = trip?.departDate ?? seoulDate(now, DEPART_AFTER_DAYS);
+  // 귀국일은 **출발일로부터** 센다. 오늘로부터 세면 "다음 달 10일 출발" 이 이미
+  // 지난 날짜로 돌아오는 일정이 된다.
+  const back =
+    tripType === 'round'
+      ? (trip?.returnDate ?? addDays(depart, trip?.nights ?? RETURN_AFTER_DAYS))
+      : null;
+  return { depart, back, adults: trip?.adults ?? 1 };
+}
+
+/** ISO 날짜에 며칠 더하기. 서울 기준으로 뽑힌 문자열이라 산술만 하면 된다. */
+function addDays(iso: string, days: number): string {
+  return new Date(Date.parse(`${iso}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+}
+
 export interface FlightRoute {
   /** 출발 공항 IATA (ICN). */
   originCode: string;
@@ -76,24 +129,28 @@ export interface FlightRoute {
 /**
  * 검색된 상태의 주소. 형식을 모르는 제휴몰이면 null.
  *
- * @param now 기준 시각. 테스트가 고정값을 넣는다.
+ * @param now  기준 시각. 테스트가 고정값을 넣는다.
+ * @param trip 발화에서 읽은 날짜·인원. 없으면 기본값으로 연다.
  */
-export function datedSearchUrl(route: FlightRoute, now: Date = new Date()): string | null {
+export function datedSearchUrl(
+  route: FlightRoute,
+  now: Date = new Date(),
+  trip?: TripParams | null,
+): string | null {
   const from = (route.originCode ?? '').trim().toLowerCase();
   const to = (route.destCode ?? '').trim().toLowerCase();
   // 공항 코드가 없으면 노선을 특정할 수 없다. 원본 주소가 그나마 맞다.
   if (!/^[a-z]{3}$/.test(from) || !/^[a-z]{3}$/.test(to)) return null;
 
-  const depart = seoulDate(now, DEPART_AFTER_DAYS);
+  const { depart, back, adults } = resolveTrip(route.tripType, trip, now);
   const roundTrip = route.tripType === 'round';
-  const back = roundTrip ? seoulDate(now, DEPART_AFTER_DAYS + RETURN_AFTER_DAYS) : null;
 
   switch (route.merchant) {
     case 'skyscanner': {
       // 날짜가 경로에 들어간다. 편도는 두 번째 날짜 칸을 아예 빼야 한다.
       const path = [from, to, compact(depart), back && compact(back)].filter(Boolean).join('/');
       const params = new URLSearchParams({
-        adults: '1',
+        adults: String(adults),
         cabinclass: 'economy',
         currency: 'KRW',
       });
@@ -106,7 +163,7 @@ export function datedSearchUrl(route: FlightRoute, now: Date = new Date()): stri
         ddate: depart,
         triptype: roundTrip ? 'rt' : 'ow',
         class: 'ys',
-        quantity: '1',
+        quantity: String(adults),
         locale: 'ko-KR',
         curr: 'KRW',
       });
@@ -125,7 +182,7 @@ export function datedSearchUrl(route: FlightRoute, now: Date = new Date()): stri
 
       const params = new URLSearchParams({
         trip: legs.join('/'),
-        adult: '1',
+        adult: String(adults),
         cabins: 'ECONOMY',
         tripType: roundTrip ? 'ROUND_TRIP' : 'ONE_WAY',
         useProgressUi: 'false',

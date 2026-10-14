@@ -5,6 +5,7 @@ import { AppConfig, CONFIG } from '../../config/app.config';
 import { AttractionService } from '../attraction/attraction.service';
 import { MessagesRepository } from '../database/repositories/messages.repository';
 import { FlightService } from '../flight/flight.service';
+import { parseTripParams, withoutUsed } from '../flight/trip-params';
 import { HotelService } from '../hotel/hotel.service';
 import { ParsedIntent } from '../intent/intent.types';
 import * as cards from '../kakao/cards';
@@ -377,12 +378,22 @@ export class SearchService {
     const { page, start } = pageOf(valid, offset, this.config.resultMaxItems);
     if (!page.length) return cards.emptyText(meta, req.botName);
 
+    // ⚠️ **날짜·인원은 여기서 발화에서 읽는다. 행에서 읽지 않는다.**
+    //    행은 모두가 공유하고 6시간 산다 — A 가 말한 10월 20일을 저장해두면 B 의
+    //    링크가 그 날짜로 열린다. 카드를 그리는 순간 그 사람의 말에서 다시 읽으면
+    //    그런 일이 없다 (링크 날짜를 저장하지 않는 것과 같은 이유다, 0004).
+    //
+    //    "더 보기" 경로의 발화는 버튼이 보낸 문장이라 날짜가 없다. 그때는 기본값으로
+    //    열린다 — 링크 카드는 줄이 셋뿐이라 다음 페이지가 없으므로 실제로는 안 걸린다.
+    const trip = meta.kind === 'flight' ? parseTripParams(req.utterance, new Date(req.started)) : null;
+
     const render: RenderContext = {
       meta,
       userId: req.userId,
       messageId: opts.messageId,
       started: req.started,
       cacheHit: opts.cacheHit,
+      trip,
     };
     const rows = await domain.rows(page, render);
     if (!rows.length) return cards.emptyText(meta, req.botName);
@@ -415,7 +426,17 @@ export class SearchService {
         items: rows,
         buttons,
       },
-      cards.noticeText({ ignored: opts.ignored, meta }),
+      // ⚠️ **반영한 조건은 고지에서 뺀다.** 날짜를 링크에 넣어놓고 "날짜는 반영되지
+      //    않았어요" 라고 적으면, 사용자는 맞는 링크를 받고도 틀렸다고 읽는다.
+      cards.noticeText({
+        ignored: trip ? withoutUsed(opts.ignored, trip.used) : opts.ignored,
+        meta,
+        trip,
+        now: new Date(req.started),
+        // 링크 카드에는 시세가 아예 없다. 가격 고지는 모델이 조사한 숫자가 있을 때만
+        // 할 말이다.
+        priced: !this.config.flightLinkOnly,
+      }),
       req.botName,
     );
   }

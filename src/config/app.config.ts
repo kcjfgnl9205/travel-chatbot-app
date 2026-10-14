@@ -62,6 +62,7 @@ export interface AppConfig {
   flightCacheTtlMinutes: number;
   flightDefaultOriginName: string;
   flightDefaultOriginCode: string;
+  flightLinkOnly: boolean;
 
   attractionCacheTtlMinutes: number;
   attractionImages: boolean;
@@ -185,6 +186,10 @@ export function loadConfig(): AppConfig {
     // 보고, 카드 아래 안내에 '서울 출발' 을 적어 사용자가 바로 고쳐 말할 수 있게 한다.
     flightDefaultOriginName: str('FLIGHT_DEFAULT_ORIGIN_NAME', '서울'),
     flightDefaultOriginCode: str('FLIGHT_DEFAULT_ORIGIN_CODE', 'ICN'),
+    // ⚠️ **항공권은 검색하지 않는다** — 발화에서 읽은 날짜·인원으로 플랫폼 검색
+    //    페이지를 열어줄 뿐이다 ([link-offers.ts](../modules/flight/link-offers.ts)).
+    //    즉답이고 요금이 0원이다. 끄면 예전처럼 모델이 시세를 조사한다(7~30초).
+    flightLinkOnly: bool('FLIGHT_LINK_ONLY', true),
 
     // ⚠️ **관광지는 캐시를 읽지 않는다** (0009). 질문마다 DB 를 보고, 이 값은
     //    저장된 행의 수명일 뿐이다 — "더 보기" 가 그 행에서 다음 페이지를 자르므로

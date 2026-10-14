@@ -7,6 +7,7 @@
  */
 
 import * as t from './templates';
+import { TripParams, resolveTrip } from '../flight/search-url';
 import { CityChoice } from '../places/places.types';
 import { SearchKind, SearchMeta } from '../search/search.types';
 
@@ -226,7 +227,15 @@ export function askPlaceCard(kind: SearchKind, botName: string | null): t.Json {
  *
  * 남길 게 하나도 없으면 **빈 문자열**을 주고, 그러면 말풍선 자체가 안 나간다.
  */
-export function noticeText(opts: { ignored?: string[]; meta?: SearchMeta }): string {
+export function noticeText(opts: {
+  ignored?: string[];
+  meta?: SearchMeta;
+  /** 발화에서 읽은 날짜·인원. 링크가 그 값으로 열리므로 **그대로 적는다.** */
+  trip?: TripParams | null;
+  now?: Date;
+  /** 카드에 조사한 시세가 있는가. 링크 카드에는 없다. */
+  priced?: boolean;
+}): string {
   const lines: string[] = [];
 
   const ignored = (opts.ignored ?? []).filter(Boolean);
@@ -234,19 +243,17 @@ export function noticeText(opts: { ignored?: string[]; meta?: SearchMeta }): str
     lines.push(`${conditionLabel(ignored)}(${ignored.join(', ')})은 반영되지 않았어요.`);
   }
 
-  // ⚠️ **항공권 가격은 확정 운임이 아니다.** 모델이 웹에서 본 값의 폭이라 실제와
-  //    다를 수 있다. 카드에 범위로 적는 것만으로는 부족하다 — 사용자는 숫자를 보면
-  //    맞는 값이라고 읽는다. 그래서 한 줄로 분명히 밝힌다.
-  //
-  // ⚠️ **링크가 열리는 날짜도 같이 말해야 한다.** 줄 링크는 내일 출발·7일 뒤 귀국·1인으로
-  //    검색된 페이지를 여는데([search-url.ts](../flight/search-url.ts)), 카드의 시세는
-  //    날짜 없이 조사한 값이라 둘이 다를 수 있다. 이 고지가 없으면 사용자는 32만원을
-  //    보고 눌렀다가 48만원을 보고 "틀린 가격" 이라고 읽는다 — 날짜가 다르다는 사실을
-  //    알 길이 없기 때문이다.
+  // ⚠️ **링크가 어떤 조건으로 열리는지 반드시 말한다.** 우리가 날짜·인원을 넣어
+  //    검색된 페이지를 열기 때문에([search-url.ts](../flight/search-url.ts)), 사용자가
+  //    말하지 않은 칸은 우리가 고른 값이다. 적어두면 틀렸을 때 고칠 수 있고,
+  //    안 적으면 "왜 내 날짜가 아니지" 로 끝난다.
   if (opts.meta?.kind === 'flight') {
-    lines.push(
-      '가격은 날짜 없이 조사한 시세예요. 링크는 내일 출발·1주일 뒤 귀국·1인으로 검색됩니다.',
-    );
+    const tripType = opts.meta.tripType === 'ow' ? 'oneway' : 'round';
+    lines.push(`링크는 ${tripText(tripType, opts.trip, opts.now)}으로 검색돼요.`);
+    // ⚠️ **가격은 확정 운임이 아니다.** 모델이 웹에서 본 값의 폭이고, 게다가 날짜
+    //    없이 조사한 값이라 링크를 열면 다를 수 있다. 숫자를 본 사람은 맞는 값이라고
+    //    읽으므로 한 줄로 분명히 밝힌다. 링크 카드에는 숫자가 아예 없어 할 말도 없다.
+    if (opts.priced) lines.push('가격은 날짜 없이 조사한 시세라 실제와 다를 수 있어요.');
   }
 
   // 출발지를 추측했으면 반드시 알려준다. 부산에서 가려던 사람이 고쳐 말할 유일한 단서다.
@@ -255,6 +262,26 @@ export function noticeText(opts: { ignored?: string[]; meta?: SearchMeta }): str
   }
 
   return lines.join('\n');
+}
+
+/**
+ * '10월 20일 출발 · 24일 귀국 · 4인'.
+ *
+ * ⚠️ **링크를 만드는 함수와 같은 곳에서 값을 받아 적는다** (`resolveTrip`). 여기서
+ *    기본값을 따로 쓰면 "내일 출발" 이라고 적어놓고 다른 날로 여는 카드가 나온다.
+ */
+function tripText(tripType: 'oneway' | 'round', trip: TripParams | null | undefined, now?: Date): string {
+  const { depart, back, adults } = resolveTrip(tripType, trip, now ?? new Date());
+  const parts = [`${dayText(depart)} 출발`];
+  if (back) parts.push(`${dayText(back)} 귀국`);
+  else parts.push('편도');
+  parts.push(`${adults}인`);
+  return parts.join(' · ');
+}
+
+/** '2026-10-20' → '10월 20일'. 연도는 적지 않는다 — 카드 한 줄이 좁다. */
+function dayText(iso: string): string {
+  return `${Number(iso.slice(5, 7))}월 ${Number(iso.slice(8, 10))}일`;
 }
 
 /** ["4명", "9/22~24"] → '날짜·인원'. 무엇을 버렸는지 이름을 붙여준다. */
