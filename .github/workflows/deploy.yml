@@ -46,10 +46,11 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          # 테스트를 서버에서 안 돌리므로(SKIP_TESTS=1) 빌드는 몇 분이면 끝난다.
-          # 그보다 오래 걸리면 뭔가 잘못된 것이지 기다릴 일이 아니다 — 매달려 있는
-          # 20분보다 빨리 실패하고 로그를 보는 편이 낫다.
-          command_timeout: 10m
+          # ⚠️ **서버에서 이미지를 빌드한다.** 10/10 에 Oracle VM 에서 NCP 서버로 옮긴 뒤
+          #    테스트를 빼도(SKIP_TESTS=1) `nest build` 에서 10분을 넘겨 끊겼다 — Oracle 에서
+          #    2~3분이던 빌드다. 서버 사양이 그만큼 낮다. 근본 해결은 Actions 에서 빌드해
+          #    레지스트리로 넘기는 것이고, 그 전까지는 기다린다.
+          command_timeout: 20m
           script: |
             set -e
             cd /opt/gajago
