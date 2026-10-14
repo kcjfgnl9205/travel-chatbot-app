@@ -51,6 +51,27 @@ export function parseTripParams(utterance: string, now: Date): TripParams {
     return true;
   });
 
+  // 당일치기는 '박수 0' 이다. 날짜를 안 말했어도 귀국일이 출발일과 같아진다.
+  text = scan(text, /당일\s*(?:치기|여행)/g, (m) => {
+    nights ??= 0;
+    used.push(m[0].trim());
+    return true;
+  });
+
+  // ⚠️ '다음 달 15일' 을 통째로 읽는다. '다음 달' 과 '15일' 을 따로 읽으면
+  //    다음 달 1일(출발)과 이번 달 15일(귀국)이 되어 일정이 거꾸로 선다.
+  text = scan(text, MONTH_WORD_DAY, (m) =>
+    keep(at(m), m[0], monthWordDay(m[1], Number(m[2]), today)),
+  );
+
+  // '2주 뒤' · '열흘 뒤' 가 아니라 '10일 뒤'. 숫자만 받는다.
+  text = scan(text, AFTER_N, (m) => keep(at(m), m[0], afterDate(Number(m[1]), m[2], today)));
+
+  // '11월 첫째주'. 주 단위로 말하는 사람이 꽤 있다.
+  text = scan(text, NTH_WEEK, (m) =>
+    keep(at(m), m[0], nthWeek(Number(m[1]), m[2], today)),
+  );
+
   // 범위를 단일 날짜보다 먼저 본다. '10/20~24' 를 단일로 읽으면 24 가 사라진다.
   text = scan(text, RANGE_KO, (m) => keepRange(m, today, keep));
   text = scan(text, RANGE_SLASH, (m) => keepRange(m, today, keep));
@@ -66,6 +87,9 @@ export function parseTripParams(utterance: string, now: Date): TripParams {
   text = scan(text, /(\d{1,2})\s*일(?!\s*(?:간|동안))/g, (m) =>
     keep(at(m), m[0], dayOnly(Number(m[1]), today)),
   );
+
+  // 요일 범위를 단일 요일보다 먼저 본다.
+  text = scan(text, WEEKDAY_RANGE, (m) => keepWeekdayRange(m, today, keep));
 
   // 상대 날짜. '내일'·'이번 주말'·'다음 주 금요일'.
   text = scan(text, WEEKDAY, (m) => keep(at(m), m[0], weekdayDate(m[1], m[2], today)));
@@ -109,8 +133,17 @@ function normalize(text: string): string {
 const RANGE_KO = /(\d{1,2})\s*월\s*(\d{1,2})\s*일?\s*[~\-–]\s*(?:(\d{1,2})\s*월\s*)?(\d{1,2})\s*일?/g;
 /** '10/20~24' · '10/20 ~ 11/2'. */
 const RANGE_SLASH = /(\d{1,2})\s*\/\s*(\d{1,2})\s*[~\-–]\s*(?:(\d{1,2})\s*\/\s*)?(\d{1,2})/g;
+/** '다음 달 15일' · '이번달 3일'. */
+const MONTH_WORD_DAY = /(이번|다음|담)\s*달\s*(\d{1,2})\s*일?/g;
+/** '2주 뒤' · '10일 후' · '3개월 뒤'. */
+const AFTER_N = /(\d{1,2})\s*(주일?|일|개월|달)\s*(?:뒤|후)/g;
+/** '11월 첫째주' · '12월 마지막주'. */
+const NTH_WEEK = /(\d{1,2})\s*월\s*(첫|둘|셋|넷|다섯|마지막|막)\s*째?\s*주/g;
 /** '다음 주 금요일' · '금요일'. */
 const WEEKDAY = /(이번\s*주|다음\s*주|담주)?\s*([월화수목금토일])요일/g;
+/** '다음주 수요일~금요일' · '수요일부터 금요일까지'. */
+const WEEKDAY_RANGE =
+  /(이번\s*주|다음\s*주|담주)?\s*([월화수목금토일])요일\s*(?:[~\-–]|부터)\s*(?:(이번\s*주|다음\s*주|담주)\s*)?([월화수목금토일])요일(?:\s*까지)?/g;
 const RELATIVE =
   /오늘|내일|모레|글피|이번\s*주말|다음\s*주말|이번\s*주|다음\s*주|담주|이번\s*달|다음\s*달|주말/g;
 
@@ -145,6 +178,33 @@ function keepRange(
   return true;
 }
 
+/**
+ * 요일 범위를 날짜 둘로.
+ *
+ * ⚠️ **끝 요일은 시작과 같은 주에서 센다.** 따로 세면 "다음주 수요일~금요일" 의
+ *    금요일이 이번 주 금요일이 되어 **귀국일이 출발일보다 앞선다** — 실제로
+ *    그렇게 나갔다 (10/21 출발 · 10/16 귀국).
+ */
+function keepWeekdayRange(
+  m: RegExpMatchArray,
+  today: string,
+  keep: (at: number, raw: string, date: string | null) => boolean,
+): boolean {
+  const start = weekdayDate(m[1], m[2], today);
+  const endIndex = WEEKDAY_INDEX.indexOf(m[4]);
+  if (!start || endIndex < 0) return false;
+
+  // 시작일로부터 다가오는 그 요일. 같은 요일이면 한 주 뒤다.
+  let end = comingWeekday(start, endIndex);
+  if (end === start) end = addDays(end, 7);
+  // '이번 주 금요일~다음 주 월요일' 처럼 뒤쪽에도 주를 말했으면 그만큼 민다.
+  if (/다음|담/.test(m[3] ?? '')) end = addDays(end, 7);
+
+  if (!keep(at(m), m[0], start)) return false;
+  keep(at(m) + 0.5, '', end);
+  return true;
+}
+
 function at(m: RegExpMatchArray): number {
   return m.index ?? 0;
 }
@@ -169,6 +229,51 @@ function dayOnly(day: number, today: string): string | null {
   const iso = isoOf(year, month, day);
   if (iso && iso >= today) return iso;
   return monthDay(month + 1, day, today);
+}
+
+/** '다음 달 15일' → 다음 달의 그 날. 없는 날(2월 30일)이면 null 이다. */
+function monthWordDay(word: string, day: number, today: string): string | null {
+  const year = Number(today.slice(0, 4));
+  const month = Number(today.slice(5, 7));
+  if (word === '이번') return isoOf(year, month, day);
+  return nextMonthDay(year, month, day);
+}
+
+/** '2주 뒤' → 오늘 + 14일. 달·개월은 같은 날짜로 민다. */
+function afterDate(count: number, unit: string, today: string): string | null {
+  if (count < 1) return null;
+  if (unit.startsWith('주')) return addDays(today, count * 7);
+  if (unit === '일') return addDays(today, count);
+  // '3개월 뒤' — 그 달에 같은 날이 없으면(1/31 → 2/31) 말일로 당긴다.
+  const year = Number(today.slice(0, 4));
+  const month = Number(today.slice(5, 7)) - 1 + count;
+  const day = Number(today.slice(8, 10));
+  const target = year + Math.floor(month / 12);
+  const m = (month % 12) + 1;
+  for (let d = day; d > 27; d -= 1) {
+    const iso = isoOf(target, m, d);
+    if (iso) return iso;
+  }
+  return isoOf(target, m, day);
+}
+
+/**
+ * '11월 첫째주' → 11월 1일. 둘째주 8일, 셋째주 15일, 넷째주 22일, 마지막주는 말일-6.
+ *
+ * 주의 시작을 월요일로 잡는 것이 더 정확하지만, 그렇게 하면 "첫째주" 가 전달 말일이
+ * 되기도 한다. 어차피 폼에서 고치는 값이라 **예측 가능한 쪽**을 택했다.
+ */
+function nthWeek(month: number, word: string, today: string): string | null {
+  const index = ['첫', '둘', '셋', '넷', '다섯'].indexOf(word);
+  const first = monthDay(month, 1, today);
+  if (!first) return null;
+  if (index >= 0) return monthDay(month, 1 + index * 7, today) ?? first;
+  // 마지막주 — 그 달 말일에서 6일 앞.
+  for (let day = 31; day >= 28; day -= 1) {
+    const last = isoOf(Number(first.slice(0, 4)), month, day);
+    if (last) return addDays(last, -6);
+  }
+  return first;
 }
 
 function relativeDate(word: string, today: string): string | null {

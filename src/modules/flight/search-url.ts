@@ -97,10 +97,13 @@ export function resolveTrip(
   const depart = trip?.departDate ?? seoulDate(now, DEPART_AFTER_DAYS);
   // 귀국일은 **출발일로부터** 센다. 오늘로부터 세면 "다음 달 10일 출발" 이 이미
   // 지난 날짜로 돌아오는 일정이 된다.
-  const back =
-    tripType === 'round'
-      ? (trip?.returnDate ?? addDays(depart, trip?.nights ?? RETURN_AFTER_DAYS))
-      : null;
+  const fallbackBack = addDays(depart, trip?.nights ?? RETURN_AFTER_DAYS);
+  let back = tripType === 'round' ? (trip?.returnDate ?? fallbackBack) : null;
+  // ⚠️ **거꾸로 된 일정은 링크에 넣지 않는다.** 파서가 두 날짜를 잘못 읽으면
+  //    (실제로 "다음주 수요일~금요일" 이 그랬다) 플랫폼은 귀국일이 앞선 폼을 열고
+  //    사용자는 고치는 대신 창을 닫는다. 못 읽은 것으로 보고 기본값으로 돌린다.
+  // 같은 날은 정상이다 — 당일치기(nights=0)가 그 자리다. 앞선 날짜만 되돌린다.
+  if (back && back < depart) back = fallbackBack;
   return { depart, back, adults: trip?.adults ?? 1 };
 }
 

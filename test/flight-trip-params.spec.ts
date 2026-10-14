@@ -78,6 +78,27 @@ describe('발화에서 날짜·인원 읽기', () => {
     expect(parse('오사카 다음 주 금요일 출발')).toMatchObject({ departDate: '2026-10-23' });
   });
 
+  /**
+   * ⚠️ **끝 요일은 시작과 같은 주에서 센다.** 따로 세면 금요일이 이번 주가 되어
+   *    귀국일이 출발일보다 앞선다 — 실제로 10/21 출발 · 10/16 귀국으로 나갔다.
+   */
+  it('요일 범위는 뒤쪽이 앞쪽 주를 물려받는다', () => {
+    expect(parse('부산 오사카 4명 다음주 수요일~금요일 항공권')).toMatchObject({
+      departDate: '2026-10-21',
+      returnDate: '2026-10-23',
+      adults: 4,
+    });
+    expect(parse('오사카 다음주 수요일부터 금요일까지')).toMatchObject({
+      departDate: '2026-10-21',
+      returnDate: '2026-10-23',
+    });
+    // 뒤쪽에도 주를 말하면 그만큼 민다.
+    expect(parse('오사카 이번 주 금요일~다음 주 월요일')).toMatchObject({
+      departDate: '2026-10-16',
+      returnDate: '2026-10-26',
+    });
+  });
+
   // ⚠️ '3박 4일' 의 '4일' 을 날짜로 읽으면 11월 4일에 떠나는 항공권이 열린다.
   it('박수는 기간이지 날짜가 아니다', () => {
     expect(parse('다낭 3박 4일 3명')).toMatchObject({
@@ -88,6 +109,41 @@ describe('발화에서 날짜·인원 읽기', () => {
     expect(parse('다낭 11월 3일 3박 4일')).toMatchObject({
       departDate: '2026-11-03',
       nights: 3,
+    });
+  });
+
+  /**
+   * ⚠️ '다음 달' 과 '15일' 을 따로 읽으면 다음 달 1일(출발)과 이번 달 15일(귀국)이
+   *    되어 일정이 거꾸로 선다. 한 덩어리로 읽어야 한다.
+   */
+  it("'다음 달 15일' 은 한 덩어리다", () => {
+    expect(parse('오사카 항공권 다음달 15일')).toMatchObject({
+      departDate: '2026-11-15',
+      returnDate: null,
+    });
+    expect(parse('오사카 이번 달 20일')).toMatchObject({ departDate: '2026-10-20' });
+  });
+
+  it("'2주 뒤' 처럼 셈하는 말도 읽는다", () => {
+    expect(parse('오사카 2주 뒤')).toMatchObject({ departDate: '2026-10-28' });
+    expect(parse('오사카 10일 후')).toMatchObject({ departDate: '2026-10-24' });
+    expect(parse('오사카 3개월 뒤')).toMatchObject({ departDate: '2027-01-14' });
+  });
+
+  it('주 단위로 말해도 읽는다', () => {
+    expect(parse('후쿠오카 11월 첫째주')).toMatchObject({ departDate: '2026-11-01' });
+    expect(parse('후쿠오카 11월 셋째주')).toMatchObject({ departDate: '2026-11-15' });
+    expect(parse('후쿠오카 11월 마지막주')).toMatchObject({ departDate: '2026-11-24' });
+  });
+
+  it('당일치기는 박수 0 이다', () => {
+    const trip = parse('제주 이번주 토요일 당일치기');
+
+    expect(trip).toMatchObject({ departDate: '2026-10-17', nights: 0 });
+    // 같은 날 돌아오는 건 정상이다 — 역전 방지에 걸리면 안 된다.
+    expect(resolveTrip('round', trip, NOW)).toMatchObject({
+      depart: '2026-10-17',
+      back: '2026-10-17',
     });
   });
 
@@ -128,6 +184,16 @@ describe('기본값 채우기', () => {
   //    이미 지난 날짜로 돌아오는 일정이 된다.
   it('귀국일을 안 말했으면 출발일로부터 7일 뒤다', () => {
     expect(resolveTrip('round', parse('오사카 11월 20일'), NOW)).toMatchObject({
+      depart: '2026-11-20',
+      back: '2026-11-27',
+    });
+  });
+
+  // ⚠️ 거꾸로 된 일정은 플랫폼 폼이 거부하거나 빈 결과를 띄운다. 기본값이 낫다.
+  it('귀국일이 출발일보다 앞서면 기본값으로 되돌린다', () => {
+    const broken = { departDate: '2026-11-20', returnDate: '2026-11-02', nights: null, adults: null, used: [] };
+
+    expect(resolveTrip('round', broken, NOW)).toMatchObject({
       depart: '2026-11-20',
       back: '2026-11-27',
     });
