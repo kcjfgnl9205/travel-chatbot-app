@@ -56,6 +56,18 @@ export function mentionButton(botName: string | null): Json {
 }
 
 /**
+ * **챗봇 도움말을 여는 버튼.** 누르면 챗봇 설정에 등록해 둔 도움말이 뜬다.
+ *
+ * 서버로는 아무것도 오지 않는다 — 도움말 내용은 카카오 쪽 설정이 가진다.
+ *
+ * ⚠️ 액션 이름은 **`guide`** 다. 그룹 챗봇 beta 가이드의 "스킬 응답 예시 (도움말 버튼)"
+ *    에 있는 이름이다. 예전 `talk_mention` 처럼 문서에 없는 이름을 쓰면 응답 전체가 사라진다.
+ */
+export function guideButton(): Json {
+  return { label: '도움말', action: 'guide' };
+}
+
+/**
  * 멘션 버튼을 담은 말풍선. **퀵리플라이가 있던 자리를 대신한다.**
  *
  * ⚠️ 팀채팅 챗봇은 **QuickReplies 를 지원하지 않는다**(그룹 챗봇 beta 가이드 표 3).

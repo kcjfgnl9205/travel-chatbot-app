@@ -151,11 +151,11 @@ export class DebugController {
 
     const parsed = await this.intent.extract(utterance);
     if (parsed.intent === 'unknown' || !parsed.place) {
-      return { utterance, intent: parsed, response: cards.helpCard(BOT_NAME) };
+      return { utterance, intent: parsed, response: cards.notUnderstoodCard(BOT_NAME) };
     }
 
     const place = await this.places.resolve(parsed.place);
-    if (!place) return { utterance, intent: parsed, response: cards.helpCard(BOT_NAME) };
+    if (!place) return { utterance, intent: parsed, response: cards.notUnderstoodCard(BOT_NAME) };
 
     const kind = parsed.intent;
     const parent = await this.places.parentOf(place);

@@ -86,9 +86,9 @@ export class RouterController {
       '| 미스 + 콜백 켜짐 | `useCallback` → 잠시 뒤 callbackUrl 로 카드 POST |\n' +
       '| 미스 + 콜백 꺼짐 | "찾고 있어요". 다시 물으면 카드 |\n' +
       '| 다른 사람이 조회 중 | "먼저 찾고 있어요" |\n' +
-      '| 여행 무관 / 의도 불명 | 도움말 카드 |\n\n' +
+      '| 여행 무관 / 의도 불명 | "이해하지 못했어요" + 도움말(`guide`) 버튼 |\n\n' +
       '⚠️ **"잘못된 검색입니다" 같은 오류 문구를 쓰지 않는다.** 인사말·잡담까지 오류로 ' +
-      '취급하면 단톡방이 딱딱해진다. 할 수 있는 세 가지를 예시와 함께 보여주는 것이 안내다.\n\n' +
+      '취급하면 단톡방이 딱딱해진다. 탓하지 않고 도움말 버튼으로 다음에 뭘 물을지를 준다.\n\n' +
       '⚠️ **날짜·인원은 검색에 반영되지 않는다.** 캐시를 지역(항공권은 노선·왕복여부)으로만 ' +
       '가르기 때문이다. 대신 카드 아래 말풍선에 반영하지 않았다는 사실을 반드시 적는다.\n\n' +
       '⚠️ **스웨거에서 Execute 하면 대개 "찾고 있어요" 가 나온다.** 실패가 아니라 정상이다 — ' +
@@ -130,7 +130,7 @@ export class RouterController {
       );
       // 무엇이 터졌든 사용자에게는 "다음에 뭘 물으면 되는지" 를 준다.
       // ⚠️ 여기는 `request()` 가 터졌을 수도 있는 자리라 payload 에서 직접 읽는다.
-      return cards.helpCard(botNameOf(request));
+      return cards.notUnderstoodCard(botNameOf(request));
     }
   }
 
@@ -192,11 +192,11 @@ export class RouterController {
     }
 
     // 3. 1차 필터 — 여행과 무관하면 AI 를 아예 부르지 않는다.
-    if (!TRAVEL_HINT.test(req.utterance)) return cards.helpCard(req.botName);
+    if (!TRAVEL_HINT.test(req.utterance)) return cards.notUnderstoodCard(req.botName);
 
     // 4. 의도 + 지역.
     const parsed = await this.intent.extract(req.utterance);
-    if (parsed.intent === 'unknown') return cards.helpCard(req.botName);
+    if (parsed.intent === 'unknown') return cards.notUnderstoodCard(req.botName);
     if (!parsed.place) return cards.askPlaceCard(parsed.intent, req.botName);
 
     // 5. 지역 정규화. 모르는 지명도 등록해서 검색까지는 가본다.

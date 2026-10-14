@@ -52,20 +52,42 @@ export function exampleUtterance(place: string, kind: SearchKind): string {
 }
 
 /**
- * 도움말 카드.
+ * 발화를 못 알아들었을 때.
  *
  * ⚠️ **"잘못된 검색입니다" 같은 오류 문구를 쓰지 않는다.** 봇을 멘션한 인사말·잡담까지
- *    오류로 취급하면 단톡방이 딱딱해진다. 할 수 있는 세 가지를 예시와 함께 보여주면
- *    그 자체가 안내가 된다 — 사용자는 틀렸다는 말 대신 다음에 뭘 물을지를 얻는다.
+ *    여기로 온다. 못 알아들었다는 말은 하되 탓하지 않고, 다음에 누를 것을 준다.
+ *
+ * textCard 로 보낸다 — listCard 의 header 는 제목만 보여주고(description 은 무시된다)
+ * 안내 문구를 넣을 자리가 없다. 예시는 카드에 늘어놓지 않고, 챗봇 설정에 등록한
+ * 도움말을 여는 `guide` 버튼 뒤로 뺀다.
+ */
+export function notUnderstoodCard(botName: string | null): t.Json {
+  return t.skillResponse([
+    t.textCard({
+      title: '🤔 어떤 여행을 찾으시나요?',
+      description: '요청하신 내용을 정확히 이해하지 못했어요.\n아래 예시를 참고해 다시 말씀해 주세요!',
+      buttons: [t.guideButton()],
+    }),
+    t.mentionCard(botName),
+  ]);
+}
+
+/**
+ * 도움말 카드. 할 수 있는 세 가지를 예시와 함께 보여준다.
+ *
+ * 저장된 결과가 만료된 "더 보기" 에서 쓴다. 못 알아들었을 때는 [notUnderstoodCard] 가
+ * 나가고, 거기서는 챗봇 설정의 도움말(`guide` 버튼)을 연다.
+ *
+ * 줄을 누르면 예시 문장이 그대로 전송된다 — 보고 따라 치는 대신 눌러서 바로 써본다.
  */
 export function helpCard(botName: string | null): t.Json {
   return t.listCard(
     {
       headerTitle: '가자고가 도와드릴 수 있는 것',
       items: [
-        t.listItem({ title: '🏨 호텔 찾기', description: '오사카 호텔 추천해줘' }),
-        t.listItem({ title: '✈️ 항공권 찾기', description: '오사카 항공권 찾아줘' }),
-        t.listItem({ title: '📍 관광지·맛집', description: '오사카 관광지 추천해줘' }),
+        t.listItem({ title: '🏨 호텔 찾기', description: '오사카 호텔 추천해줘', messageText: '오사카 호텔 추천해줘' }),
+        t.listItem({ title: '✈️ 항공권 찾기', description: '오사카 항공권 찾아줘', messageText: '오사카 항공권 찾아줘' }),
+        t.listItem({ title: '📍 관광지·맛집', description: '오사카 관광지 추천해줘', messageText: '오사카 관광지 추천해줘' }),
       ],
     },
     botName,

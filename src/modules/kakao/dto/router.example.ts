@@ -45,13 +45,10 @@ export const HELP_RESPONSE_EXAMPLE = {
   template: {
     outputs: [
       {
-        listCard: {
-          header: { title: '가자고가 도와드릴 수 있는 것' },
-          items: [
-            { title: '🏨 호텔 찾기', description: '오사카 호텔 추천해줘' },
-            { title: '✈️ 항공권 찾기', description: '오사카 항공권 찾아줘' },
-            { title: '📍 관광지·맛집', description: '오사카 관광지 추천해줘' },
-          ],
+        textCard: {
+          title: '🤔 어떤 여행을 찾으시나요?',
+          description: '요청하신 내용을 정확히 이해하지 못했어요.\n아래 예시를 참고해 다시 말씀해 주세요!',
+          buttons: [{ label: '도움말', action: 'guide' }],
         },
       },
       // ⚠️ **퀵리플라이 자리를 대신하는 말풍선이다.** 팀채팅 챗봇은 QuickReplies 를
