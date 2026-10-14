@@ -1,3 +1,17 @@
+# 운영 의존성 스테이지.
+#
+# ⚠️ **`npm prune --omit=dev` 를 대신한다.** 예전에는 전부 설치해서 빌드한 뒤 dev 를
+#    지웠는데, 그 삭제가 매 배포마다 node_modules 수만 개 파일을 훑는 작업이라
+#    느린 디스크에서 특히 비쌌다. **게다가 빌드와 같은 RUN 에 묶여 있어서 소스가
+#    한 줄만 바뀌어도 캐시가 깨졌다.**
+#
+#    여기로 떼어내면 `package-lock.json` 이 그대로인 한 **영원히 캐시된다.**
+#    빌드 스테이지와 동시에 돌기도 한다.
+FROM node:24-slim AS deps
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN npm ci --omit=dev
+
 # 빌드 스테이지
 FROM node:24-slim AS build
 WORKDIR /build
@@ -39,18 +53,23 @@ RUN if [ "$SKIP_TESTS" = "1" ]; then \
         npx tsc --noEmit && npx jest --ci; \
     fi
 
-RUN npx nest build && npm prune --omit=dev
+RUN npx nest build
 
 # 실행 스테이지
 FROM node:24-slim
 ENV NODE_ENV=production
 WORKDIR /app
 
-COPY --from=build /build/node_modules ./node_modules
-COPY --from=build /build/dist ./dist
-
 # 루트로 돌리지 않는다. 컨테이너가 뚫려도 권한을 제한한다.
-RUN useradd --system --uid 10001 appuser && chown -R appuser:appuser /app
+#
+# ⚠️ **사용자를 복사보다 먼저 만든다.** 예전에는 복사한 뒤 `chown -R` 로 돌렸는데,
+#    그것도 node_modules 수만 개를 다시 훑는 작업이라 매 배포마다 값을 치렀다.
+#    `COPY --chown` 은 복사하면서 소유권을 박으므로 추가 통과가 없다.
+RUN useradd --system --uid 10001 appuser
+
+COPY --from=deps --chown=appuser:appuser /app/node_modules ./node_modules
+COPY --from=build --chown=appuser:appuser /build/dist ./dist
+
 USER appuser
 
 EXPOSE 8000
