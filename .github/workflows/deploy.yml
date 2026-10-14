@@ -52,7 +52,24 @@ jobs:
           script: |
             set -e
             cd /opt/gajago
-            git fetch --prune origin
+
+            # ⚠️ **네트워크는 가끔 흔들린다.** 실제로 한 번 `SSL connection timeout` 으로
+            #    배포가 죽었고, 20분 전 같은 명령은 멀쩡히 돌았다. 세 번까지 다시 해본다.
+            #
+            # ⚠️ **실패하면 여기서 멈춘다.** fetch 를 못 했는데 reset 으로 넘어가면
+            #    **옛 origin/main 으로 되돌려 멀쩡한 배포를 과거로 끌고 간다.**
+            #    아무것도 안 하는 편이 낫다.
+            fetched=0
+            for attempt in 1 2 3; do
+              if git fetch --prune origin; then fetched=1; break; fi
+              echo "git fetch 실패 (${attempt}/3). 5초 뒤 다시."
+              sleep 5
+            done
+            if [ "$fetched" != 1 ]; then
+              echo "GitHub 에 못 붙었다. 배포를 중단한다 — 돌고 있는 버전은 그대로 둔다."
+              exit 1
+            fi
+
             git reset --hard origin/main
             # 위 test 잡이 이미 린트·타입체크·테스트를 통과시켰다. 서버에서 또 돌리면
             # 느린 CPU 에서 수 분이 더 들고, 그게 명령 제한을 넘겨 배포를 끊었다.

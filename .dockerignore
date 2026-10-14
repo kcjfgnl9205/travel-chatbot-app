@@ -17,7 +17,12 @@ coverage
 !.env.example
 
 # 이미지에 필요 없는 것들. 빌드 컨텍스트만 커진다.
-deploy
+#
+# ⚠️ **deploy/ 는 빼지 않는다. 테스트가 읽는다** — nginx-fallback.spec.ts 가 "앱이
+#    죽었을 때 nginx 가 돌려줄 말풍선" 이 유효한 카카오 응답인지 검사한다. 평소 안
+#    타는 경로라 깨져도 장애 전까지 아무도 모르는 종류의 사고다.
+#    (`deploy` 를 빼고 `!deploy/nginx` 로 되살리는 방법도 있지만, 부정 패턴이
+#     기대대로 도는지 빌드 없이는 확인할 수 없다. 수 KB 아끼자고 걸 문제가 아니다.)
 docs
 README.md
 travelmate-spec.md

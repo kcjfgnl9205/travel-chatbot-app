@@ -268,6 +268,14 @@ cd ~/travel-chatbot-app && bash deploy/remote.sh
 > `deploy/remote.sh` 는 `git reset --hard origin/main` 을 쓴다. **서버는 읽기 전용으로 취급**하고
 > 서버에서 코드를 직접 고치지 않는다. `.env` 는 추적 대상이 아니라 그대로 남는다.
 
+> ⚠️ **nginx 설정은 배포 스크립트가 안 건드린다.** `deploy/nginx/bot-nolmoa.conf` 를
+> 고쳤으면 서버에서 직접 복사하고 리로드해야 한다:
+>
+> ```bash
+> sudo cp deploy/nginx/bot-nolmoa.conf /etc/nginx/sites-available/
+> sudo nginx -t && sudo systemctl reload nginx
+> ```
+
 **손으로 돌리면 이미지 빌드 안에서 테스트가 같이 돈다.** 깨진 커밋을 막는 그물이고,
 서버에서 직접 배포할 때는 그게 유일한 그물이라 기본값으로 둔다. 대신 느린 서버에서
 몇 분이 더 걸린다.

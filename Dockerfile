@@ -18,6 +18,10 @@ COPY .env.example ./
 #    SQL 파일과 직접 대조한다. 둘 다 타입 검사도 린트도 못 잡는 종류의 사고라
 #    테스트로 막는 것이고, 그러려면 이미지 안에 파일이 있어야 한다.
 COPY supabase/migrations ./supabase/migrations
+# ⚠️ **이 파일도 테스트가 읽는다.** nginx-fallback.spec.ts 가 "앱이 죽었을 때 nginx 가
+#    돌려줄 말풍선" 이 유효한 카카오 응답인지 검사한다. 평소 안 타는 경로라 깨져도
+#    아무도 모르는 종류의 사고라서 테스트로 묶었고, 그러려면 이미지 안에 있어야 한다.
+COPY deploy/nginx ./deploy/nginx
 
 # 테스트를 빌드 게이트로 쓴다.
 #
