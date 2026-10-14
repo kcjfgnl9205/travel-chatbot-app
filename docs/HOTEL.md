@@ -307,7 +307,7 @@ messages               발화 원문
 | `RESULT_MAX_ITEMS` | `20` | 한 번에 저장할 건수 = 4페이지 |
 | `OPENAI_CANDIDATE_COUNT` | `30` | 1차가 모아올 후보 수 |
 | `HOTEL_THUMBNAILS` | `true` | 끄면 썸네일 단계를 통째로 건너뛴다 |
-| `HOTEL_THUMBNAIL_TIMEOUT_MS` | — | 예약 페이지 읽기 제한 |
+| `HOTEL_THUMBNAIL_TIMEOUT_SECONDS` | `4` | 예약 페이지 읽기 제한 |
 | `FAILED_TTL_MINUTES` | `10` | 빈손·실패를 굳히는 시간 |
 | `PENDING_TIMEOUT_SECONDS` | `120` | 죽은 선점이 풀리는 시간 |
 | `ADPICK_LINK_TTL_DAYS` | `30` | 커미션 링크 재사용 기간 |

@@ -44,6 +44,32 @@ describe('.env.example = 코드가 읽는 환경변수', () => {
     expect([...documented].filter((k) => !declared.has(k)).sort()).toEqual([]);
   });
 
+  /**
+   * ⚠️ **문서의 설정 표도 같은 거짓말을 한다.** `.env.example` 만 지키면 되는 줄
+   *    알았는데, 실제로 둘이 샜다 — `HOTEL_THUMBNAIL_TIMEOUT_MS`(진짜 이름은
+   *    `..._SECONDS`)와 `FLIGHT_PROVIDER`(환경변수가 아니라 DI 토큰이다). 표에서
+   *    이름을 베껴 운영 `.env` 에 넣은 사람은 아무 일도 일어나지 않는 이유를 못 찾는다.
+   *
+   * 설정 표의 첫 칸(`| \`NAME\``)만 본다. 본문에서 상수 이름을 백틱으로 적는 것까지
+   * 막으면 글을 못 쓴다.
+   */
+  it('문서의 설정 표에 적힌 환경변수도 전부 코드가 읽는다', () => {
+    const docs = [
+      'README.md',
+      'docs/HOTEL.md',
+      'docs/FLIGHT.md',
+      'docs/ATTRACTION.md',
+      'docs/ROUTER.md',
+    ];
+    const lies: string[] = [];
+    for (const doc of docs) {
+      for (const [, name] of read(doc).matchAll(/^\|\s*`([A-Z][A-Z_0-9]{3,})`/gm)) {
+        if (!declared.has(name)) lies.push(`${doc}: ${name}`);
+      }
+    }
+    expect(lies.sort()).toEqual([]);
+  });
+
   it('시크릿 자리는 비어 있다 — 예시 파일이 저장소에 들어간다', () => {
     const secrets = [...read('.env.example').matchAll(/^([A-Z_0-9]*(?:KEY|TOKEN|SECRET))=(.*)$/gm)];
     expect(secrets.length).toBeGreaterThan(0);
