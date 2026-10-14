@@ -51,6 +51,17 @@ export function parseTripParams(utterance: string, now: Date): TripParams {
     return true;
   });
 
+  // '3일간' · '3일 동안' 은 **기간**이다. 날짜로 읽지 않는 건 이미 막아뒀는데
+  // (아래 '일' 패턴의 부정 전방탐색) 기간으로도 안 읽어서 그냥 버려졌다 —
+  // "다음주 수요일부터 3일간" 이 기본값 +7일로 열렸다. 3일간은 2박이다.
+  text = scan(text, /(\d{1,2})\s*일\s*(?:간|동안)/g, (m) => {
+    const n = Number(m[1]);
+    if (n < 1 || n > 30) return false;
+    nights ??= n - 1;
+    used.push(m[0].trim());
+    return true;
+  });
+
   // 당일치기는 '박수 0' 이다. 날짜를 안 말했어도 귀국일이 출발일과 같아진다.
   text = scan(text, /당일\s*(?:치기|여행)/g, (m) => {
     nights ??= 0;
