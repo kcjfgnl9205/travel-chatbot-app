@@ -46,12 +46,17 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
+          # 기본 10분으로는 모자란다. 이미지 빌드(npm ci · nest build)와 헬스체크까지
+          # 한 명령 안에서 돌기 때문이다. 넉넉히 두되 무한정은 아니다.
+          command_timeout: 20m
           script: |
             set -e
             cd /opt/gajago
             git fetch --prune origin
             git reset --hard origin/main
-            bash deploy/remote.sh
+            # 위 test 잡이 이미 린트·타입체크·테스트를 통과시켰다. 서버에서 또 돌리면
+            # 느린 CPU 에서 수 분이 더 들고, 그게 명령 제한을 넘겨 배포를 끊었다.
+            SKIP_TESTS=1 bash deploy/remote.sh
 
 # develop 브랜치로 개발 스택을 굴리려면 game-project-be 처럼 분기하면 된다.
 # 다만 서버에 별도 디렉터리·.env·포트(예: 8001)와 nginx vhost(dev-bot.nolmoa.com)가

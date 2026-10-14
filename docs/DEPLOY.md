@@ -268,6 +268,19 @@ cd ~/travel-chatbot-app && bash deploy/remote.sh
 > `deploy/remote.sh` 는 `git reset --hard origin/main` 을 쓴다. **서버는 읽기 전용으로 취급**하고
 > 서버에서 코드를 직접 고치지 않는다. `.env` 는 추적 대상이 아니라 그대로 남는다.
 
+**손으로 돌리면 이미지 빌드 안에서 테스트가 같이 돈다.** 깨진 커밋을 막는 그물이고,
+서버에서 직접 배포할 때는 그게 유일한 그물이라 기본값으로 둔다. 대신 느린 서버에서
+몇 분이 더 걸린다.
+
+CI 는 `SKIP_TESTS=1` 로 끈다 — deploy 잡이 `needs: test` 라 이미 같은 린트·타입체크·
+테스트를 통과한 커밋만 오고, 서버에서 한 번 더 돌리면 **SSH 명령이 10분 제한에 걸려
+배포가 통째로 끊긴다**(실제로 그랬다. `Run Command Timeout`).
+
+```bash
+# 이미 CI 가 검사한 커밋을 급히 올릴 때
+SKIP_TESTS=1 bash deploy/remote.sh
+```
+
 ---
 
 ## 6. 구성

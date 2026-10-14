@@ -27,7 +27,10 @@ git fetch --prune origin
 git reset --hard origin/main
 git log --oneline -1
 
-echo "▸ 빌드 & 기동"
+echo "▸ 빌드 & 기동 (테스트 ${SKIP_TESTS:+생략}${SKIP_TESTS:-포함})"
+# SKIP_TESTS 는 compose 가 build-arg 로 Dockerfile 에 넘긴다.
+# CI 는 1 로 넘긴다 — 같은 테스트를 이미 돌렸고, 여기서 또 돌리면 SSH 명령이
+# 10분 제한에 걸려 배포가 끊긴다. 손으로 돌릴 때는 비워두면 그물이 살아 있다.
 docker compose up -d --build --remove-orphans
 
 echo "▸ 헬스체크"

@@ -13,7 +13,13 @@
 
 services:
   app:
-    build: .
+    build:
+      context: .
+      args:
+        # 빌드 안에서 테스트를 돌릴지. 기본은 돈다(손으로 배포할 때의 그물).
+        # CI 는 SKIP_TESTS=1 로 넘긴다 — deploy 잡이 `needs: test` 라 이미 통과한
+        # 커밋만 오고, 느린 서버에서 또 돌리면 SSH 10분 제한에 걸린다.
+        SKIP_TESTS: ${SKIP_TESTS:-0}
     restart: unless-stopped
     env_file: .env
     environment:

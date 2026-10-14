@@ -21,10 +21,19 @@ COPY supabase/migrations ./supabase/migrations
 
 # 테스트를 빌드 게이트로 쓴다.
 #
-# GitHub Actions 를 걷어냈으므로 깨진 커밋을 막을 곳이 여기밖에 없다.
-# 실패하면 이미지가 안 만들어지고 `docker compose up` 도 실패하므로,
+# 깨진 커밋이 들어와도 이미지가 안 만들어지고 `docker compose up` 이 실패하므로,
 # **돌고 있던 컨테이너는 그대로 살아 있다.** 배포가 안 될 뿐 서비스는 안 죽는다.
-RUN npx tsc --noEmit && npx jest --ci
+# 서버에서 손으로 배포할 때 이게 유일한 그물이라 기본값은 '돈다' 이다.
+#
+# ⚠️ **CI 경로에서는 끈다 (SKIP_TESTS=1).** 워크플로의 deploy 잡은 `needs: test` 라
+#    이미 같은 린트·타입체크·테스트를 통과한 커밋만 여기 온다. 느린 서버에서 한 번
+#    더 돌리면 SSH 명령이 10분 제한에 걸려 **배포가 통째로 끊긴다** — 실제로 그랬다.
+ARG SKIP_TESTS=0
+RUN if [ "$SKIP_TESTS" = "1" ]; then \
+        echo "▸ 테스트 생략 (SKIP_TESTS=1) — CI 가 이미 돌렸다"; \
+    else \
+        npx tsc --noEmit && npx jest --ci; \
+    fi
 
 RUN npx nest build && npm prune --omit=dev
 
