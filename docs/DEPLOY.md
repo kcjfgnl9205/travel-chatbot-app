@@ -212,14 +212,36 @@ git pull && docker compose up -d --build
 ## 5. main 에 push 하면 자동 배포
 
 `.github/workflows/deploy.yml` 이 이미 들어 있다. `main` 에 push 하면
-**테스트 → SSH 접속 → `git pull` → 재빌드 → 헬스체크** 까지 자동으로 돈다.
+**테스트 ∥ 이미지 빌드(GHCR push) → SSH 접속 → 이미지 받기 → 교체 → 헬스체크** 까지 자동으로 돈다.
 테스트가 깨지면 배포하지 않는다.
 
-### 왜 이미지를 CI 에서 안 굽고 서버에서 빌드하나
+```
+GitHub Actions                          서버 (/opt/gajago)
+  test   ─┐
+  build  ─┤ ghcr.io/kcjfgnl9205/travel-chatbot-app:<커밋SHA>
+          └─ deploy ── SSH ──▶  git reset → docker login(잡 토큰) → pull → up -d --no-build
+```
 
-오라클 Always Free 는 **ARM64** 인데 GitHub Actions 기본 러너는 x86 이다.
-크로스 빌드(QEMU)는 몇 배로 느리다. 우리 이미지는 `pip install` 뿐이라
-서버에서 굽는 게 훨씬 빠르고 단순하다.
+### 왜 이미지를 CI 에서 굽나
+
+예전(Oracle Always Free, ARM64)에는 서버에서 구웠다. 러너가 x86 이라 크로스 빌드가
+몇 배 느렸기 때문이다. **10/10 에 NCP 서버로 옮긴 뒤로는 반대가 됐다** — 서버에서 2~3분이던
+빌드가 10분을 넘겨 `Run Command Timeout` 으로 끊겼다(echo 한 줄에 16초). 지금은 러너가
+굽고 서버는 받아서 갈아끼우기만 한다.
+
+- 이미지는 **커밋 SHA 태그만** 붙는다(`latest` 없음). 서버는 지금 것과 직전 것 하나를 남긴다.
+- 서버 로그인은 **그 잡의 `GITHUB_TOKEN`** 으로 하고 끝나면 로그아웃한다. 서버에 PAT 를 둘 필요가 없다.
+- ⚠️ **서버 CPU 와 이미지 플랫폼이 맞아야 한다.** 기본은 `linux/amd64`. 서버가 ARM 이면
+  저장소 Settings → Variables 에 `DEPLOY_PLATFORM=linux/arm64` 를 넣는다.
+
+되돌리기:
+
+```bash
+cd /opt/gajago
+echo <PAT(read:packages)> | docker login ghcr.io -u <github 아이디> --password-stdin
+IMAGE_TAG=<되돌릴 커밋 SHA 전체> bash deploy/remote.sh
+docker logout ghcr.io
+```
 
 ### 서버 준비
 
@@ -280,9 +302,8 @@ cd ~/travel-chatbot-app && bash deploy/remote.sh
 서버에서 직접 배포할 때는 그게 유일한 그물이라 기본값으로 둔다. 대신 느린 서버에서
 몇 분이 더 걸린다.
 
-CI 는 `SKIP_TESTS=1` 로 끈다 — deploy 잡이 `needs: test` 라 이미 같은 린트·타입체크·
-테스트를 통과한 커밋만 오고, 서버에서 한 번 더 돌리면 **SSH 명령이 10분 제한에 걸려
-배포가 통째로 끊긴다**(실제로 그랬다. `Run Command Timeout`).
+CI 는 서버에서 빌드하지 않는다(위 "왜 이미지를 CI 에서 굽나"). 손으로 돌리는 이 길은
+`IMAGE_TAG` 없이 부를 때만 탄다.
 
 ```bash
 # 이미 CI 가 검사한 커밋을 급히 올릴 때

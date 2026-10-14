@@ -1,6 +1,9 @@
 # 배포용 compose.
 #
-#   docker compose up -d --build
+#   CI    : IMAGE_TAG=<커밋SHA> docker compose pull && docker compose up -d --no-build
+#   손으로: docker compose up -d --build        (서버에서 굽는다. 느리다)
+#
+# 둘 다 deploy/remote.sh 가 IMAGE_TAG 유무로 골라 돈다.
 #
 # TLS 종료는 호스트의 nginx 가 한다 (Cloudflare Origin 인증서).
 # 이 앱은 127.0.0.1:8000 에만 붙고, nginx 가 proxy_pass 로 넘겨준다.
@@ -13,12 +16,14 @@
 
 services:
   app:
+    # CI 는 Actions 에서 구운 이미지를 커밋 SHA 태그로 받는다.
+    # 손으로 빌드하면 같은 이름에 `local` 태그가 붙는다 — 레지스트리와 섞이지 않는다.
+    image: ghcr.io/kcjfgnl9205/travel-chatbot-app:${IMAGE_TAG:-local}
     build:
       context: .
       args:
         # 빌드 안에서 테스트를 돌릴지. 기본은 돈다(손으로 배포할 때의 그물).
-        # CI 는 SKIP_TESTS=1 로 넘긴다 — deploy 잡이 `needs: test` 라 이미 통과한
-        # 커밋만 오고, 느린 서버에서 또 돌리면 SSH 10분 제한에 걸린다.
+        # CI 는 서버에서 빌드하지 않으므로 이 값을 쓰지 않는다.
         SKIP_TESTS: ${SKIP_TESTS:-0}
     restart: unless-stopped
     env_file: .env

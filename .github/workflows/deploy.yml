@@ -36,21 +36,65 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm test
 
-  deploy:
-    needs: test
+  # 이미지는 **여기서** 굽는다. 서버는 받아서 갈아끼우기만 한다.
+  #
+  # ⚠️ 10/10 에 Oracle VM 에서 NCP 서버로 옮긴 뒤, 서버에서 굽던 빌드가 2~3분에서
+  #    10분 넘게로 늘어 `Run Command Timeout` 으로 끊겼다(echo 한 줄에 16초). 서버가
+  #    느린 건 고칠 수 없지만 서버에서 빌드하지 않을 수는 있다.
+  #
+  # test 와 **동시에** 돈다. 이미지가 먼저 올라가도 deploy 가 둘 다 기다리므로
+  # 테스트가 깨진 커밋은 배포되지 않는다. 태그가 커밋 SHA 뿐이라(latest 없음)
+  # 올라간 이미지를 누가 실수로 집어 갈 일도 없다.
+  build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # ⚠️ **서버 CPU 와 맞아야 한다.** 러너는 x86 이고, 다르면 컨테이너가
+          #    `exec format error` 로 안 뜬다. NCP 서버가 ARM 이면 저장소 변수
+          #    DEPLOY_PLATFORM=linux/arm64 로 바꾼다(QEMU 라 몇 배 느려진다).
+          platforms: ${{ vars.DEPLOY_PLATFORM || 'linux/amd64' }}
+          tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
+          # test 잡이 같은 검사를 동시에 돌린다. 여기서 또 돌릴 이유가 없다.
+          build-args: SKIP_TESTS=1
+          # npm ci 레이어가 매번 다시 돌지 않게 Actions 캐시에 남긴다.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: [test, build]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: read
     steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          # ⚠️ **서버에서 이미지를 빌드한다.** 10/10 에 Oracle VM 에서 NCP 서버로 옮긴 뒤
-          #    테스트를 빼도(SKIP_TESTS=1) `nest build` 에서 10분을 넘겨 끊겼다 — Oracle 에서
-          #    2~3분이던 빌드다. 서버 사양이 그만큼 낮다. 근본 해결은 Actions 에서 빌드해
-          #    레지스트리로 넘기는 것이고, 그 전까지는 기다린다.
-          command_timeout: 20m
+          envs: IMAGE_TAG,GHCR_USER,GHCR_TOKEN
+          # 서버는 이미지를 받아 갈아끼우기만 한다. 대부분 1분 안에 끝난다.
+          command_timeout: 10m
           script: |
             set -e
             cd /opt/gajago
@@ -73,9 +117,14 @@ jobs:
             fi
 
             git reset --hard origin/main
-            # 위 test 잡이 이미 린트·타입체크·테스트를 통과시켰다. 서버에서 또 돌리면
-            # 느린 CPU 에서 수 분이 더 들고, 그게 명령 제한을 넘겨 배포를 끊었다.
-            SKIP_TESTS=1 bash deploy/remote.sh
+
+            # 이 잡의 GITHUB_TOKEN 으로 로그인한다. 서버에 따로 PAT 를 심을 필요가 없고,
+            # 토큰은 잡이 끝나면 죽는다. 그래도 서버 디스크에 남기지 않게 끝나면 지운다.
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
+
+            # IMAGE_TAG 가 있으면 remote.sh 는 빌드하지 않고 그 이미지를 받는다.
+            IMAGE_TAG="$IMAGE_TAG" bash deploy/remote.sh
 
 # develop 브랜치로 개발 스택을 굴리려면 game-project-be 처럼 분기하면 된다.
 # 다만 서버에 별도 디렉터리·.env·포트(예: 8001)와 nginx vhost(dev-bot.nolmoa.com)가

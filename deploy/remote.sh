@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # 서버에서 실행되는 배포 스크립트.
-# GitHub Actions 가 SSH 로 이 파일을 통째로 넘겨 실행한다 (.github/workflows/deploy.yml).
-# 수동 배포도 같은 스크립트를 쓴다:  bash deploy/remote.sh
+# GitHub Actions 가 SSH 로 접속해 실행한다 (.github/workflows/deploy.yml).
+#
+#   IMAGE_TAG=<커밋SHA> bash deploy/remote.sh   레지스트리 이미지를 받아 교체 (CI)
+#   bash deploy/remote.sh                       서버에서 빌드 (손으로, 느리다)
+#
+# 되돌리기도 첫 줄로 한다 — 예전 커밋 SHA 를 넣으면 그 이미지로 돌아간다.
+# 받으려면 먼저 `docker login ghcr.io` 가 되어 있어야 한다 (CI 는 알아서 한다).
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-/opt/gajago}"
@@ -27,11 +32,20 @@ git fetch --prune origin
 git reset --hard origin/main
 git log --oneline -1
 
-echo "▸ 빌드 & 기동 (테스트 ${SKIP_TESTS:+생략}${SKIP_TESTS:-포함})"
-# SKIP_TESTS 는 compose 가 build-arg 로 Dockerfile 에 넘긴다.
-# CI 는 1 로 넘긴다 — 같은 테스트를 이미 돌렸고, 여기서 또 돌리면 SSH 명령이
-# 10분 제한에 걸려 배포가 끊긴다. 손으로 돌릴 때는 비워두면 그물이 살아 있다.
-docker compose up -d --build --remove-orphans
+IMAGE="ghcr.io/kcjfgnl9205/travel-chatbot-app"
+
+if [ -n "${IMAGE_TAG:-}" ]; then
+    echo "▸ 이미지 받기 & 교체 (${IMAGE_TAG})"
+    # 서버에서는 빌드하지 않는다. NCP 로 옮긴 뒤 여기서 굽던 빌드가 10분을 넘겼다.
+    export IMAGE_TAG
+    docker compose pull app
+    docker compose up -d --no-build --remove-orphans
+else
+    echo "▸ 빌드 & 기동 (테스트 ${SKIP_TESTS:+생략}${SKIP_TESTS:-포함})"
+    # 손으로 돌릴 때의 길이다. 빌드 안에서 테스트가 같이 돌아 깨진 커밋을 막는다.
+    # 느린 서버라 수 분이 걸린다. 급하면 SKIP_TESTS=1.
+    docker compose up -d --build --remove-orphans
+fi
 
 echo "▸ 헬스체크"
 # 도메인·DNS 와 무관하게 컨테이너 안에서 직접 확인한다.
@@ -63,5 +77,13 @@ fetch('http://127.0.0.1:8000/health/db')
 
 echo "▸ 오래된 이미지 정리"
 docker image prune -f >/dev/null
+# 받은 이미지는 SHA 태그라 dangling 이 아니어서 위에서 안 지워진다. 지금 쓰는 것과
+# 직전 것 하나만 남긴다 — 직전 것은 되돌릴 때 다시 받지 않아도 되게.
+if [ -n "${IMAGE_TAG:-}" ]; then
+    docker images "$IMAGE" --format '{{.Tag}}' \
+        | grep -vx -e "$IMAGE_TAG" -e local \
+        | tail -n +2 \
+        | xargs -r -I{} docker rmi "$IMAGE:{}" >/dev/null 2>&1 || true
+fi
 
 echo "배포 완료"
