@@ -152,21 +152,39 @@ export function datedSearchUrl(
     case 'skyscanner': {
       // 날짜가 경로에 들어간다. 편도는 두 번째 날짜 칸을 아예 빼야 한다.
       const path = [from, to, compact(depart), back && compact(back)].filter(Boolean).join('/');
+      // ⚠️ **인원은 `adults` 가 아니라 `adultsv2` 다.** `adults=4` 로 보냈더니 화면은
+      //    1명으로 열렸다 — 모르는 파라미터라 조용히 무시된 것이다. 틀린 인원으로
+      //    검색된 페이지는 빈 폼보다 나쁘다. 4명이 예약하려다 가격이 달라서야 안다.
+      //    아래 형식은 실제 검색 후 주소창에서 복사한 것이다. 지어내지 않는다.
       const params = new URLSearchParams({
-        adults: String(adults),
+        adultsv2: String(adults),
         cabinclass: 'economy',
-        currency: 'KRW',
+        childrenv2: '',
+        ref: 'home',
+        // 경로의 날짜 칸으로도 왕복이 갈리지만, 사이트가 실제로 붙이는 값이라 같이 준다.
+        rtn: roundTrip ? '1' : '0',
+        preferdirects: 'false',
+        outboundaltsenabled: 'false',
+        inboundaltsenabled: 'false',
       });
+      // `currency` 는 사이트가 붙이지 않는다. .co.kr 도메인이 원화를 정한다.
       return `https://www.skyscanner.co.kr/transport/flights/${path}/?${params}`;
     }
     case 'trip': {
+      // ⚠️ **`quantity` 만으로는 인원이 안 먹었다.** 이름은 맞는데 화면이 1명으로
+      //    열렸다 — 사이트가 실제로 붙이는 `searchboxarg=t`(검색 폼에서 온 요청이다)
+      //    가 없으면 인원을 무시하는 것으로 보인다. 아래는 실제 주소창에서 복사한
+      //    형식 그대로다. 한 칸이라도 빼면 또 조용히 1명이 될 수 있다.
       const params = new URLSearchParams({
         dcity: from,
         acity: to,
         ddate: depart,
         triptype: roundTrip ? 'rt' : 'ow',
         class: 'ys',
+        lowpricesource: 'searchform',
         quantity: String(adults),
+        searchboxarg: 't',
+        nonstoponly: 'off',
         locale: 'ko-KR',
         curr: 'KRW',
       });

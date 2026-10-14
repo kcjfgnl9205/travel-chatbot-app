@@ -81,7 +81,7 @@ describe('말한 날짜·인원이 링크에 들어간다', () => {
     const url = datedSearchUrl({ ...route('skyscanner') }, NOW, trip)!;
 
     expect(url).toContain('/gmp/cju/261020/261024/');
-    expect(url).toContain('adults=4');
+    expect(url).toContain('adultsv2=4');
   });
 
   it('마이리얼트립', () => {

@@ -147,8 +147,21 @@ describe('발화에서 날짜·인원 읽기', () => {
     });
   });
 
-  it("'3일간' 은 기간이라 날짜로 읽지 않는다", () => {
-    expect(parse('오사카 3일간 여행')).toMatchObject({ departDate: null });
+  /**
+   * ⚠️ 날짜로 읽지 않는 건 막아뒀는데 **기간으로도 안 읽어서 그냥 버려졌다** —
+   *    "다음주 수요일부터 3일간" 이 기본값 +7일(10/28)로 열렸다. 3일간은 2박이다.
+   */
+  it("'3일간' 은 날짜가 아니라 기간이다", () => {
+    expect(parse('오사카 3일간 여행')).toMatchObject({ departDate: null, nights: 2 });
+    expect(parse('부산 하노이 4명 다음주 수요일부터 3일간')).toMatchObject({
+      departDate: '2026-10-21',
+      nights: 2,
+      adults: 4,
+    });
+    expect(resolveTrip('round', parse('부산 하노이 다음주 수요일부터 3일간'), NOW)).toMatchObject({
+      depart: '2026-10-21',
+      back: '2026-10-23',
+    });
   });
 
   it("'2인천' 같은 지명 조각을 인원으로 읽지 않는다", () => {

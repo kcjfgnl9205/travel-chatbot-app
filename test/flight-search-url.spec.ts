@@ -24,13 +24,84 @@ const SKY = { originCode: 'ICN', destCode: 'KIX', merchant: 'skyscanner' } as co
 const TRIP = { originCode: 'ICN', destCode: 'KIX', merchant: 'trip' } as const;
 const MRT = { originCode: 'ICN', destCode: 'KIX', merchant: 'myrealtrip' } as const;
 
+/**
+ * ⚠️ **실제 검색 후 주소창에서 복사한 형식이다. 지어내지 않는다.**
+ *
+ * 한 번 당했다 — 스카이스캐너에 `adults=4`, 트립닷컴에 `quantity=4` 만 보냈더니
+ * **둘 다 화면이 1명으로 열렸다.** 모르는 파라미터는 조용히 무시되기 때문이다.
+ * 틀린 인원으로 검색된 페이지는 빈 폼보다 나쁘다 — 4명이 예약하려다 가격이
+ * 달라서야 알아챈다. 마이리얼트립만 맞았는데, 그쪽만 주소창을 복사해 넣었었다.
+ *
+ * 그래서 **그때 복사한 주소의 파라미터를 여기 박아둔다.** 사이트 형식이 바뀌면
+ * 이 테스트가 아니라 사람이 먼저 발견하겠지만, 적어도 "우리가 무엇을 보내기로
+ * 했는지" 는 한 곳에 남는다.
+ */
+describe('실제 주소창에서 복사한 형식', () => {
+  it('트립닷컴 — searchboxarg 가 빠지면 인원이 무시된다', () => {
+    const url = new URL(datedSearchUrl({ ...TRIP, tripType: 'round' }, NOW, trip(4))!);
+
+    expect([...url.searchParams.keys()].sort()).toEqual(
+      [
+        'acity',
+        'class',
+        'curr',
+        'dcity',
+        'ddate',
+        'locale',
+        'lowpricesource',
+        'nonstoponly',
+        'quantity',
+        'rdate',
+        'searchboxarg',
+        'triptype',
+      ].sort(),
+    );
+    expect(url.searchParams.get('quantity')).toBe('4');
+    expect(url.searchParams.get('searchboxarg')).toBe('t');
+    expect(url.searchParams.get('lowpricesource')).toBe('searchform');
+  });
+
+  it('스카이스캐너 — adults 가 아니라 adultsv2 다', () => {
+    const url = new URL(datedSearchUrl({ ...SKY, tripType: 'round' }, NOW, trip(4))!);
+
+    expect([...url.searchParams.keys()].sort()).toEqual(
+      [
+        'adultsv2',
+        'cabinclass',
+        'childrenv2',
+        'inboundaltsenabled',
+        'outboundaltsenabled',
+        'preferdirects',
+        'ref',
+        'rtn',
+      ].sort(),
+    );
+    expect(url.searchParams.get('adultsv2')).toBe('4');
+    expect(url.searchParams.has('adults')).toBe(false);
+  });
+
+  it('편도는 스카이스캐너 rtn 이 0 이다', () => {
+    const url = new URL(datedSearchUrl({ ...SKY, tripType: 'oneway' }, NOW, trip(4))!);
+
+    expect(url.searchParams.get('rtn')).toBe('0');
+    expect(url.pathname).toBe('/transport/flights/icn/kix/261006/');
+  });
+});
+
+/** 인원 n 명만 말한 여행 조건. */
+function trip(adults: number) {
+  return { departDate: null, returnDate: null, nights: null, adults, used: [] };
+}
+
 describe('항공권 검색 주소', () => {
   it('스카이스캐너는 날짜를 경로에 YYMMDD 로 넣는다', () => {
     const url = datedSearchUrl({ ...SKY, tripType: 'round' }, NOW)!;
 
     expect(url).toContain('/transport/flights/icn/kix/261006/261013/');
-    expect(url).toContain('adults=1');
+    // ⚠️ `adults` 가 아니라 `adultsv2` 다. 이름이 틀리면 조용히 1명으로 열린다.
+    expect(url).toContain('adultsv2=1');
     expect(url).toContain('cabinclass=economy');
+    expect(url).toContain('rtn=1');
   });
 
   it('트립닷컴은 날짜를 쿼리로 넣는다', () => {
