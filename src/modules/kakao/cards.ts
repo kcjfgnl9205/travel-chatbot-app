@@ -255,8 +255,6 @@ export function noticeText(opts: {
   /** 발화에서 읽은 날짜·인원. 링크가 그 값으로 열리므로 **그대로 적는다.** */
   trip?: TripParams | null;
   now?: Date;
-  /** 카드에 조사한 시세가 있는가. 링크 카드에는 없다. */
-  priced?: boolean;
 }): string {
   const lines: string[] = [];
 
@@ -271,11 +269,8 @@ export function noticeText(opts: {
   //    안 적으면 "왜 내 날짜가 아니지" 로 끝난다.
   if (opts.meta?.kind === 'flight') {
     const tripType = opts.meta.tripType === 'ow' ? 'oneway' : 'round';
+    // 카드에 가격이 없으므로 "확정 운임이 아니다" 같은 고지는 할 말이 없다.
     lines.push(`링크는 ${tripText(tripType, opts.trip, opts.now)}으로 검색돼요.`);
-    // ⚠️ **가격은 확정 운임이 아니다.** 모델이 웹에서 본 값의 폭이고, 게다가 날짜
-    //    없이 조사한 값이라 링크를 열면 다를 수 있다. 숫자를 본 사람은 맞는 값이라고
-    //    읽으므로 한 줄로 분명히 밝힌다. 링크 카드에는 숫자가 아예 없어 할 말도 없다.
-    if (opts.priced) lines.push('가격은 날짜 없이 조사한 시세라 실제와 다를 수 있어요.');
   }
 
   // 출발지를 추측했으면 반드시 알려준다. 부산에서 가려던 사람이 고쳐 말할 유일한 단서다.

@@ -433,9 +433,6 @@ export class SearchService {
         meta,
         trip,
         now: new Date(req.started),
-        // 링크 카드에는 시세가 아예 없다. 가격 고지는 모델이 조사한 숫자가 있을 때만
-        // 할 말이다.
-        priced: !this.config.flightLinkOnly,
       }),
       req.botName,
     );

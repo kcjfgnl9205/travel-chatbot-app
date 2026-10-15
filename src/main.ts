@@ -74,10 +74,7 @@ function warnAboutPaging(config: AppConfig, logger: Logger): void {
     `result max=${config.resultMaxItems} page=${PAGE_SIZE} ` +
       `(candidates=${config.openaiCandidateCount}) ` +
       `ttl(min) hotel=${config.hotelCacheTtlMinutes} flight=${config.flightCacheTtlMinutes} ` +
-      `attraction=${config.attractionCacheTtlMinutes} ` +
-      // 항공권이 모델을 안 부르는 모드인지. 요금과 응답 시간이 통째로 갈리는 값이라
-      // 부팅 로그에서 바로 보여야 한다.
-      `flight=${config.flightLinkOnly ? 'link-only' : 'ai-search'}`,
+      `attraction=${config.attractionCacheTtlMinutes}`,
   );
 
   if (config.resultMaxItems <= PAGE_SIZE) {

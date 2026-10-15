@@ -7,14 +7,12 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { AttractionBackfillService } from '../src/modules/attraction/attraction-backfill';
 import { ATTRACTION_PROVIDER } from '../src/modules/attraction/attraction.types';
-import { FLIGHT_PROVIDER } from '../src/modules/flight/flight.types';
 import { HOTEL_PROVIDER } from '../src/modules/hotel/hotel.types';
 import { IntentService } from '../src/modules/intent/intent.service';
 import { OpenAiService } from '../src/modules/openai/openai.service';
 import { PlacesService } from '../src/modules/places/places.service';
 import { SearchService } from '../src/modules/search/search.service';
 import { FakeAttractionProvider } from './fake-attraction-provider';
-import { FakeFlightProvider } from './fake-flight-provider';
 import { FakeHotelProvider } from './fake-provider';
 import { FakeOpenAiService } from './fake-openai';
 
@@ -51,7 +49,6 @@ export class FakeBackfillService {
 export interface TestApp {
   app: INestApplication;
   provider: FakeHotelProvider;
-  flightProvider: FakeFlightProvider;
   attractionProvider: FakeAttractionProvider;
   backfill: FakeBackfillService;
   openai: FakeOpenAiService;
@@ -61,7 +58,6 @@ export interface TestApp {
 
 export async function createApp(): Promise<TestApp> {
   const provider = new FakeHotelProvider();
-  const flightProvider = new FakeFlightProvider();
   const attractionProvider = new FakeAttractionProvider();
   const backfill = new FakeBackfillService();
   const openai = new FakeOpenAiService();
@@ -70,8 +66,6 @@ export async function createApp(): Promise<TestApp> {
     // 실제 OpenAI 를 부르지 않는다 — 검색(provider)도, 발화 해석(OpenAiService)도.
     .overrideProvider(HOTEL_PROVIDER)
     .useValue(provider)
-    .overrideProvider(FLIGHT_PROVIDER)
-    .useValue(flightProvider)
     .overrideProvider(ATTRACTION_PROVIDER)
     .useValue(attractionProvider)
     .overrideProvider(AttractionBackfillService)
@@ -92,7 +86,6 @@ export async function createApp(): Promise<TestApp> {
   return {
     app,
     provider,
-    flightProvider,
     attractionProvider,
     backfill,
     openai,
@@ -102,7 +95,6 @@ export async function createApp(): Promise<TestApp> {
       places.clearMemory();
       intent.clearMemory();
       provider.reset();
-      flightProvider.reset();
       attractionProvider.reset();
       openai.reset();
     },

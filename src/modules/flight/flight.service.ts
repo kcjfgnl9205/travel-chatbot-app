@@ -1,6 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
-import { dedupeBy } from '../../common/dedupe';
 import { adpickCarries } from '../adpick/adpick.service';
 import { AffiliateService } from '../affiliate/affiliate.service';
 import { AppConfig, CONFIG } from '../../config/app.config';
@@ -14,51 +13,29 @@ import {
   SearchContext,
   SearchDomain,
   SearchMeta,
-  SearchTrace,
 } from '../search/search.types';
 import {
-  FLIGHT_PROVIDER,
-  Flight,
   FlightOffer,
-  FlightProvider,
   FlightQuery,
-  flightKey,
   isFlightOffer,
   offerDescription,
   offerLabel,
   offerTitle,
-  toOffers,
 } from './flight.types';
 
 /**
- * 항공권 도메인.
+ * 항공권 도메인. **호텔·관광지와 달리 검색을 하지 않는다.**
  *
- * 호텔과 모양이 같다 — 같은 제약(5초 예산 · 느린 AI 검색 · 애드픽 rate limit)을 받으므로
- * 같은 모양이 되는 게 맞다. 다른 점만 적어둔다.
+ * 줄 링크는 어차피 우리가 IATA 코드로 조립하므로, 시세 한 줄을 포기하면 모델을
+ * 부를 이유가 없다 — 그 판단과 대가는 [link-offers.ts](./link-offers.ts) 에 적혀 있다.
+ * 그래서 이 도메인에는 **느린 경로가 없다.** 항상 5초 예산 안에서 끝난다.
  *
  *   · **카드가 listCard 다.** 예전에는 itemCard 캐러셀이었는데 **그룹챗봇이 itemCard 를
  *     못 그린다** — 팀톡방에서 항공권만 말풍선이 통째로 사라졌다. 정보 밀도를 잃더라도
  *     보이는 카드가 낫다. 상세는 줄 링크로 넘긴다.
- *   · **같은 sourceUrl 이 여러 편에 걸린다** (노선 검색 결과 페이지). 그래서 중복 제거는
- *     주소가 아니라 편명+시각으로 한다.
- *   · **날짜를 검색에 넘기지 않는다.** 캐시를 노선·왕복여부로만 가르기 때문이다.
- *     대신 카드 아래 안내에 반영하지 않은 조건을 적는다.
+ *   · **줄 하나가 플랫폼 하나다.** 보내는 곳이 곧 줄의 신원이라 중복이 생길 자리가 없다.
+ *   · **날짜·인원은 링크에만 들어간다.** 카드에 적는 시세가 없으므로 어긋날 것도 없다.
  */
-
-/**
- * 같은 항공편이 리스트에 두 번 나가지 않게 한다.
- *
- * 호텔처럼 sourceUrl 로 판정하면 안 된다 — 항공권은 여러 편이 같은 노선 검색
- * 페이지를 가리키므로 줄이 한 줄만 남는다. 편명+출발시각이 항공편의 신원이다.
- */
-export function dedupe(flights: Flight[], logger?: Logger): Flight[] {
-  return dedupeBy(flights, {
-    label: 'flight',
-    keyOf: flightKey,
-    nameOf: (flight) => flight.airline,
-    logger,
-  });
-}
 
 @Injectable()
 export class FlightService implements SearchDomain<FlightOffer> {
@@ -67,75 +44,43 @@ export class FlightService implements SearchDomain<FlightOffer> {
 
   constructor(
     @Inject(CONFIG) private readonly config: AppConfig,
-    @Inject(FLIGHT_PROVIDER) private readonly provider: FlightProvider,
     private readonly affiliate: AffiliateService,
     private readonly renderer: RecommendationRowsService,
   ) {}
 
-  /** 실제로 붙어 있는 데이터 소스. 설정값이 아니라 주입된 구현이 답이다 (/health). */
+  /**
+   * /health 에 찍는 데이터 소스 이름.
+   *
+   * ⚠️ 설정값이 아니라 **실제 동작**을 적는다. 예전에 HOTEL_PROVIDER 를 그대로
+   *    보여주다가, 아무도 안 읽는 값이 'static' 이라 AI 를 껐다고 믿게 만든 적이 있다.
+   */
   get providerName(): string {
-    return this.provider.name;
+    return 'link';
   }
 
-  /**
-   * 지금 검색할 수 있는가. 키가 없으면 false — 라우터가 헛된 대기를 안 만든다.
-   *
-   * 링크 카드만 내는 모드에서는 **항상 true 다.** 모델을 안 부르므로 키와 무관하다.
-   */
+  /** 모델을 안 부르므로 **키와 무관하게 항상 검색할 수 있다.** */
   get ready(): boolean {
-    return this.config.flightLinkOnly || this.provider.enabled !== false;
+    return true;
   }
 
   /**
    * 즉답. **AI 를 부르지 않고 카드를 만든다.**
    *
-   * 줄 링크는 어차피 우리가 조립하므로, 시세 한 줄을 포기하면 항공권은 검색이
-   * 필요 없다 ([link-offers.ts](./link-offers.ts)에 그 판단이 적혀 있다).
-   *
-   * ⚠️ null 을 주면 라우터가 느린 경로(모델)로 보낸다. 그래서 끄면 예전 동작이다.
+   * 라우터는 `peek` 이 값을 주면 캐시도 선점도 건너뛴다. 항공권은 늘 여기서 끝난다.
    */
-  async peek(ctx: SearchContext): Promise<FlightOffer[] | null> {
-    if (!this.config.flightLinkOnly) return null;
+  async peek(ctx: SearchContext): Promise<FlightOffer[]> {
     return linkOffers(this.queryOf(ctx));
   }
 
   /**
-   * ⚠️ 느리다(7~30초). 백그라운드에서만 부른다.
+   * 느린 경로. **실제로는 안 탄다** — `peek` 이 항상 값을 주기 때문이다.
    *
-   * **저장되는 건 편이 아니라 플랫폼 줄이다.** 모델이 준 편들에서 시세·소요시간·
-   * 항공사를 뽑아 플랫폼별 한 줄로 접는다 — 편별로 한 줄씩 내면 줄마다 다른
-   * 편명·가격을 찍으면서 **링크는 전부 같은 검색 페이지로 갔다.**
+   * 그래도 비워두지 않는 이유는, 라우터가 어떤 사정으로 여기까지 내려와도
+   * **같은 카드가 나와야** 하기 때문이다. 둘이 갈리면 "미리 본 것과 나중에 온 것이
+   * 다른" 버그가 된다.
    */
   async search(ctx: SearchContext): Promise<FlightOffer[]> {
-    const flights = await this.provider.search(this.queryOf(ctx));
-    // 편 단위 중복은 여기서 접는다 — 같은 편이 두 번 들어오면 시세 폭이 왜곡된다.
-    const unique = dedupe(flights, this.logger);
-    const offers = toOffers(unique, this.queryOf(ctx).tripType);
-
-    this.logger.log(
-      `flight result ${ctx.place.canonicalName} flights=${flights.length} ` +
-        `unique=${unique.length} offers=${offers.length}`,
-    );
-    return offers.slice(0, ctx.limit);
-  }
-
-  /**
-   * 진단용. `search` 와 **같은 길**을 타되 계측을 같이 돌려준다.
-   *
-   * ⚠️ 비슷한 코드를 하나 더 만들지 않는다 — 그러면 검증하는 게 실제 응답이 아니라
-   *    "비슷한 것" 이 된다.
-   */
-  async searchTraced(ctx: SearchContext): Promise<{ items: FlightOffer[]; trace: SearchTrace }> {
-    // 단계가 없는 provider(테스트)는 계측도 없다. 빈 숫자를 지어내지 않는다.
-    if (!this.provider.searchTraced) {
-      const items = await this.search(ctx);
-      return { items, trace: { provider: null, candidates: null, kept: items.length } };
-    }
-
-    const { flights, trace, candidates } = await this.provider.searchTraced(this.queryOf(ctx));
-    const unique = dedupe(flights, this.logger);
-    const offers = toOffers(unique, this.queryOf(ctx).tripType).slice(0, ctx.limit);
-    return { items: offers, trace: { provider: trace, candidates, kept: offers.length } };
+    return linkOffers(this.queryOf(ctx));
   }
 
   isItem(item: unknown): item is FlightOffer {
@@ -198,16 +143,15 @@ export class FlightService implements SearchDomain<FlightOffer> {
         sourceUrl,
         title: offerTitle(offer),
         description: offerDescription(offer),
-        // ⚠️ **1인 총액의 하한**이다. 범위의 아래쪽을 남긴다 — 확정 운임이 아니라
-        //    모델이 웹에서 본 값이므로 집계할 때 그 사실을 잊으면 안 된다.
-        price: offer.priceLow,
+        // ⚠️ **가격을 안 남긴다.** 조사하지 않으므로 넣을 값이 없다. 집계에서
+        //    항공권 행의 price 는 null 이고, 그게 사실이다.
         merchant: offer.merchant,
         // 애드픽에 없는 플랫폼은 "변환 실패" 가 아니라 "처음부터 안 타는 줄" 이다.
         monetizable: adpickCarries(offer.merchant),
         // 항공권 카드에는 이미지가 없다 — imageUrl 을 안 넘기면 image_url 은 null 이다.
       })),
       ctx,
-      { provider: this.provider.name, links },
+      { provider: this.providerName, links },
     );
   }
 
@@ -238,11 +182,4 @@ export class FlightService implements SearchDomain<FlightOffer> {
       originAssumed: !from,
     };
   }
-}
-
-/** DB·로그에 남기는 항목 이름. '대한항공 KE723 ICN→KIX' */
-export function itemLabel(flight: Flight): string {
-  return [flight.airline, flight.flightNo, `${flight.originCode}→${flight.destCode}`]
-    .filter(Boolean)
-    .join(' ');
 }

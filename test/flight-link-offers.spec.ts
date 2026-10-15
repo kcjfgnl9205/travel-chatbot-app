@@ -38,11 +38,11 @@ describe('링크 카드', () => {
   });
 
   // ⚠️ 조사해야 아는 값이다. 지어내면 그게 곧 거짓말이고, 느린 것보다 나쁘다.
-  it('가격·소요시간·항공사를 지어내지 않는다', () => {
+  it('노선과 보내는 곳 말고는 아무것도 담지 않는다', () => {
     for (const offer of linkOffers(query(), NOW)) {
-      expect(offer.priceLow ?? null).toBeNull();
-      expect(offer.durationMinutes ?? null).toBeNull();
-      expect(offer.airlines ?? []).toEqual([]);
+      expect(Object.keys(offer).sort()).toEqual(
+        ['destCode', 'destName', 'merchant', 'originCode', 'originName', 'sourceUrl', 'tripType'].sort(),
+      );
     }
   });
 

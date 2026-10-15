@@ -258,7 +258,8 @@ describe('POST /api/v1/kakao/router', () => {
 
     // 한 번의 요청으로 카드가 나왔다 — "찾고 있어요" 도 콜백도 없다.
     expect(listCardOf(res.body)).toBeDefined();
-    expect(ctx.flightProvider.calls).toHaveLength(0);
+    // 모델을 부르는 길 자체가 없다. OpenAI 는 의도 파싱에만 쓰인다.
+    expect(ctx.openai.calls).toHaveLength(0);
   });
 
   it('출발지를 말하지 않으면 서울 출발로 보고 그 사실을 적는다', async () => {
@@ -299,29 +300,6 @@ describe('POST /api/v1/kakao/router', () => {
     expect(noticeOf(body)).toContain('편도');
     expect(noticeOf(body)).not.toContain('귀국');
   });
-
-  it('편도는 왕복과 다른 캐시를 쓴다', async () => {
-    await withAiFlights(async () => {
-      await askUntilCard(ctx.app, '오사카 편도 항공권 찾아줘');
-      expect(ctx.flightProvider.calls[0].tripType).toBe('oneway');
-
-      await askUntilCard(ctx.app, '오사카 항공권 찾아줘');
-      expect(ctx.flightProvider.calls).toHaveLength(2);
-      expect(ctx.flightProvider.calls[1].tripType).toBe('round');
-    });
-  });
-
-  /** 시세를 조사하는 예전 동작. 설정 하나로 되돌아온다. */
-  async function withAiFlights(run: () => Promise<void>): Promise<void> {
-    const config = ctx.app.get<AppConfig>(CONFIG);
-    config.flightLinkOnly = false;
-    try {
-      await run();
-    } finally {
-      config.flightLinkOnly = true;
-      ctx.reset();
-    }
-  }
 
   // ---------------------------------------------------------- 관광지
   it('관광지는 지도 링크로 간다', async () => {
