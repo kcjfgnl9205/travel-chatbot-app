@@ -112,6 +112,56 @@ function addDays(iso: string, days: number): string {
   return new Date(Date.parse(`${iso}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 }
 
+/**
+ * 공항 코드 → **트립닷컴이 받는 도시 코드**.
+ *
+ * ⚠️ **트립닷컴의 `dcity`/`acity` 는 공항이 아니라 도시다.** 공항 코드를 넣으면
+ *    못 알아듣고 **엉뚱한 노선을 연다** — "도쿄 항공권" 을 눌렀는데 부산행이 떴다.
+ *    조용히 틀리기 때문에 사람이 눌러보기 전엔 아무도 모른다.
+ *
+ *    부산(PUS)·하노이(HAN)·제주(CJU) 처럼 **공항 코드와 도시 코드가 같은 곳은
+ *    우연히 맞았고**, 그래서 한동안 멀쩡해 보였다. 서울(SEL)·도쿄(TYO)·오사카(OSA)
+ *    처럼 다른 곳만 깨졌는데 하필 그게 제일 많이 묻는 노선이다.
+ *
+ * 그래서 **다른 것만** 적는다. 표에 없으면 공항 코드를 그대로 쓴다 — 대부분의
+ * 도시가 그 경우이고, 모르는 코드를 지어내는 것보다 낫다.
+ *
+ * ⚠️ **사전에 없어 모델 경로로 등록된 다중공항 도시는 여전히 깨진다.** 표에 없으니
+ *    공항 코드가 그대로 나가기 때문이다. 그런 신고가 들어오면 여기 한 줄 추가한다.
+ *
+ * ⚠️ 트립닷컴은 `dairport`/`aairport` 로 공항까지 좁힐 수 있는데, 그때 같이 붙는
+ *    `dcityid`(내부 번호)를 우리가 만들 수 없어서 쓰지 않는다. 도시 단위로 열면
+ *    그 도시의 공항이 전부 보이므로 손해도 아니다 — 김포/인천이 같이 나온다.
+ */
+const TRIP_CITY_CODES: Record<string, string> = {
+  icn: 'sel', // 서울·인천
+  gmp: 'sel',
+  nrt: 'tyo', // 도쿄
+  hnd: 'tyo', // 요코하마도 도쿄권이다
+  kix: 'osa', // 오사카·교토
+  ukb: 'osa', // 고베
+  cts: 'spk', // 삿포로·치토세
+  pvg: 'sha', // 상하이
+  pek: 'bjs', // 베이징
+  cdg: 'par', // 파리
+  lhr: 'lon', // 런던
+  fco: 'rom', // 로마
+  mxp: 'mil', // 밀라노
+  arn: 'sto', // 스톡홀름
+  svo: 'mow', // 모스크바
+  cgk: 'jkt', // 자카르타
+  jfk: 'nyc', // 뉴욕
+  ord: 'chi', // 시카고
+  iad: 'was', // 워싱턴
+  yyz: 'yto', // 토론토
+  eze: 'bue', // 부에노스아이레스
+};
+
+/** 트립닷컴에 넘길 코드. 표에 없으면 공항 코드가 곧 도시 코드다. */
+export function tripCityCode(airport: string): string {
+  return TRIP_CITY_CODES[airport] ?? airport;
+}
+
 export interface FlightRoute {
   /** 출발 공항 IATA (ICN). */
   originCode: string;
@@ -176,8 +226,9 @@ export function datedSearchUrl(
       //    가 없으면 인원을 무시하는 것으로 보인다. 아래는 실제 주소창에서 복사한
       //    형식 그대로다. 한 칸이라도 빼면 또 조용히 1명이 될 수 있다.
       const params = new URLSearchParams({
-        dcity: from,
-        acity: to,
+        // ⚠️ **공항이 아니라 도시 코드다.** 공항 코드를 넣으면 엉뚱한 노선이 열린다.
+        dcity: tripCityCode(from),
+        acity: tripCityCode(to),
         ddate: depart,
         triptype: roundTrip ? 'rt' : 'ow',
         class: 'ys',

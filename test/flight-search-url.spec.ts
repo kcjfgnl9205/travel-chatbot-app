@@ -3,6 +3,7 @@ import {
   RETURN_AFTER_DAYS,
   datedSearchUrl,
   seoulDate,
+  tripCityCode,
 } from '../src/modules/flight/search-url';
 
 /**
@@ -61,6 +62,26 @@ describe('실제 주소창에서 복사한 형식', () => {
     expect(url.searchParams.get('lowpricesource')).toBe('searchform');
   });
 
+  it('트립닷컴 — 공항이 아니라 도시 코드를 받는다', () => {
+    const url = new URL(datedSearchUrl({ ...TRIP, tripType: 'round' }, NOW, trip(4))!);
+
+    expect(url.searchParams.get('dcity')).toBe('sel');
+    expect(url.searchParams.get('acity')).toBe('osa');
+  });
+
+  /**
+   * 부산(PUS)·하노이(HAN)는 공항 코드와 도시 코드가 같다. **그래서 우연히 맞았고**,
+   * 한동안 멀쩡해 보였다. 표에 없는 코드는 그대로 나가야 한다.
+   */
+  it('공항 코드가 곧 도시 코드인 곳은 그대로 둔다', () => {
+    expect(tripCityCode('pus')).toBe('pus');
+    expect(tripCityCode('han')).toBe('han');
+    expect(tripCityCode('cju')).toBe('cju');
+    expect(tripCityCode('icn')).toBe('sel');
+    expect(tripCityCode('gmp')).toBe('sel');
+    expect(tripCityCode('nrt')).toBe('tyo');
+  });
+
   it('스카이스캐너 — adults 가 아니라 adultsv2 다', () => {
     const url = new URL(datedSearchUrl({ ...SKY, tripType: 'round' }, NOW, trip(4))!);
 
@@ -108,8 +129,10 @@ describe('항공권 검색 주소', () => {
     const url = new URL(datedSearchUrl({ ...TRIP, tripType: 'round' }, NOW)!);
 
     expect(url.pathname).toBe('/flights/showfarefirst');
-    expect(url.searchParams.get('dcity')).toBe('icn');
-    expect(url.searchParams.get('acity')).toBe('kix');
+    // ⚠️ 공항(icn·kix)이 아니라 도시 코드(sel·osa)다. 공항 코드를 넣으면
+    //    트립닷컴이 못 알아듣고 엉뚱한 노선을 연다 — 도쿄를 눌렀는데 부산이 떴다.
+    expect(url.searchParams.get('dcity')).toBe('sel');
+    expect(url.searchParams.get('acity')).toBe('osa');
     expect(url.searchParams.get('ddate')).toBe('2026-10-06');
     expect(url.searchParams.get('rdate')).toBe('2026-10-13');
     expect(url.searchParams.get('quantity')).toBe('1');

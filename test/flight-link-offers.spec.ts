@@ -57,7 +57,8 @@ describe('링크 카드', () => {
   it('노선이 그대로 주소에 들어간다', () => {
     const [trip] = linkOffers(query(), NOW);
 
-    expect(trip.sourceUrl).toContain('dcity=gmp');
+    // 김포는 서울(sel)로, 제주는 공항 코드가 곧 도시 코드라 그대로.
+    expect(trip.sourceUrl).toContain('dcity=sel');
     expect(trip.sourceUrl).toContain('acity=cju');
   });
 });
