@@ -20,9 +20,9 @@ Oracle Cloud 는 Railway 같은 PaaS 가 아니라 **그냥 리눅스 서버**�
 ### 서버에서
 
 ```bash
-# 경로는 ~/travel-chatbot-app 로 맞춘다 (deploy/remote.sh 의 APP_DIR 기본값)
-git clone https://github.com/kcjfgnl9205/travel-chatbot-app.git ~/travel-chatbot-app
-cd ~/travel-chatbot-app
+# 경로는 /opt/gajago 로 맞춘다 (deploy/remote.sh 의 APP_DIR 기본값)
+sudo git clone https://github.com/kcjfgnl9205/travel-chatbot-app.git /opt/gajago
+cd /opt/gajago
 
 cp .env.example .env
 nano .env            # 실제 키 입력
@@ -179,7 +179,7 @@ Security → WAF → Custom rules 에 예외를 둔다.
 ## 4. 실행
 
 ```bash
-cd ~/travel-chatbot-app
+cd /opt/gajago
 docker compose up -d --build
 docker compose logs -f
 ```
@@ -243,6 +243,46 @@ IMAGE_TAG=<되돌릴 커밋 SHA 전체> bash deploy/remote.sh
 docker logout ghcr.io
 ```
 
+> `IMAGE_TAG` 가 origin/main 과 다른 커밋이면 **저장소도 그 커밋으로 맞춘다**(detached).
+> 이미지만 과거로 돌리고 compose·nginx·마이그레이션은 현재로 두면 무엇이 서빙 중인지
+> 알 수 없게 되기 때문이다. 다음 정상 배포에서 자동으로 `main` 으로 돌아온다.
+
+### 배포가 실패하면 자동으로 되돌린다
+
+이미지를 받아 **컨테이너를 교체한 뒤** 앱이 부팅에 실패하면 서비스가 내려간다 —
+예전처럼 "빌드가 깨져서 옛 컨테이너가 살아 있는" 상황이 아니다. 그래서 헬스체크가
+30회(약 60초) 실패하면 **갈아끼우기 직전에 돌던 이미지로 되돌린다.**
+
+```
+▸ 헬스체크
+  헬스체크 실패. 로그:
+  ...
+  직전 이미지로 되돌린다: ghcr.io/kcjfgnl9205/travel-chatbot-app:<이전SHA>
+  앱 정상 (3회차)
+  되돌렸다 — 서비스는 직전 버전으로 돌아갔다.
+```
+
+되돌린 뒤에도 배포는 **실패로 끝난다**(exit 1). Actions 는 빨갛게 뜨고, 서비스는 살아 있다.
+
+⚠️ 직전 이미지가 없거나(첫 배포) 방금 올린 것과 같으면 되돌릴 곳이 없다. 그때는
+로그만 남기고 끝나므로 서버를 직접 봐야 한다.
+
+### ⚠️ nginx 설정은 배포가 건드리지 않는다
+
+`deploy/nginx/*.conf` 를 고쳐 배포해도 **서버에 복사하지 않으면 아무 일도 일어나지 않는다.**
+실제로 "점검 중" 폴백을 넣고도 한동안 적용이 안 됐다. 그래서 배포 끝에 저장소 파일과
+설치된 파일을 비교해 **다르면 경고만** 찍는다:
+
+```
+▸ nginx 설정 확인
+  ⚠️ /etc/nginx/sites-available/bot-nolmoa.conf 가 저장소와 다르다. 반영하려면:
+     sudo cp /opt/gajago/deploy/nginx/bot-nolmoa.conf /etc/nginx/sites-available/ \
+       && sudo nginx -t && sudo systemctl reload nginx
+```
+
+`nginx -t` 가 실패하면 `&&` 때문에 reload 가 안 돌아 **지금 설정이 그대로 유지된다.**
+`reload` 는 `restart` 가 아니라서 연결도 안 끊긴다.
+
 ### 서버 준비
 
 배포 전용 SSH 키를 만든다 (개인 키를 재사용하지 말 것).
@@ -255,7 +295,7 @@ ssh-keygen -t ed25519 -f ~/.ssh/travel_deploy -N "" -C "github-actions-deploy"
 ssh-copy-id -i ~/.ssh/travel_deploy.pub ubuntu@<서버IP>
 ```
 
-서버에 저장소가 `~/travel-chatbot-app` 에 있어야 한다(다른 경로면 `APP_DIR` 환경변수).
+서버에 저장소가 `/opt/gajago` 에 있어야 한다(다른 경로면 `APP_DIR` 환경변수).
 
 ### GitHub Secrets 등록
 
@@ -284,7 +324,7 @@ git commit --allow-empty -m "test: 배포 확인" && git push
 
 ```bash
 ssh ubuntu@<서버IP>
-cd ~/travel-chatbot-app && bash deploy/remote.sh
+cd /opt/gajago && bash deploy/remote.sh
 ```
 
 > `deploy/remote.sh` 는 `git reset --hard origin/main` 을 쓴다. **서버는 읽기 전용으로 취급**하고
@@ -344,7 +384,7 @@ SKIP_TESTS=1 bash deploy/remote.sh
 | 인증서 발급 실패 | 80/443 이 **두 군데**(콘솔 + iptables) 다 열렸는지. DNS 전파 대기 |
 | 무한 리다이렉트 | Cloudflare SSL/TLS 모드가 `Flexible`. **Full (strict)** 로 바꾼다 |
 | 프록시 켠 뒤 카카오가 응답 없음 | Bot Fight Mode 가 카카오 요청을 막는 중. `/api/v1/kakao/*` WAF 예외 |
-| Actions 는 성공인데 서버가 그대로 | `SSH_HOST` 가 다른 서버이거나 저장소 경로가 `~/travel-chatbot-app` 이 아님 |
+| Actions 는 성공인데 서버가 그대로 | `SSH_HOST` 가 다른 서버이거나 저장소 경로가 `/opt/gajago` 가 아님 |
 | Actions 에서 Permission denied (publickey) | `SSH_KEY` 에 개인 키 **전문**(BEGIN/END 줄 포함)을 넣었는지. 공개 키를 넣으면 안 된다 |
 | 카카오에서 타임아웃 | 응답 5초 제한. `recommendations.latency_ms` 확인 |
 | 카드는 뜨는데 링크가 안 열림 | `PUBLIC_BASE_URL` 이 localhost 로 남아 있음 |
