@@ -348,9 +348,27 @@ export function searchStartedText(meta: SearchMeta, botName: string | null): t.J
  */
 export function emptyText(meta: SearchMeta, botName: string | null): t.Json {
   return t.simpleTextWithMention(
-    `${subject(meta)} 정보를 지금은 정리하지 못했어요 🙏\n잠시 뒤 다시 물어봐 주세요.`,
+    `${subject(meta)} 정보를 지금은 정리하지 못했어요 🙏\n` +
+      `잠시 뒤 다시 물어봐 주세요. ${narrowerHint(meta)}`,
     botName,
   );
+}
+
+/**
+ * 빈손일 때 **지금 해볼 수 있는 것**.
+ *
+ * ⚠️ "잠시 뒤 다시" 만 주면 막다른 길이다. 빈손은 `FAILED_TTL_MINUTES` 동안
+ *    굳으므로 같은 말을 반복하면 같은 문구만 돌아오고, 사용자는 봇이 고장 난 줄 안다.
+ *
+ * **지역을 좁히면 실제로 다른 길이 열린다** — 캐시 키가 달라져 굳은 행을 비켜 가고,
+ * 세부 지역은 검색 질의도 좁아진다 ("도쿄" → "신주쿠 도쿄").
+ */
+function narrowerHint(meta: SearchMeta): string {
+  // 항공권은 노선이 이미 확정이라 좁힐 자리가 없다 — 괜히 권하면 딴소리다.
+  if (meta.kind === 'flight') return '';
+  // ⚠️ 예시에 **그 사람이 말한 도시를 끼워 넣지 않는다.** 동네 이름을 모르므로
+  //    "오사카 신주쿠" 같은 없는 조합이 나간다. 고정 예시가 덜 똑똑해도 안 틀린다.
+  return '동네 이름을 붙여 말해도 좋아요 (예: 도쿄 신주쿠).';
 }
 
 /**

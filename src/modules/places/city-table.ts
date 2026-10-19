@@ -475,6 +475,37 @@ export function findCityInText(utterance: string): CityEntry | null {
 }
 
 /**
+ * **아는 도시 바로 뒤에 붙은 말.** "도쿄 신주쿠 호텔" 의 `신주쿠` 다. 없으면 null.
+ *
+ * 사전은 도시까지만 안다. 세부 지역("신주쿠"·"도톤보리"·"해운대")은 모델이
+ * 등록하는데, 도시를 같이 말하면 사전이 도시를 먼저 찾아버려 **모델에 갈 기회가
+ * 없었다** — 신주쿠를 물은 사람이 도쿄 호텔을 받았고, 본인은 그 사실을 모른다.
+ *
+ * 그래서 도시 **바로 다음 토큰**만 본다. 세부 지역을 말하는 자리가 거기이고
+ * ("도쿄 신주쿠"), 그 한 칸만 보면 "도쿄 호텔 싼 곳" 같은 평범한 문장이 모델로
+ * 새지 않는다. 그 토큰이 지명인지 아닌지는 부르는 쪽이 가린다
+ * ([intent.service.ts](../intent/intent.service.ts) `looksLikeSubArea`).
+ *
+ * ⚠️ **도시가 제 토큰이어야 한다.** "도쿄신주쿠호텔" 처럼 붙여 쓰면 null 이고,
+ *    그때는 예전처럼 도시로 검색한다 — 덜 찾아주는 쪽이 틀리게 찾는 것보다 낫다.
+ */
+export function tokenAfterCity(utterance: string, city: CityEntry): string | null {
+  const cleaned = AMBIGUOUS.reduce((text, trap) => text.replace(trap, ' '), utterance);
+  const tokens = cleaned.split(/[\s,./]+/).filter(Boolean);
+  const aliases = new Set(
+    [city.slug, city.slug.replace(/-/g, ''), city.nameKo, ...city.aliases].map(normalizeAlias),
+  );
+
+  for (let i = 0; i < tokens.length; i += 1) {
+    const here = normalizeAlias(tokens[i]).replace(PARTICLES, '');
+    if (!aliases.has(here)) continue;
+    const next = tokens[i + 1];
+    return next ? normalizeAlias(next).replace(PARTICLES, '') || null : null;
+  }
+  return null;
+}
+
+/**
  * **출발지로 말해진 도시.** "인천에서 오사카" 의 인천이다. 없으면 null.
  *
  * `findCitiesInText` 와 가리는 방식이 다르다. 거기서는 **순서**가 단서지만

@@ -140,6 +140,56 @@ describe('키워드 해석', () => {
     expect(fromKeywords('에어부산 다낭 항공권')).toMatchObject({ place: '다낭', from: null });
   });
 
+  /**
+   * ⚠️ **"도쿄 신주쿠 호텔" 이 도쿄 호텔로 검색되고 있었다.**
+   *
+   * 사전은 도시까지만 안다. 아는 도시 하나를 찾으면 거기서 확정하고 나머지를
+   * 버렸으므로, 신주쿠는 **모델에 갈 기회조차 없었다** — 그리고 사용자는 자기가
+   * 물은 것과 다른 결과를 받은 줄 모른다. 조용히 틀리는 게 가장 나쁜 실패다.
+   *
+   * 도시 없이 세부 지역만 말하면("신주쿠 호텔") 원래 멀쩡했다. 도시를 같이 붙여
+   * 말한 사람만 손해를 봤다.
+   */
+  describe('도시 뒤에 붙은 세부 지역', () => {
+    it('모델에 넘긴다 — 사전이 도시로 확정해버리면 안 된다', () => {
+      expect(fromKeywords('도쿄 신주쿠 호텔 찾아줘')).toBeNull();
+      expect(fromKeywords('오사카 도톤보리 호텔')).toBeNull();
+      expect(fromKeywords('부산 해운대 호텔')).toBeNull();
+    });
+
+    it('도메인 말·서술어는 지명이 아니다 — 평범한 문장은 그대로 0원이다', () => {
+      for (const plain of [
+        '오사카 호텔 추천해줘',
+        '오사카 가는 항공권',
+        '도쿄 맛집 알려줘',
+        '오사카 근처 호텔',
+        '도쿄 시내 호텔',
+        '오사카 조용한 호텔',
+        '오사카 호텔 싼 곳 추천',
+      ]) {
+        expect(fromKeywords(plain)?.place).toBeTruthy();
+      }
+    });
+
+    it('날짜·인원은 지명이 아니다', () => {
+      expect(fromKeywords('오사카 4명 9월 22일 호텔')).toMatchObject({ place: '오사카' });
+      expect(fromKeywords('오사카 2박3일 호텔')).toMatchObject({ place: '오사카' });
+    });
+
+    it('나라 + 도시는 그대로 도시다 — "일본 오사카 호텔"', () => {
+      // 뒤에 오는 말이 도메인 말이면 세부 지역이 아니다. 0원 경로가 살아 있어야 한다.
+      expect(fromKeywords('일본 오사카 호텔')).toMatchObject({ place: '오사카' });
+    });
+
+    it('아는 도시가 뒤에 와도 세부 지역으로 치지 않는다', () => {
+      // "부산 하노이 항공권" 은 노선이다 — 하노이는 사전에 있으므로 여기 안 걸린다.
+      expect(fromKeywords('부산 하노이 항공권')).toMatchObject({
+        from: '부산',
+        place: '하노이',
+      });
+    });
+  });
+
   it('사전에 없는 지명도 모델에 넘긴다', () => {
     expect(fromKeywords('도톤보리 호텔')).toBeNull();
   });
@@ -290,6 +340,13 @@ describe('IntentService', () => {
     const parsed = await service.extract('도톤보리에서 가까운 호텔');
 
     expect(parsed).toMatchObject({ intent: 'hotel', place: '도톤보리' });
+    expect(openai.calls).toHaveLength(1);
+  });
+
+  it('"도쿄 신주쿠" 는 모델이 신주쿠로 뽑는다 — 도쿄로 검색되면 안 된다', async () => {
+    const parsed = await service.extract('도쿄 신주쿠 호텔 찾아줘');
+
+    expect(parsed).toMatchObject({ intent: 'hotel', place: '신주쿠' });
     expect(openai.calls).toHaveLength(1);
   });
 

@@ -5,8 +5,8 @@ import { clip, text } from '../../common/parse';
 import { AppConfig, CONFIG } from '../../config/app.config';
 import { IntentCacheRepository } from '../database/repositories/intent-cache.repository';
 import { OpenAiService, parseJsonLoose } from '../openai/openai.service';
-import { findCitiesInText, findOriginInText } from '../places/city-table';
-import { findCountryInText, stripDomainWord } from '../places/country-table';
+import { findCitiesInText, findOriginInText, lookupCity, tokenAfterCity } from '../places/city-table';
+import { findCountryInText, lookupCountry, stripDomainWord } from '../places/country-table';
 import { SearchKind } from '../search/search.types';
 import {
   ParsedIntent,
@@ -272,6 +272,10 @@ const ORIGIN_HINT = /에서|출발/;
  *
  * 호텔·관광지에 "에서" 가 붙으면 여전히 모델이 가른다. "제주에서 묵을" 의 제주는
  * 출발지가 아니라 목적지이고, 그 구분에는 순서도 조사도 소용이 없다.
+ *
+ * ⚠️ **도시 뒤에 모르는 말이 붙으면 그것도 모델이 가른다** ("도쿄 신주쿠"). 사전은
+ *    도시까지만 알아서, 아는 도시 하나를 찾으면 거기서 확정하고 나머지를 버렸다 —
+ *    신주쿠를 물은 사람이 **도쿄 호텔을 받았고 본인은 그 사실을 몰랐다.**
  */
 export function fromKeywords(utterance: string): ParsedIntent | null {
   const intent = intentFromKeywords(utterance);
@@ -304,11 +308,45 @@ export function fromKeywords(utterance: string): ParsedIntent | null {
   // 도시가 먼저다. "일본 오사카 호텔" 은 오사카를 찾아야지 일본을 되물으면 안 된다.
   // 나라는 그다음 — 그러면 "일본 호텔 추천해줘" 도 모델 없이 되묻기까지 간다.
   // 도시가 둘 이상이면(위 항공권 경우가 아니면) 사전으로는 못 가린다 — 모델에 넘긴다.
-  const city = cities.length === 1 ? cities[0].nameKo : null;
-  const place = city ?? (cities.length ? null : (findCountryInText(utterance)?.nameKo ?? null));
+  const only = cities.length === 1 ? cities[0] : null;
+
+  // ⚠️ **도시 뒤에 모르는 말이 붙어 있으면 그게 세부 지역이다** ("도쿄 신주쿠").
+  //    사전은 도시까지만 알아서, 여기서 안 넘기면 도시로 확정돼 **모델에 갈 기회가
+  //    사라진다** — 신주쿠를 물은 사람이 도쿄 호텔을 받고 본인은 모른다.
+  if (only && looksLikeSubArea(tokenAfterCity(utterance, only))) return null;
+
+  const place = only?.nameKo ?? (cities.length ? null : (findCountryInText(utterance)?.nameKo ?? null));
   if (!place) return null;
 
   return { ...base, place, from: null };
+}
+
+/**
+ * 도메인 말·서술어·조건. **지명 자리에 올 수 없는 말들**이다.
+ *
+ * 접두 일치로 본다 — 한국어는 뒤에 어미가 붙는다("추천해줘"·"가는"·"좋은").
+ */
+const NOT_A_SUB_AREA =
+  /^(호텔|숙소|숙박|리조트|호스텔|료칸|모텔|게하|게스트|민박|펜션|항공|비행|티켓|왕복|편도|관광|명소|볼거리|놀거리|맛집|구경|여행|가볼|가성비|추천|찾아|알려|검색|보여|예약|주세요|해줘|어디|어느|근처|주변|시내|중심|가는|가고|가려|갈|오는|있는|있나|좋은|괜찮|싼|저렴|비싼|제일|가장|진짜|완전|다른|같은|이번|담번|정도|말고|또는|그리고|뭐|좀)/;
+
+/**
+ * 이 토큰이 **세부 지역일 수 있는가.** 아니라고 확신할 때만 false 다.
+ *
+ * 틀리는 방향이 둘인데 값이 다르다 —
+ *   · 지명인데 아니라고 하면 **엉뚱한 지역으로 검색**하고 사용자는 모른다
+ *   · 지명이 아닌데 맞다고 하면 모델을 한 번 더 부른다. 결과는 어차피 같다
+ * 그래서 애매하면 모델에 넘긴다. 비싼 쪽이 조용히 틀리는 쪽이다.
+ */
+function looksLikeSubArea(token: string | null): boolean {
+  if (!token || token.length < 2) return false;
+  // 한글만 본다. 영문·숫자 토큰(`best`·`2박`)은 지명으로 치지 않는다.
+  if (!/^[가-힣]+$/.test(token)) return false;
+  if (NOT_A_SUB_AREA.test(token)) return false;
+  // 날짜·인원·테마는 이미 ignored 로 잡힌다 ("4명"·"가족이랑").
+  if (ignoredConditions(token).length) return false;
+  // 아는 지명이면 cities/countries 가 이미 들고 있다 — 여기서 또 셀 일이 아니다.
+  if (lookupCity(token) || lookupCountry(token)) return false;
+  return true;
 }
 
 /** 모델(또는 캐시)이 준 값을 ParsedIntent 로 다듬는다. */

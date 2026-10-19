@@ -123,7 +123,12 @@ export function parseIntent(utterance: string): Record<string, unknown> {
     (h, i) => hits.findIndex((x) => x.entry[2] === h.entry[2]) === i,
   );
   const origin = unique.length > 1 && /에서|출발/.test(utterance) ? unique[0] : null;
-  const destination = origin ? unique[1] : unique[0];
+  // ⚠️ **세부 지역이 도시를 이긴다** ("도쿄 신주쿠" → 신주쿠). 진짜 모델도 그렇게
+  //    답한다 — 지시문이 "도시가 아니어도 된다, 세부 지역도 그대로" 라고 시킨다.
+  //    위치순으로 고르면 앞에 적힌 도시가 이겨서, 사전이 세부 지역을 버리는 버그를
+  //    모델 경로에서도 그대로 재현하게 된다.
+  const area = unique.find((h) => h.entry.length === 4);
+  const destination = origin ? unique[1] : (area ?? unique[0]);
 
   const ignored: string[] = [];
   for (const pattern of [/\d+\s*명/g, /\d+\s*월\s*\d+\s*일?/g, /\d+\s*박/g]) {
@@ -217,6 +222,8 @@ const COUNTRIES: [string, string, string][] = [
 const AREAS: [string, string, string, string][] = [
   ['도톤보리', '도톤보리', 'dotonbori', '오사카'],
   ['시부야', '시부야', 'shibuya', '도쿄'],
+  ['신주쿠', '신주쿠', 'shinjuku', '도쿄'],
+  ['해운대', '해운대', 'haeundae', '부산'],
 ];
 
 /** 모델이 아는 척하는 공항 코드. 표에 없으면 null 이 온다 (실제 모델도 그렇다). */

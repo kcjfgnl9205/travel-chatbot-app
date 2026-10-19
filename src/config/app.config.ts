@@ -167,7 +167,7 @@ export function loadConfig(): AppConfig {
     // ⚠️ 올릴수록 AI 가 뒤쪽 항목을 지어낼 여지가 커진다. 품질이 떨어지면 내려라.
     resultMaxItems: num('RESULT_MAX_ITEMS', 20),
     // 실패를 오래 기억하면 일시적 장애가 그 시간만큼 굳는다.
-    failedTtlMinutes: num('FAILED_TTL_MINUTES', 10),
+    failedTtlMinutes: num('FAILED_TTL_MINUTES', 3),
     // 검색은 보통 7~30초다. 그보다 넉넉히 잡되, 프로세스가 죽어 pending 이 남았을 때
     // 다음 사람이 영영 못 물어보는 일은 없어야 한다.
     pendingTimeoutSeconds: num('PENDING_TIMEOUT_SECONDS', 120),

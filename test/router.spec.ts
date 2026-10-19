@@ -319,6 +319,23 @@ describe('POST /api/v1/kakao/router', () => {
     });
   });
 
+  /**
+   * ⚠️ **"도쿄 신주쿠 호텔" 이 도쿄 호텔로 검색되고 있었다.**
+   *
+   * 사전이 도시를 찾으면 거기서 확정하고 나머지를 버렸다. 사용자는 신주쿠를
+   * 물었는데 도쿄 결과를 받았고, 카드에도 "도쿄 호텔" 이라고만 적혀 있어서
+   * 자기가 물은 것과 다른 답이라는 걸 알아챌 단서가 없었다.
+   */
+  it('도시를 같이 말한 세부 지역도 세부 지역으로 찾는다 — "도쿄 신주쿠"', async () => {
+    await askUntilCard(ctx.app, '도쿄 신주쿠 호텔 찾아줘');
+
+    expect(ctx.provider.calls[0]).toMatchObject({
+      citySlug: 'shinjuku',
+      // 세부 지역만 주면 모델이 어디인지 모른다. 부모 도시를 붙여야 검색이 된다.
+      cityName: '신주쿠 도쿄',
+    });
+  });
+
   // ---------------------------------------------------------- 나라
   it('나라를 말하면 그 나라의 도시로 되묻는다', async () => {
     const res = await post(ctx.app, kakaoPayload('베트남 여행지 추천해줘'));
@@ -541,6 +558,55 @@ describe('POST /api/v1/kakao/router', () => {
    *    수명(5분)을 넘길 수 있고, 그러면 URL 이 만료돼 사용자는 "찾고 있어요" 만
    *    보고 끝난다. **침묵보다 실패 카드가 낫다.**
    */
+  /**
+   * **빈손일 때 막다른 길을 주지 않는다.**
+   *
+   * 빈 결과는 `FAILED_TTL_MINUTES` 동안 굳는다(연속 2회부터). 그동안 같은 말을
+   * 반복하면 검색조차 안 하고 같은 문구만 돌아오므로, "잠시 뒤 다시" 만 주면
+   * 사용자는 봇이 고장 난 줄 안다. **지역을 좁히면 캐시 키가 달라져 실제로
+   * 다른 길이 열린다** — 그걸 알려준다.
+   */
+  describe('검색이 빈손일 때', () => {
+    async function withEmptySearch(run: () => Promise<any>) {
+      ctx.provider.reply = () => [];
+      try {
+        return await run();
+      } finally {
+        ctx.provider.reset();
+      }
+    }
+
+    it('지역을 좁혀 보라는 출구를 준다', async () => {
+      await withEmptySearch(async () => {
+        // 첫 요청이 검색을 띄우고, 빈손이 저장된 뒤 두 번째 요청이 그 문구를 받는다.
+        await post(ctx.app, kakaoPayload('오사카 호텔 추천해줘'));
+        await new Promise((r) => setTimeout(r, 120));
+        const res = await post(ctx.app, kakaoPayload('오사카 호텔 추천해줘'));
+
+        const text = textOf(res.body);
+        expect(text).toContain('정리하지 못했어요');
+        expect(text).toContain('동네 이름을 붙여');
+      });
+    });
+
+    /**
+     * ⚠️ 항공권은 노선이 이미 확정이라 좁힐 자리가 없다. 권하면 딴소리가 된다 —
+     *    "서울→오사카 항공권" 에 동네 이름을 붙일 방법이 없다.
+     */
+    it('항공권에는 그 출구를 권하지 않는다', async () => {
+      const { emptyText } = await import('../src/modules/kakao/cards');
+      const text = JSON.stringify(
+        emptyText(
+          { kind: 'flight', placeName: '오사카', placeSlug: 'osaka', fromName: '서울' } as any,
+          null,
+        ),
+      );
+
+      expect(text).toContain('정리하지 못했어요');
+      expect(text).not.toContain('동네 이름');
+    });
+  });
+
   /**
    * **"가끔 대답을 안 한다" 의 정체.**
    *
