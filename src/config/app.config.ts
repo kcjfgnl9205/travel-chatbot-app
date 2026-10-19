@@ -23,6 +23,7 @@ export interface AppConfig {
   adpickApiBase: string;
   adpickApiKey: string;
   adpickTimeoutMs: number;
+  adpickClickTimeoutMs: number;
   adpickLinkonly: boolean;
   adpickMaxConcurrency: number;
   adpickLinkTemplate: string;
@@ -105,6 +106,9 @@ export function loadConfig(): AppConfig {
     adpickApiKey: str('ADPICK_API_KEY'),
     // 파이썬은 초 단위(ADPICK_TIMEOUT_SECONDS). 같은 값을 ms 로 환산해서 쓴다.
     adpickTimeoutMs: Math.round(num('ADPICK_TIMEOUT_SECONDS', 2) * 1000),
+    // 클릭 경로는 사용자가 302 를 기다린다. 변환이 늦으면 원본으로 보내고,
+    // 변환은 뒤에서 계속 돌아 캐시에 남는다 — 다음 클릭은 커미션 링크로 간다.
+    adpickClickTimeoutMs: Math.round(num('ADPICK_CLICK_TIMEOUT_SECONDS', 1.5) * 1000),
     adpickLinkonly: bool('ADPICK_LINKONLY', true),
     adpickMaxConcurrency: num('ADPICK_MAX_CONCURRENCY', 5),
     adpickLinkTemplate: str('ADPICK_LINK_TEMPLATE'),

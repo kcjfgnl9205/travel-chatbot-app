@@ -1,4 +1,3 @@
-import { ResolvedLink } from '../affiliate/affiliate.service';
 import * as t from '../kakao/templates';
 import { Place } from '../places/places.types';
 import { TripParams } from '../flight/search-url';
@@ -82,14 +81,6 @@ export interface RenderContext {
   cacheHit: boolean;
   /** 통계를 남길지. 진단 경로만 false 다 — 섞이면 전환율 집계가 틀어진다. */
   persist?: boolean;
-  /**
-   * 미리 해석해둔 제휴 링크. 주면 애드픽을 다시 부르지 않는다.
-   *
-   * 빈 Map 은 "변환하지 않는다" 는 뜻이고, 그때 목적지는 원본 주소가 된다.
-   * 어느 쪽이든 **카드 JSON 은 같다** — 줄 링크는 `/r/{clickId}` 이고 애드픽 주소는
-   * 그 302 목적지로만 쓰인다. (진단 엔드포인트가 쓴다)
-   */
-  links?: Map<string, ResolvedLink>;
   /**
    * 발화에서 읽은 날짜·인원 (항공권만).
    *

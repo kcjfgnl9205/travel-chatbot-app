@@ -1,5 +1,7 @@
 import { RedirectController } from '../src/modules/redirect/redirect.controller';
 import { MemoryStoreService } from '../src/modules/database/memory-store.service';
+import { ResolvedLink } from '../src/modules/affiliate/affiliate.service';
+import { AppConfig, loadConfig } from '../src/config/app.config';
 
 /**
  * 클릭 리다이렉트. **사용자가 302 를 기다리는 유일한 경로다.**
@@ -27,17 +29,39 @@ function fakeRes() {
   return { res, sent };
 }
 
+/** 애드픽 대역. 기본값은 "변환할 줄이 없다" — 대부분의 테스트가 변환과 무관하다. */
+function fakeAffiliate(
+  over: { link?: ResolvedLink | null; delayMs?: number; throws?: boolean } = {},
+) {
+  const seen: { sourceUrl: string; merchant: string | null }[] = [];
+  const service = {
+    resolveForClick: async (sourceUrl: string, merchant: string | null) => {
+      seen.push({ sourceUrl, merchant });
+      if (over.delayMs) await new Promise((r) => setTimeout(r, over.delayMs));
+      if (over.throws) throw new Error('애드픽 폭발');
+      return over.link ?? null;
+    },
+  };
+  return { seen, service };
+}
+
 function build(
   dbRow: Record<string, unknown> | null,
   dbDelayMs = 0,
   attractionRow: Record<string, unknown> | null = null,
+  affiliate = fakeAffiliate(),
+  config: AppConfig = loadConfig(),
 ) {
   const calls: string[] = [];
+  const attached: { clickId: string; linkId: string }[] = [];
   const items = {
     registerClick: async (clickId: string) => {
       calls.push(clickId);
       if (dbDelayMs) await new Promise((r) => setTimeout(r, dbDelayMs));
       return dbRow;
+    },
+    attachAffiliateLink: async (clickId: string, linkId: string) => {
+      attached.push({ clickId, linkId });
     },
   } as never;
   const attractions = {
@@ -47,7 +71,19 @@ function build(
     },
   } as never;
   const memory = new MemoryStoreService();
-  return { calls, memory, controller: new RedirectController(items, memory, attractions) };
+  return {
+    calls,
+    attached,
+    memory,
+    seen: affiliate.seen,
+    controller: new RedirectController(
+      config,
+      items,
+      memory,
+      attractions,
+      affiliate.service as never,
+    ),
+  };
 }
 
 const ENTRY = {
@@ -55,6 +91,9 @@ const ENTRY = {
   itemName: '오사카성',
   sourceUrl: 'https://maps/1',
   targetUrl: 'https://www.google.com/maps/search/?api=1&query=x&query_place_id=ChIJ_1',
+  // 애드픽이 취급하지 않는 판매처 → 변환을 시도하지 않는다. 변환과 무관한
+  // 테스트들이 302 만 보게 하려는 기본값이다.
+  merchant: 'skyscanner',
   userId: null,
 };
 
@@ -105,10 +144,149 @@ describe('클릭 리다이렉트', () => {
     memory.put('c3', ENTRY);
     const { res, sent } = fakeRes();
 
-    await new RedirectController(items, memory, {} as never).redirect('c3', res as never);
+    await new RedirectController(
+      loadConfig(),
+      items,
+      memory,
+      {} as never,
+      fakeAffiliate().service as never,
+    ).redirect('c3', res as never);
     await new Promise((r) => setTimeout(r, 10));
 
     expect(sent.redirect).toBe(ENTRY.targetUrl);
+  });
+});
+
+/**
+ * **커미션 링크를 여기서 만든다** (0015).
+ *
+ * 카드를 만들 때 줄마다 미리 변환하던 것을 옮겼다 — 눌리는 줄은 많아야 하나인데
+ * 전부 변환했고, 캐시가 빗나가면 카카오 5초 예산에서 2초를 먹어 **말풍선이 통째로
+ * 안 나갔다.** 그 2초가 여기로 왔으므로, 여기서 지킬 것은 하나다:
+ * **무슨 일이 있어도 사용자는 항목에 도착한다.**
+ */
+describe('클릭 시점 제휴 변환', () => {
+  const BOOKING = 'https://kr.trip.com/hotels/osaka-detail-1/';
+  const LINK: ResolvedLink = {
+    sourceUrl: BOOKING,
+    affiliateUrl: 'https://link.adpick.co.kr/abcd',
+    affiliateLinkId: 'link-1',
+    status: 'ok',
+    fromCache: false,
+  };
+  const entry = (over = {}) => ({
+    recommendationId: 'rec-1',
+    itemName: '호텔 A',
+    sourceUrl: BOOKING,
+    targetUrl: BOOKING,
+    merchant: 'trip',
+    userId: null,
+    ...over,
+  });
+
+  it('원본 주소를 커미션 링크로 바꿔서 보낸다', async () => {
+    const { controller, memory, seen } = build(null, 0, null, fakeAffiliate({ link: LINK }));
+    memory.put('c1', entry());
+    const { res, sent } = fakeRes();
+
+    await controller.redirect('c1', res as never);
+
+    expect(seen).toEqual([{ sourceUrl: BOOKING, merchant: 'trip' }]);
+    expect(sent.redirect).toBe(LINK.affiliateUrl);
+  });
+
+  it('DB 에서 온 줄도 같다 — 재료는 register_click 이 같이 준다', async () => {
+    const { controller, seen } = build(
+      { target_url: BOOKING, source_url: BOOKING, merchant: 'trip', item_name: '호텔 A' },
+      0,
+      null,
+      fakeAffiliate({ link: LINK }),
+    );
+    const { res, sent } = fakeRes();
+
+    await controller.redirect('c2', res as never);
+
+    expect(seen).toHaveLength(1);
+    expect(sent.redirect).toBe(LINK.affiliateUrl);
+  });
+
+  it('subid 를 설정했으면 커미션 링크에 붙는다 — clickId 가 그 값이다', async () => {
+    const { controller, memory } = build(null, 0, null, fakeAffiliate({ link: LINK }), {
+      ...loadConfig(),
+      adpickSubidParam: 'subid',
+    });
+    memory.put('c3', entry());
+    const { res, sent } = fakeRes();
+
+    await controller.redirect('c3', res as never);
+
+    expect(sent.redirect).toContain('subid=c3');
+  });
+
+  it('성공하면 그 줄에 affiliate_link_id 를 달아둔다', async () => {
+    const { controller, memory, attached } = build(null, 0, null, fakeAffiliate({ link: LINK }));
+    memory.put('c4', entry());
+    const { res } = fakeRes();
+
+    await controller.redirect('c4', res as never);
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(attached).toEqual([{ clickId: 'c4', linkId: 'link-1' }]);
+  });
+
+  // ------------------------------------------------- 무슨 일이 있어도 도착한다
+  it('변환이 비면 원본 주소로 보낸다 — 수수료는 잃어도 사용자는 호텔을 본다', async () => {
+    const { controller, memory } = build(null, 0, null, fakeAffiliate({ link: null }));
+    memory.put('c5', entry());
+    const { res, sent } = fakeRes();
+
+    await controller.redirect('c5', res as never);
+
+    expect(sent.redirect).toBe(BOOKING);
+  });
+
+  it('변환이 터져도 원본 주소로 보낸다', async () => {
+    const { controller, memory } = build(null, 0, null, fakeAffiliate({ throws: true }));
+    memory.put('c6', entry());
+    const { res, sent } = fakeRes();
+
+    await controller.redirect('c6', res as never);
+
+    expect(sent.redirect).toBe(BOOKING);
+  });
+
+  /**
+   * ⚠️ 애드픽에 광고주가 없는 플랫폼(스카이스캐너)은 **부르지도 않는다.** 부르면
+   *    클릭마다 실패 한 건이 쌓이고, 그 경고가 상시로 떠서 진짜 누수를 가린다.
+   */
+  it('애드픽을 안 타는 판매처는 변환을 시도조차 하지 않는다', async () => {
+    const { controller, memory, seen } = build(null, 0, null, fakeAffiliate({ link: LINK }));
+    memory.put('c7', entry({ merchant: 'skyscanner' }));
+    const { res, sent } = fakeRes();
+
+    await controller.redirect('c7', res as never);
+
+    expect(seen).toEqual([]);
+    expect(sent.redirect).toBe(BOOKING);
+  });
+
+  /**
+   * ⚠️ **마이그레이션 0015 전이면 source_url 이 안 온다.** 그때는 저장된 목적지로
+   *    그냥 보낸다 — 코드를 먼저 올리든 SQL 을 먼저 돌리든 링크가 죽으면 안 된다.
+   */
+  it('옛 register_click() 이면 변환을 건너뛰고 저장된 목적지로 보낸다', async () => {
+    const { controller, seen } = build(
+      { target_url: 'https://link.adpick.co.kr/old', item_name: '호텔 A' },
+      0,
+      null,
+      fakeAffiliate({ link: LINK }),
+    );
+    const { res, sent } = fakeRes();
+
+    await controller.redirect('c8', res as never);
+
+    expect(seen).toEqual([]);
+    expect(sent.redirect).toBe('https://link.adpick.co.kr/old');
   });
 });
 

@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 
-import { AffiliateModule } from '../affiliate/affiliate.module';
 import { OpenAiModule } from '../openai/openai.module';
 import { RecommendationModule } from '../recommendation/recommendation.module';
 import { HotelService } from './hotel.service';
@@ -14,7 +13,7 @@ import { OpenAiHotelProvider } from './providers/openai.provider';
  * **검색 + 카드 한 줄 그리기**만 책임진다.
  */
 @Module({
-  imports: [AffiliateModule, OpenAiModule, RecommendationModule],
+  imports: [OpenAiModule, RecommendationModule],
   providers: [
     OpenAiHotelProvider,
     { provide: HOTEL_PROVIDER, useExisting: OpenAiHotelProvider },

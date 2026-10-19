@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 
-import { AffiliateModule } from '../affiliate/affiliate.module';
 import { RecommendationModule } from '../recommendation/recommendation.module';
 import { FlightService } from './flight.service';
 
@@ -16,7 +15,7 @@ import { FlightService } from './flight.service';
  *    요청 경로를 느리게 하지 않는다.
  */
 @Module({
-  imports: [AffiliateModule, RecommendationModule],
+  imports: [RecommendationModule],
   providers: [FlightService],
   exports: [FlightService],
 })

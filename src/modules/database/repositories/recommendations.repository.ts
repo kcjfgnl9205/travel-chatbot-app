@@ -63,4 +63,17 @@ export class RecommendationItemsRepository extends BaseRepository {
     const rows = await this.rpc('register_click', { p_click_id: clickId }, 'register_click');
     return rows && rows.length ? rows[0] : null;
   }
+
+  /**
+   * 클릭 시점에 만든 커미션 링크를 그 줄에 달아둔다 (0015).
+   *
+   * **사용자를 보낸 뒤에 부른다.** 여기서 실패해도 사용자는 이미 목적지에 있고,
+   * 잃는 것은 집계 한 칸이다. 그것 때문에 302 를 붙잡을 이유가 없다.
+   */
+  async attachAffiliateLink(clickId: string, affiliateLinkId: string): Promise<void> {
+    await this.run(
+      (t) => t.update({ affiliate_link_id: affiliateLinkId }).eq('click_id', clickId),
+      'attach affiliate link',
+    );
+  }
 }

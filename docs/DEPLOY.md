@@ -50,7 +50,8 @@ KAKAO_SKILL_TOKEN=아무거나_긴_랜덤값
 ## 2. Supabase 연결
 
 1. [supabase.com](https://supabase.com) 프로젝트 생성 — **리전은 Seoul(ap-northeast-2)** 로. 오라클 서버와 가까울수록 요청당 왕복 7회가 싸진다.
-2. SQL Editor 에 [`supabase/migrations/0001_init.sql`](../supabase/migrations/0001_init.sql) 붙여넣고 실행
+2. SQL Editor 에 [`supabase/migrations/`](../supabase/migrations/) 의 파일을 **번호순으로** 붙여넣고 실행 (`0001_init.sql` 부터). 전부 재실행해도 안전하다
+   > ⚠️ **운영 중인 DB 에도 새 번호는 올려야 한다.** 안 올리면 그 기능만 조용히 예전 동작으로 돈다 — 예를 들어 [`0015`](../supabase/migrations/0015_click_time_affiliate.sql) 가 빠지면 클릭 시점 제휴 변환이 통째로 건너뛰어지고 수수료가 안 붙는다 (링크는 멀쩡히 열린다).
 3. 대시보드에서 두 값 복사
 
 ### `SUPABASE_URL`

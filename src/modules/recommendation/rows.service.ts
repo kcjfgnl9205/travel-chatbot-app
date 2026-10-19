@@ -2,8 +2,6 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 
 import { AppConfig, CONFIG, redirectUrl } from '../../config/app.config';
-import { applySubid } from '../adpick/adpick.service';
-import { ResolvedLink } from '../affiliate/affiliate.service';
 import { MemoryStoreService } from '../database/memory-store.service';
 import {
   RecommendationItemsRepository,
@@ -28,9 +26,14 @@ import { RenderContext } from '../search/search.types';
  *    그만두고 `attractions` 의 카운터로 옮겼다 — 그 목록은 우리 테이블에 있어서
  *    복원할 것이 없고, 링크에 노출별 값이 박히지도 않는다.
  *
- * ⚠️ **제휴 변환은 여기서 하지 않는다.** 호출부가 이미 해석해서 `links` 로 넘긴다.
- *    그래야 관광지 모듈이 AffiliateModule 을 끌어오지 않는다 — 관광지는 예약할 게
- *    없어서 변환할 주소 자체가 없고, 그 사실이 모듈 그래프에 그대로 보이는 게 맞다.
+ * ⚠️ **제휴 변환은 여기서 하지 않는다. 클릭 시점에 한다** (0015).
+ *    `target_url` 에 원본 주소를 적어두면 `/r/{clickId}` 가 눌린 그 한 줄만 변환해
+ *    302 한다. 예전에는 호출부가 줄마다 미리 변환해서 `links` 로 넘겼는데, 눌리는
+ *    줄은 많아야 하나인데 셋을 전부 변환했고 캐시가 빗나가면 카카오 5초 예산에서
+ *    2초를 먹었다 — 넘기면 말풍선이 통째로 안 나간다.
+ *
+ * ⚠️ **그래서 subid 도 여기서 안 붙인다.** 붙일 대상인 커미션 링크가 아직 없다.
+ *    clickId 는 리다이렉트가 들고 있으므로 거기서 붙는다.
  */
 
 /** 항목 하나를 "노출 기록 한 행 + 카드 한 줄" 로 만드는 데 필요한 것 전부. */
@@ -56,30 +59,20 @@ export interface ItemRow {
    *    집계할 때 domain 을 거는 건 읽는 쪽 책임이다.
    */
   price?: number | null;
-  /** 판매처 (agoda | booking | trip …). */
-  merchant?: string | null;
   /**
-   * 이 줄이 제휴를 **탈 수 있는가.** 안 주면 탈 수 있는 것으로 본다.
+   * 판매처 (agoda | booking | trip …).
    *
-   * ⚠️ 도메인 단위(`links` 유무)로는 못 가르는 자리다. 항공권은 제휴를 타는
-   *    도메인인데 **스카이스캐너 줄만 못 탄다** (애드픽에 광고주가 없다). 이 칸이
-   *    없으면 그 줄이 매번 `애드픽 변환 실패` 로 세어져, 진짜 누수를 알리는 경고가
-   *    상시 경고가 되고 아무도 안 읽게 된다.
+   * ⚠️ **이 값이 "제휴를 타는 줄인가" 도 정한다.** 항공권은 제휴를 타는 도메인인데
+   *    스카이스캐너 줄만 못 탄다(애드픽에 광고주가 없다). 리다이렉트가 같은
+   *    `adpickCarries` 로 다시 판정하므로, 예전의 `monetizable` 칸은 사라졌다 —
+   *    두 곳이 각자 기억하면 언젠가 갈린다.
    */
-  monetizable?: boolean;
+  merchant?: string | null;
 }
 
 export interface RenderOptions {
   /** 실제로 검색을 돌린 provider. 통계에 남는다. */
   provider: string;
-  /**
-   * 미리 해석해둔 제휴 링크. **빠지면 "변환을 다루지 않는 도메인" 이라는 뜻이다**(관광지).
-   *
-   * 빈 Map 은 의미가 다르다 — "변환을 시도했는데 하나도 못 건졌다" 이고, 그건 수익이
-   * 새는 상황이라 경고를 남겨야 한다. undefined 와 빈 Map 을 같이 취급하면 그 경고가
-   * 관광지에서도 뜨고, 그러면 아무도 경고를 안 읽게 된다.
-   */
-  links?: Map<string, ResolvedLink>;
 }
 
 /** 노출마다 행을 쌓지 않는 도메인이 쓰는 한 줄. 링크가 이미 정해져 있다. */
@@ -103,37 +96,21 @@ export class RecommendationRowsService {
   ) {}
 
   async render(items: ItemRow[], ctx: RenderContext, opts: RenderOptions): Promise<t.Json[]> {
-    // 제휴 링크를 아예 안 다루는 도메인인가. 빈 Map 과 구별해야 한다 (RenderOptions 참고).
-    const monetized = opts.links !== undefined;
-
     const recommendationId = await this.logRecommendation(ctx, opts.provider, items.length);
 
     const dbRows: Record<string, unknown>[] = [];
     const listItems: t.Json[] = [];
-    /** 제휴 변환이 안 돼 원본 주소로 나가는 줄. 수익화가 안 되는 노출이다. */
-    const unconverted: string[] = [];
-    /** 변환을 **탈 수 있었던** 줄의 수. 실패 경고의 분모다. */
-    let payableCount = 0;
 
     items.forEach((item, position) => {
       const clickId = newClickId();
-      const link = opts.links?.get(item.sourceUrl);
-      // 변환이 실패해도 원본 주소로 보낸다. 수익화는 못 해도 사용자는 항목을 본다.
-      const destination = link?.affiliateUrl ?? item.sourceUrl;
-      if (!destination) {
+      // ⚠️ **원본 주소를 그대로 적는다** (0015). 커미션 링크는 클릭 시점에 만들고,
+      //    못 만들면 이 주소가 그대로 목적지가 된다 — 수익화는 못 해도 사용자는
+      //    항목을 본다.
+      const targetUrl = item.sourceUrl;
+      if (!targetUrl) {
         this.logger.warn(`no destination for ${ctx.meta.kind}=${item.label}, skipping row`);
         return;
       }
-      // 제휴를 타는 도메인이면서, 이 줄도 탈 수 있는가. 둘은 다른 질문이다 —
-      // 항공권은 타는 도메인인데 스카이스캐너 줄은 애드픽에 광고주가 없다.
-      const payable = monetized && item.monetizable !== false;
-      if (payable) payableCount += 1;
-      // 목적지가 원본과 같다 = 커미션 링크가 아니다. 여기서 세지 않으면
-      // "링크는 잘 열리는데 수수료가 안 들어온다" 를 영영 못 찾는다.
-      if (payable && destination === item.sourceUrl) unconverted.push(item.label);
-      // ⚠️ 변환하지 않는 줄에는 subid 도 붙이지 않는다. 지도 주소나 메타서치 주소에
-      //    추적 파라미터를 달아봐야 아무도 읽지 않고 링크만 지저분해진다.
-      const targetUrl = payable ? applySubid(destination, clickId, this.config) : destination;
 
       dbRows.push({
         recommendation_id: recommendationId,
@@ -150,14 +127,13 @@ export class RecommendationRowsService {
         price: item.price ?? null,
         merchant: item.merchant ?? null,
         image_url: item.imageUrl ?? null,
-        // ⚠️ **변환에 실패해도 null 을 적는다.** 제휴를 안 타는 도메인(undefined)과
-        //    "타는데 실패했다"(null)를 가르는 값이라, 실패를 안 적으면 수수료가 새는
-        //    노출이 집계에서 통째로 빠진다 — 찾으려던 것만 안 보이게 된다.
+        // ⚠️ **노출 시점에는 비어 있다** (0015). 변환이 클릭 시점으로 갔으므로
+        //    누르지 않은 줄은 영원히 null 이고, 그게 맞는 값이다. 리다이렉트가
+        //    변환에 성공하면 그때 채운다.
         //
-        //    ⚠️ 애초에 제휴를 못 타는 줄(스카이스캐너)도 null 이다. 집계에서 둘을
-        //       가르는 건 **merchant 칸**이다 — null 하나만 보고 "변환 실패" 로 세면
-        //       실패율이 실제보다 높게 나온다.
-        affiliate_link_id: payable ? (link?.affiliateLinkId ?? null) : null,
+        //    집계에서 "변환 실패" 를 세려면 **`click_count > 0` 을 반드시 걸어라.**
+        //    안 걸면 노출 전부가 실패로 세어진다.
+        affiliate_link_id: null,
       });
 
       // DB 가 없어도 리다이렉트가 동작하도록 인메모리에도 남긴다.
@@ -166,6 +142,8 @@ export class RecommendationRowsService {
         itemName: item.label,
         sourceUrl: item.sourceUrl,
         targetUrl,
+        // 리다이렉트가 이 값으로 "애드픽을 타는 줄인가" 를 가린다.
+        merchant: item.merchant ?? null,
         userId: ctx.userId,
       });
 
@@ -181,16 +159,8 @@ export class RecommendationRowsService {
       );
     });
 
-    if (unconverted.length) {
-      // 경고로 남긴다. 배포를 막을 일은 아니지만 방치하면 그대로 매출이 샌다.
-      // ⚠️ 분모는 줄 수가 아니라 **변환을 탈 수 있었던 줄 수**다. 스카이스캐너처럼
-      //    애초에 못 타는 줄을 분모에 넣으면 실패율이 실제보다 낮게 보인다.
-      this.logger.warn(
-        `애드픽 변환 실패 ${unconverted.length}/${payableCount}건 — 원본 주소로 나간다: ` +
-          unconverted.join(', '),
-      );
-    }
-
+    // ⚠️ **변환 실패 경고는 여기 없다.** 변환을 안 하기 때문이다 — 그 경고는
+    //    실제로 변환하는 자리인 리다이렉트로 옮겨갔다 (0015).
     if (recommendationId && dbRows.length) await this.items.createMany(dbRows);
     return listItems;
   }
@@ -209,8 +179,9 @@ export class RecommendationRowsService {
    *     링크에 들어가서 노출마다 달라야 하는데, 관광지는 변환이 없다.
    *   · 줄 순서가 `attractions.rank` 로 고정이라 position 별 CTR 이 안 나온다.
    *
-   * ⚠️ **`links` 를 받지 않는다.** 제휴를 타는 도메인이 이 길로 오면 subid 가 안 붙어
-   *    수수료가 통째로 새므로, 애초에 넘길 수 없게 해둔다.
+   * ⚠️ **clickId 를 발급하지 않는다.** 줄 링크가 `/r/{clickId}` 가 아니라 `/a/{id}` 라
+   *    제휴 변환도 subid 도 걸릴 자리가 없다. 제휴를 타는 도메인이 이 길로 오면
+   *    수수료가 통째로 새므로, 호텔·항공권은 반드시 `render` 를 쓴다.
    */
   async renderCounted(
     rows: StaticRow[],

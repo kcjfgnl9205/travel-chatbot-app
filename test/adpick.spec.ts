@@ -205,7 +205,7 @@ describe('애드픽이 취급하지 않는 제휴몰', () => {
     ]);
 
     // 빈 Map 이다. 호출부는 이걸 "변환 못 했다" 가 아니라 "이 줄은 원본으로 간다" 로
-    // 읽는다 — 그 구별은 ItemRow.monetizable 이 한다.
+    // 읽는다 — 그 판정은 리다이렉트가 merchant 로 다시 한다 (0015).
     expect(links.size).toBe(0);
     expect(convert).not.toHaveBeenCalled();
   });
@@ -231,5 +231,83 @@ describe('애드픽이 취급하지 않는 제휴몰', () => {
     expect(convert).toHaveBeenCalledTimes(1);
     expect(convert).toHaveBeenCalledWith(BOOKING, 'trip');
     expect(links.get(BOOKING)?.affiliateLinkId).toBe('link-1');
+  });
+});
+
+/**
+ * **클릭 한 건을 위한 변환** (0015). `/r/{clickId}` 가 쓴다.
+ *
+ * `resolve` 와 다른 점은 기다리는 사람이 있다는 것뿐이다. 여기서 지킬 것은 둘:
+ * 제때 못 받으면 **기다리지 않고 null** 을 주고, 그래도 **변환은 끝까지 돌아 캐시에
+ * 남는다.** 취소해 버리면 느린 주소는 영원히 느리고 수수료도 영영 안 붙는다.
+ */
+describe('클릭 시점 변환 (resolveForClick)', () => {
+  const BOOKING = 'https://kr.trip.com/hotels/osaka-detail-1/';
+
+  function build(convertMs: number, clickTimeoutMs: number) {
+    const upserted: string[] = [];
+    const convert = jest.fn(async (sourceUrl: string) => {
+      await new Promise((r) => setTimeout(r, convertMs));
+      return { sourceUrl, affiliateUrl: 'https://link.adpick.co.kr/abcd', status: STATUS_OK };
+    });
+    const repo = {
+      findUsable: async () => new Map(),
+      upsertMany: async (rows: Record<string, unknown>[]) => {
+        upserted.push(String(rows[0].source_url));
+        return new Map([[BOOKING, { id: 'link-1' }]]);
+      },
+    } as never;
+    const service = new AffiliateService(
+      config({ adpickClickTimeoutMs: clickTimeoutMs }),
+      repo,
+      { convert } as never,
+    );
+    return { service, convert, upserted };
+  }
+
+  it('제때 오면 커미션 링크를 준다', async () => {
+    const { service } = build(5, 200);
+
+    const link = await service.resolveForClick(BOOKING, 'trip');
+
+    expect(link?.affiliateUrl).toBe('https://link.adpick.co.kr/abcd');
+    expect(link?.affiliateLinkId).toBe('link-1');
+  });
+
+  it('늦으면 기다리지 않고 null 을 준다 — 호출부가 원본으로 보낸다', async () => {
+    const { service } = build(300, 30);
+
+    const started = Date.now();
+    const link = await service.resolveForClick(BOOKING, 'trip');
+
+    expect(link).toBeNull();
+    expect(Date.now() - started).toBeLessThan(200);
+  });
+
+  /**
+   * ⚠️ **끊었다고 변환을 버리지 않는다.** 뒤에서 끝나 affiliate_links 에 남아야
+   *    같은 주소의 다음 클릭이 캐시 히트가 된다. 취소하면 느린 주소는 영원히
+   *    느리고, 그 줄의 수수료는 영영 안 붙는다.
+   */
+  it('끊은 뒤에도 변환은 끝까지 돌아 캐시에 남는다', async () => {
+    const { service, upserted } = build(50, 10);
+
+    await service.resolveForClick(BOOKING, 'trip');
+    expect(upserted).toEqual([]); // 아직 안 끝났다
+
+    await new Promise((r) => setTimeout(r, 120));
+    expect(upserted).toEqual([BOOKING]);
+  });
+
+  it('애드픽을 안 타는 판매처는 부르지도 않는다', async () => {
+    const { service, convert } = build(5, 200);
+
+    const link = await service.resolveForClick(
+      'https://www.skyscanner.co.kr/transport/flights/sel/tyoa/',
+      'skyscanner',
+    );
+
+    expect(link).toBeNull();
+    expect(convert).not.toHaveBeenCalled();
   });
 });

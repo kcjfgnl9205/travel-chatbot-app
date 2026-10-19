@@ -1,7 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import { dedupeBy } from '../../common/dedupe';
-import { AffiliateService } from '../affiliate/affiliate.service';
 import * as t from '../kakao/templates';
 import { RecommendationRowsService } from '../recommendation/rows.service';
 import { searchName } from '../search/search-name';
@@ -113,7 +112,6 @@ export class HotelService implements SearchDomain<Hotel> {
 
   constructor(
     @Inject(HOTEL_PROVIDER) private readonly provider: HotelProvider,
-    private readonly affiliate: AffiliateService,
     private readonly renderer: RecommendationRowsService,
   ) {}
 
@@ -184,16 +182,9 @@ export class HotelService implements SearchDomain<Hotel> {
    * 변환하면 분당 60회 rate limit 을 헛되이 쓴다.
    */
   async rows(hotels: Hotel[], ctx: RenderContext): Promise<t.Json[]> {
-    // 원본 주소 → 애드픽 커미션 링크. 캐시에 있으면 API 를 안 탄다.
-    // affiliate_links 행이 곧 호텔의 신원이기도 하다 — 별도 호텔 마스터를 두지 않는다.
-    const links =
-      ctx.links ??
-      (await this.affiliate.resolve(
-        hotels
-          .filter((h) => h.sourceUrl)
-          .map((h) => ({ sourceUrl: h.sourceUrl, merchant: h.merchant })),
-      ));
-
+    // ⚠️ **애드픽을 여기서 부르지 않는다** (0015). 눌리는 줄은 많아야 하나인데
+    //    다섯 줄을 전부 변환했고, 캐시가 빗나가면 요청 경로에서 2초를 기다렸다.
+    //    변환은 눌린 줄 하나만 `/r/{clickId}` 가 한다.
     return this.renderer.render(
       hotels.map((hotel) => ({
         label: hotel.name,
@@ -207,7 +198,7 @@ export class HotelService implements SearchDomain<Hotel> {
         merchant: hotel.merchant,
       })),
       ctx,
-      { provider: this.provider.name, links },
+      { provider: this.provider.name },
     );
   }
 }

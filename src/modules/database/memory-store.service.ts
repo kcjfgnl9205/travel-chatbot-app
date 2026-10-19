@@ -10,8 +10,17 @@ export interface ClickEntry {
   recommendationId: string | null;
   /** 노출 시점의 항목 이름 (호텔명·항공편). 로그에서 무엇을 눌렀는지 보려고 남긴다. */
   itemName: string;
+  /** 변환의 입력이자 폴백 목적지. **클릭 시점에 여기서 커미션 링크를 만든다** (0015). */
   sourceUrl: string;
+  /**
+   * 변환을 못 했을 때 보낼 곳. 지금은 sourceUrl 과 같다.
+   *
+   * 칸을 남겨두는 이유는 변환하지 않는 줄(지도 주소 등)이 생겼을 때 그 줄만
+   * 다른 목적지를 들 수 있어야 하기 때문이다.
+   */
   targetUrl: string;
+  /** 애드픽을 타는 줄인지 가리는 재료. 스카이스캐너는 광고주가 없다. */
+  merchant: string | null;
   userId: string | null;
   clickCount: number;
 }

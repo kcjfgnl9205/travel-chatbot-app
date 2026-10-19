@@ -1,7 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
-import { adpickCarries } from '../adpick/adpick.service';
-import { AffiliateService } from '../affiliate/affiliate.service';
 import { AppConfig, CONFIG } from '../../config/app.config';
 import * as t from '../kakao/templates';
 import { routeAirports } from './airports';
@@ -44,7 +42,6 @@ export class FlightService implements SearchDomain<FlightOffer> {
 
   constructor(
     @Inject(CONFIG) private readonly config: AppConfig,
-    private readonly affiliate: AffiliateService,
     private readonly renderer: RecommendationRowsService,
   ) {}
 
@@ -126,17 +123,9 @@ export class FlightService implements SearchDomain<FlightOffer> {
       sourceUrl: datedSearchUrl(offer, new Date(ctx.started), ctx.trip) ?? offer.sourceUrl,
     }));
 
-    // 원본 주소 → 애드픽 커미션 링크. 캐시에 있으면 API 를 안 탄다.
-    // ⚠️ 변환도 **날짜가 박힌 주소**로 한다. 원본으로 변환하면 사용자가 도착하는 곳은
-    //    여전히 빈 폼이다 — 애드픽이 돌려주는 건 그 주소로 가는 링크이기 때문이다.
-    const links =
-      ctx.links ??
-      (await this.affiliate.resolve(
-        dated
-          .filter((d) => d.sourceUrl)
-          .map((d) => ({ sourceUrl: d.sourceUrl, merchant: d.offer.merchant })),
-      ));
-
+    // ⚠️ **애드픽을 여기서 부르지 않는다** (0015). 날짜가 박힌 주소라 캐시가 거의
+    //    빗나갔고, 미스면 요청 경로에서 2초를 기다렸다 — 그게 5초 예산을 넘기면
+    //    말풍선이 통째로 안 나간다. 변환은 눌린 줄 하나만 `/r/{clickId}` 가 한다.
     return this.renderer.render(
       dated.map(({ offer, sourceUrl }) => ({
         label: offerLabel(offer),
@@ -145,13 +134,14 @@ export class FlightService implements SearchDomain<FlightOffer> {
         description: offerDescription(offer),
         // ⚠️ **가격을 안 남긴다.** 조사하지 않으므로 넣을 값이 없다. 집계에서
         //    항공권 행의 price 는 null 이고, 그게 사실이다.
+        // ⚠️ 애드픽에 없는 플랫폼(스카이스캐너)은 "변환 실패" 가 아니라 "처음부터
+        //    안 타는 줄" 이다. 그 판정은 리다이렉트가 이 merchant 로 다시 한다 —
+        //    `adpickCarries` 가 양쪽에서 같은 답을 내므로 갈릴 자리가 없다.
         merchant: offer.merchant,
-        // 애드픽에 없는 플랫폼은 "변환 실패" 가 아니라 "처음부터 안 타는 줄" 이다.
-        monetizable: adpickCarries(offer.merchant),
         // 항공권 카드에는 이미지가 없다 — imageUrl 을 안 넘기면 image_url 은 null 이다.
       })),
       ctx,
-      { provider: this.providerName, links },
+      { provider: this.providerName },
     );
   }
 

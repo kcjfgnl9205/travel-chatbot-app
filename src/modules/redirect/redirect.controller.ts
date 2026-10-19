@@ -1,7 +1,10 @@
-import { Controller, Get, Logger, Param, ParseIntPipe, Res } from '@nestjs/common';
+import { Controller, Get, Inject, Logger, Param, ParseIntPipe, Res } from '@nestjs/common';
 import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 
+import { AppConfig, CONFIG } from '../../config/app.config';
+import { adpickCarries, applySubid } from '../adpick/adpick.service';
+import { AffiliateService } from '../affiliate/affiliate.service';
 import { kakaoMapUrl, mapsUrl } from '../../common/maps-url';
 import { isKorea } from '../places/city-table';
 import { MemoryStoreService } from '../database/memory-store.service';
@@ -16,8 +19,14 @@ import { RecommendationItemsRepository } from '../database/repositories/recommen
  *
  * ⚠️ **사용자가 302 를 기다리는 경로다.** 여기서 쓰는 시간이 곧 "링크가 느리다" 다.
  *
- * 그래서 **DB 를 기다리지 않는 길을 먼저 본다.** 방금 나간 카드의 목적지는 이미
- * 인메모리에 있으므로, 있으면 즉시 302 를 보내고 카운터는 뒤에서 올린다.
+ * 그래서 **DB 를 기다리지 않는 길을 먼저 본다.** 방금 나간 카드의 재료는 이미
+ * 인메모리에 있으므로, 있으면 DB 왕복 없이 변환으로 넘어가고 카운터는 뒤에서 올린다.
+ *
+ * ⚠️ **0015 에서 애드픽 변환이 여기로 왔다.** 예전에는 카드를 만들 때 줄마다 미리
+ *    변환했는데, 눌리는 줄은 많아야 하나인데 전부 변환했고 캐시가 빗나가면 카카오
+ *    5초 예산에서 2초를 먹었다 — 넘기면 말풍선이 통째로 안 나간다. 이제 여기서
+ *    **눌린 한 줄만** 변환한다. 대신 302 가 그만큼 늦는다
+ *    (`ADPICK_CLICK_TIMEOUT_SECONDS`, 넘기면 원본 주소로 보낸다).
  *
  * 운영 서버에서 실측한 값 (서버 → Supabase, 3회 평균):
  *
@@ -56,9 +65,11 @@ export class RedirectController {
   private readonly logger = new Logger(RedirectController.name);
 
   constructor(
+    @Inject(CONFIG) private readonly config: AppConfig,
     private readonly items: RecommendationItemsRepository,
     private readonly memory: MemoryStoreService,
     private readonly attractions: AttractionsRepository,
+    private readonly affiliate: AffiliateService,
   ) {}
 
   @Get('r/:clickId')
@@ -66,16 +77,26 @@ export class RedirectController {
     summary: '클릭 추적 후 제휴 주소로 이동',
     description:
       '카카오 listCard 줄 링크가 가리키는 곳. click_count 를 올리고 302 로 보낸다.\n' +
-      'DB 왕복은 한 번이다 (register_click 함수가 조회·증가·목적지 반환을 동시에 한다).',
+      'DB 왕복은 한 번이다 (register_click 함수가 조회·증가·재료 반환을 동시에 한다).\n\n' +
+      '⚠️ **커미션 링크를 여기서 만든다** (0015). 카드를 만들 때 줄마다 미리 변환하던 것을 ' +
+      '옮겼다 — 눌리는 줄은 많아야 하나인데 전부 변환했고, 캐시가 빗나가면 카카오 5초 ' +
+      '예산에서 2초를 먹었다. 변환이 `ADPICK_CLICK_TIMEOUT_SECONDS` 를 넘기면 원본 주소로 ' +
+      '보낸다.',
   })
   @ApiParam({ name: 'clickId', description: '추천 응답 시 호텔마다 발급된 12자 키' })
   @ApiResponse({ status: 302, description: '애드픽 커미션 링크로 이동' })
   @ApiResponse({ status: 404, description: '없거나 만료된 clickId' })
   async redirect(@Param('clickId') clickId: string, @Res() res: Response): Promise<void> {
-    // ① 빠른 길 — 목적지를 이미 알고 있으면 DB 를 기다리지 않는다.
+    // ① 빠른 길 — 재료를 이미 알고 있으면 DB 를 기다리지 않는다.
     const cached = this.memory.registerClick(clickId);
     if (cached) {
-      res.redirect(302, cached.targetUrl);
+      const destination = await this.destinationOf(
+        clickId,
+        cached.sourceUrl,
+        cached.merchant,
+        cached.targetUrl,
+      );
+      res.redirect(302, destination);
       // 카운터는 사용자를 보낸 뒤에 올린다. 실패해도 기록 한 건을 잃을 뿐이고,
       // 그것 때문에 사용자를 1초 넘게 붙잡아 둘 이유는 없다.
       void this.items
@@ -85,7 +106,7 @@ export class RedirectController {
       return;
     }
 
-    // ② 느린 길 — 목적지를 모르니 DB 를 기다릴 수밖에 없다.
+    // ② 느린 길 — 재료를 모르니 DB 를 기다릴 수밖에 없다.
     //    배포로 메모리가 비었거나, 단톡방에 오래 남아 있던 카드를 누른 경우다.
     const row = await this.items.registerClick(clickId);
     const targetUrl = (row?.target_url as string) ?? null;
@@ -100,7 +121,62 @@ export class RedirectController {
       `click clickId=${clickId} item=${row?.item_name as string} ` +
         `count=${row?.click_count as number} via=db`,
     );
-    res.redirect(302, targetUrl);
+    res.redirect(
+      302,
+      await this.destinationOf(
+        clickId,
+        (row?.source_url as string) ?? null,
+        (row?.merchant as string) ?? null,
+        targetUrl,
+      ),
+    );
+  }
+
+  /**
+   * **최종 목적지.** 원본 주소를 커미션 링크로 바꿔서 돌려준다 (0015).
+   *
+   * 못 바꾸면 `fallbackUrl` 이다. 수수료는 못 받아도 **사용자는 항목을 본다** —
+   * 이 경로에서 그보다 나쁜 실패는 없다.
+   *
+   * 바꾸지 않는(=못 바꾸는) 경우가 셋이다.
+   *
+   *   · `sourceUrl` 이 없다 — **마이그레이션 0015 전이다.** 옛 register_click() 은
+   *     source_url 을 안 주므로, 저장된 목적지로 그냥 보낸다 (0014 까지의 동작).
+   *     그래서 코드를 먼저 올리든 SQL 을 먼저 돌리든 링크가 죽지 않는다.
+   *   · 애드픽이 취급하지 않는 판매처다 (스카이스캐너 — 광고주가 없다).
+   *   · 제때 못 받았다. 변환은 뒤에서 계속 돌아 캐시에 남으므로 **다음 클릭은 붙는다.**
+   */
+  private async destinationOf(
+    clickId: string,
+    sourceUrl: string | null,
+    merchant: string | null,
+    fallbackUrl: string,
+  ): Promise<string> {
+    if (!sourceUrl || !adpickCarries(merchant)) return fallbackUrl;
+
+    const link = await this.affiliate
+      .resolveForClick(sourceUrl, merchant)
+      .catch((err) => {
+        this.logger.warn(`convert failed clickId=${clickId} err=${err}`);
+        return null;
+      });
+
+    if (!link?.affiliateUrl) {
+      // 방치하면 그대로 매출이 샌다. 상시로 뜨면 애드픽 쪽을 봐야 한다.
+      this.logger.warn(`애드픽 변환 실패 clickId=${clickId} — 원본 주소로 보낸다: ${sourceUrl}`);
+      return fallbackUrl;
+    }
+
+    // 집계용. **사용자를 보낸 뒤에 달아도 되지만**, 여기서 await 하지 않으려면
+    // 호출부가 아니라 이 자리에서 띄워야 한다 (302 는 바로 다음 줄이다).
+    if (link.affiliateLinkId) {
+      void this.items
+        .attachAffiliateLink(clickId, link.affiliateLinkId)
+        .catch((err) => this.logger.warn(`attach link failed clickId=${clickId} err=${err}`));
+    }
+
+    // ⚠️ subid 는 **커미션 링크에만** 붙인다. 원본 주소에 달아봐야 아무도 안 읽는다.
+    return applySubid(link.affiliateUrl, clickId, this.config);
   }
 
   @Get('a/:id')

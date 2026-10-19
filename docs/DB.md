@@ -64,18 +64,20 @@
 ```mermaid
 flowchart LR
     A["사용자 발화<br/>오사카 호텔 추천해줘"] --> B["AI / 크롤링<br/>provider"]
-    B -->|"호텔 + 원본 주소<br/>agoda.com/hotel/12345"| D{"affiliate_links<br/>캐시에 있나?"}
+    B -->|"호텔 + 원본 주소<br/>agoda.com/hotel/12345"| H[("recommendation_items<br/>click_id + 스냅샷<br/>target_url = 원본")]
+    H --> I["카카오 listCard<br/>줄 링크 = /r/click_id"]
+    I -->|클릭| J["register_click()<br/>click_count + 1<br/>원본 주소·판매처 반환"]
+    J --> D{"affiliate_links<br/>캐시에 있나?"}
     D -->|있음| F["커미션 링크 재사용"]
     D -->|없음| E["애드픽 link API<br/>원본 → 커미션 링크"]
     E --> G[("affiliate_links<br/>변환 캐시 = 호텔 신원")]
     G --> F
-    F --> H[("recommendation_items<br/>click_id + 스냅샷")]
-    H --> I["카카오 listCard<br/>줄 링크 = /r/click_id"]
-    I -->|클릭| J["register_click()<br/>click_count + 1"]
-    J -->|302| K["애드픽 커미션 링크"]
+    F -->|302| K["애드픽 커미션 링크"]
 ```
 
 **원본 주소는 DB에만 남고 사용자에게는 노출되지 않는다.** 카드의 줄 링크는 항상 `/r/{click_id}` 이고, 그 302 목적지가 커미션 링크다.
+
+⚠️ **0015 에서 변환이 노출 시점에서 클릭 시점으로 내려왔다** (위 그림에서 `J` 아래). 카드를 만들 때 줄마다 변환하면 눌리지도 않을 링크를 만드느라 카카오 5초 예산에서 최대 2초를 썼다 — 넘기면 말풍선이 통째로 안 나간다. 못 바꾸면 `target_url`(원본)로 보낸다.
 
 ---
 
@@ -262,9 +264,11 @@ latency_ms = 143          ← 카카오 5초 예산 대비 여유 추적
 `/r/{clickId}` 를 통과하면 그 행의 `click_count` 가 1 올라간다. 같은 사람이 10번 눌러도 **행은 그대로, 숫자만 10.**
 
 ```sql
--- 조회 + 증가 + 목적지 반환을 한 번에 (0005)
-select target_url, click_count from register_click('Kd8pQm2Wz');
+-- 조회 + 증가 + 재료 반환을 한 번에 (0005, 0015 에서 컬럼이 늘었다)
+select target_url, source_url, merchant, click_count from register_click('Kd8pQm2Wz');
 ```
+
+`source_url` 과 `merchant` 가 같이 오는 이유는 **리다이렉트가 그 자리에서 커미션 링크를 만들기 때문이다** (0015) — 변환의 입력이 원본 주소이고, 그 줄이 애드픽을 타는지는 판매처가 정한다. DB 왕복은 여전히 한 번이다.
 
 Postgres 함수로 만든 이유는 두 가지다:
 
@@ -360,7 +364,7 @@ API 호출이 5회가 아니라 500회가 되어 **분당 60회 제한에 즉시
 
 **모든 쓰기는 실패해도 예외를 던지지 않는다** ([repositories/base.repository.ts](../src/modules/database/repositories/base.repository.ts)). DB가 죽어도 사용자는 호텔 목록을 받는다. 대신 그 요청은 기록되지 않는다 — 로깅보다 응답이 우선이라는 판단.
 
-마찬가지로 **애드픽 변환이 실패해도 카드는 나간다.** 원본 주소로 폴백한다 — 수익화는 못 해도 사용자는 호텔을 본다.
+마찬가지로 **애드픽 변환이 실패해도 사용자는 호텔에 도착한다.** `target_url`(원본 주소)로 302 한다 — 수익화는 못 해도 링크는 산다. 0015 부터 변환은 카드가 아니라 클릭에서 일어나므로, 실패해도 카드는 애초에 영향을 안 받는다.
 
 ---
 
@@ -404,6 +408,13 @@ from recommendation_items where click_count > 1 order by click_count desc limit 
 -- 애드픽 변환 실패 (수익 누수 지점)
 select status, count(*), max(error) as sample_error
 from affiliate_links group by 1;
+
+-- ⚠️ 노출된 줄로 세면 안 된다 (0015). 변환은 **눌린 줄에서만** 일어나므로
+--    누르지 않은 줄의 affiliate_link_id 는 영원히 null 이고 그게 맞는 값이다.
+select domain,
+       count(*)                                             as 클릭된_줄,
+       count(*) filter (where affiliate_link_id is not null) as 변환됨
+from recommendation_items where click_count > 0 group by 1;
 
 -- 애드픽 성과 데이터와 붙이기 위한 조인 키
 select p_data, merchant_name, commission_per, source_url
