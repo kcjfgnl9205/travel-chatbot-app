@@ -56,10 +56,64 @@ describe('키워드 해석', () => {
     expect(parsed?.ignored).toContain('4명');
   });
 
-  it('지명이 둘이면 모델에 넘긴다 — 어느 쪽이 목적지인지 사전으로는 못 가린다', () => {
-    expect(fromKeywords('부산에서 오사카 항공권')).toBeNull();
-    // 호텔·관광지는 순서가 뜻하는 바가 없다. 둘이면 그냥 모델이 가른다.
+  it('지명이 둘이어도 항공권이 아니면 모델에 넘긴다 — 순서가 뜻하는 바가 없다', () => {
     expect(fromKeywords('부산 하노이 호텔')).toBeNull();
+  });
+
+  /**
+   * ⚠️ **항공권을 묻는 가장 흔한 말투가 여기 걸렸다.**
+   *
+   * 예전에는 "에서"·"출발" 이 보이면 무조건 모델에 넘겼다. 그 결과 가장 자연스럽게
+   * 물은 사람만 파서 모델(최대 4초)을 타고, 애드픽 변환(2초)까지 겹치면 카카오
+   * 5초 예산을 넘겨 **말풍선이 통째로 안 나갔다.** 같은 뜻인 "인천 오사카 항공권"
+   * 은 0ms 로 멀쩡히 답했다.
+   */
+  describe('출발지를 말한 항공권', () => {
+    it('"인천에서 오사카" 를 모델 없이 가른다', () => {
+      expect(fromKeywords('인천에서 오사카 가는 항공권 찾아줘')).toMatchObject({
+        intent: 'flight',
+        place: '오사카',
+        from: '인천',
+      });
+      expect(fromKeywords('부산에서 오사카 항공권')).toMatchObject({
+        place: '오사카',
+        from: '부산',
+      });
+    });
+
+    it('⚠️ 순서가 아니라 조사를 믿는다 — "오사카 갈건데 인천에서 출발"', () => {
+      // 순서로 읽으면 이 사람은 오사카에서 인천 가는 항공권을 받는다.
+      expect(fromKeywords('오사카 갈건데 인천에서 출발하는 항공권')).toMatchObject({
+        place: '오사카',
+        from: '인천',
+      });
+    });
+
+    it('공항이라고 말해도 같다 — 사전은 도시만 들고 있다', () => {
+      expect(fromKeywords('인천공항에서 오사카 항공권')).toMatchObject({
+        place: '오사카',
+        from: '인천',
+      });
+    });
+
+    it('편도·무시 조건은 그대로 딸려 온다', () => {
+      expect(fromKeywords('부산에서 다낭 편도 항공권 2명')).toMatchObject({
+        place: '다낭',
+        from: '부산',
+        tripType: 'ow',
+      });
+      expect(fromKeywords('부산에서 다낭 편도 항공권 2명')?.ignored).toContain('2명');
+    });
+
+    it('단서가 모자라면 모델에 넘긴다', () => {
+      // 목적지가 없다 — 도시가 하나뿐이다.
+      expect(fromKeywords('서울에서 출발하는 항공권')).toBeNull();
+      // "에서" 가 도시에 안 붙었다. 어느 쪽이 출발지인지 모른다.
+      expect(fromKeywords('여기에서 오사카 도쿄 항공권')).toBeNull();
+      // 호텔의 "에서" 는 출발지가 아니라 목적지다.
+      expect(fromKeywords('제주에서 묵을 호텔')).toBeNull();
+      expect(fromKeywords('오사카에서 가장 좋은 호텔')).toBeNull();
+    });
   });
 
   it('⚠️ 항공권은 도시가 둘이면 앞이 출발지다 — "부산 하노이 항공권"', () => {
@@ -225,16 +279,23 @@ describe('IntentService', () => {
     expect(openai.calls).toHaveLength(0);
   });
 
-  it('출발지가 섞이면 모델이 해석한다', async () => {
+  it('노선을 말한 항공권도 사전으로 끝난다 — 모델을 부르지 않는다', async () => {
     const parsed = await service.extract('부산에서 오사카 가는 항공권');
 
     expect(parsed).toMatchObject({ intent: 'flight', place: '오사카', from: '부산' });
+    expect(openai.calls).toHaveLength(0);
+  });
+
+  it('호텔의 "에서" 는 여전히 모델이 가른다 — 그건 출발지가 아니다', async () => {
+    const parsed = await service.extract('도톤보리에서 가까운 호텔');
+
+    expect(parsed).toMatchObject({ intent: 'hotel', place: '도톤보리' });
     expect(openai.calls).toHaveLength(1);
   });
 
   it('같은 문장을 두 번 파싱하지 않는다 — 단톡방은 같은 말이 반복된다', async () => {
-    await service.extract('부산에서 오사카 가는 항공권');
-    await service.extract('부산에서  오사카 가는 항공권!');
+    await service.extract('도톤보리에서 가까운 호텔');
+    await service.extract('도톤보리에서  가까운 호텔!');
 
     expect(openai.calls).toHaveLength(1);
   });

@@ -6,7 +6,12 @@ import {
   post,
   textOf,
 } from './helpers';
-import { findCitiesInText, findCityInText, lookupCity } from '../src/modules/places/city-table';
+import {
+  findCitiesInText,
+  findCityInText,
+  findOriginInText,
+  lookupCity,
+} from '../src/modules/places/city-table';
 
 /**
  * 지역 인식 회귀 테스트.
@@ -142,6 +147,26 @@ describe('도시 사전', () => {
     expect(findCitiesInText('도쿄디즈니 호텔').map((c) => c.slug)).toEqual(['tokyo-disney']);
     // 같은 도시를 두 표기로 말해도 한 번이다.
     expect(findCitiesInText('제주도 제주 호텔').map((c) => c.slug)).toEqual(['jeju']);
+  });
+
+  describe('findOriginInText — "…에서" 가 붙은 도시', () => {
+    it('조사가 붙은 쪽을 집는다', () => {
+      expect(findOriginInText('인천에서 오사카 가는 항공권')?.slug).toBe('incheon');
+      // ⚠️ 순서로 읽으면 오사카가 출발지가 된다.
+      expect(findOriginInText('오사카 갈건데 인천에서 출발')?.slug).toBe('incheon');
+      expect(findOriginInText('인천공항에서 오사카')?.slug).toBe('incheon');
+      expect(findOriginInText('인천 출발 오사카 항공권')?.slug).toBe('incheon');
+    });
+
+    it('도시에 안 붙어 있으면 null 이다', () => {
+      expect(findOriginInText('오사카 도쿄 항공권')).toBeNull();
+      expect(findOriginInText('이번에 오사카 가는 항공권')).toBeNull();
+    });
+
+    it('도시 사전과 같은 덫을 피한다 — "에어부산에서" 는 출발지가 아니다', () => {
+      expect(findOriginInText('에어부산에서 다낭 항공권')).toBeNull();
+      expect(findOriginInText('빈 방 있는 호텔에서')).toBeNull();
+    });
   });
 
   it('findCityInText 는 하나뿐일 때만 답한다 — 둘이면 부르는 쪽이 가린다', () => {

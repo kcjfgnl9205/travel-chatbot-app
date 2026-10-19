@@ -357,6 +357,14 @@ const UTTERANCE_UNSAFE = new Set(['빈', '나라', '퍼스', '사파']);
 /** 조사·어미. 토큰 단위 매칭에서만 떼어낸다 ("괌에서" → "괌"). */
 const PARTICLES = /(에서|으로|에게|까지|부터|이랑|랑|은|는|이|가|을|를|의|도|로|에|와|과|만)$/;
 
+/**
+ * **출발을 뜻하는 꼬리.** "인천에서" · "인천공항에서" · "인천 출발".
+ *
+ * 공백을 지운 뒤에 보므로 도시 이름 바로 뒤에 붙는다. "공항" 을 끼워주는 이유는
+ * 사전이 도시만 들고 있기 때문이다 — "인천공항에서" 의 인천은 도시가 맞다.
+ */
+const ORIGIN_PARTICLE = /^(?:국제공항|공항)?(?:에서|출발)/;
+
 export function normalizeAlias(text: string): string {
   return text.replace(/\s+/g, '').toLowerCase();
 }
@@ -464,4 +472,44 @@ export function findCitiesInText(utterance: string): CityEntry[] {
 export function findCityInText(utterance: string): CityEntry | null {
   const cities = findCitiesInText(utterance);
   return cities.length === 1 ? cities[0] : null;
+}
+
+/**
+ * **출발지로 말해진 도시.** "인천에서 오사카" 의 인천이다. 없으면 null.
+ *
+ * `findCitiesInText` 와 가리는 방식이 다르다. 거기서는 **순서**가 단서지만
+ * ("부산 하노이 항공권"), 조사가 붙어 있으면 그게 순서보다 강하다 —
+ * "오사카 갈건데 인천에서 출발" 은 앞이 목적지다. 순서로만 읽으면 이 사람은
+ * 오사카에서 인천 가는 항공권을 받는다.
+ *
+ * 덫·한 글자 별칭 처리는 findCitiesInText 와 같은 규칙을 쓴다. 둘이 갈리면
+ * "도시로는 잡히는데 출발지로는 안 잡히는" 지명이 생긴다.
+ */
+export function findOriginInText(utterance: string): CityEntry | null {
+  if (!utterance.trim()) return null;
+
+  const cleaned = AMBIGUOUS.reduce((text, trap) => text.replace(trap, ' '), utterance);
+  const compact = normalizeAlias(cleaned);
+  const tokens = new Set(
+    cleaned
+      .split(/[\s,./]+/)
+      .map((token) => normalizeAlias(token).replace(PARTICLES, ''))
+      .filter(Boolean),
+  );
+
+  let best: { at: number; alias: string; city: CityEntry } | null = null;
+  for (const [alias, city] of CITY_ALIASES) {
+    if (UTTERANCE_UNSAFE.has(alias)) continue;
+    if (alias.length < 2 && !tokens.has(alias)) continue;
+
+    for (let at = compact.indexOf(alias); at >= 0; at = compact.indexOf(alias, at + 1)) {
+      if (!ORIGIN_PARTICLE.test(compact.slice(at + alias.length))) continue;
+      // 앞선 자리가 이기고, 같은 자리면 긴 별칭이 이긴다 ("도쿄디즈니에서" → 도쿄가 아니다).
+      if (!best || at < best.at || (at === best.at && alias.length > best.alias.length)) {
+        best = { at, alias, city };
+      }
+      break;
+    }
+  }
+  return best?.city ?? null;
 }

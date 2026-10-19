@@ -5,7 +5,7 @@ import { clip, text } from '../../common/parse';
 import { AppConfig, CONFIG } from '../../config/app.config';
 import { IntentCacheRepository } from '../database/repositories/intent-cache.repository';
 import { OpenAiService, parseJsonLoose } from '../openai/openai.service';
-import { findCitiesInText } from '../places/city-table';
+import { findCitiesInText, findOriginInText } from '../places/city-table';
 import { findCountryInText, stripDomainWord } from '../places/country-table';
 import { SearchKind } from '../search/search.types';
 import {
@@ -248,24 +248,34 @@ export class IntentService {
   }
 }
 
+/** 출발지를 말한 흔적. 있으면 지명 둘 중 어느 쪽이 출발지인지부터 가려야 한다. */
+const ORIGIN_HINT = /에서|출발/;
+
 /**
  * 모델 없이 끝낼 수 있는 발화인가.
  *
- * 의도가 키워드로 분명하고, 지명이 사전에 있고, 출발지 표현("에서"·"출발")이 없어야
- * 한다. 조사가 붙은 "서울에서 오사카" 는 모델이 가른다 — 조사 자리까지 사전으로
- * 읽으려 들면 "제주에서 묵을" 같은 말에서 엉뚱한 출발지가 생긴다.
+ * 의도가 키워드로 분명하고 지명이 사전에 있어야 한다.
  *
  * ⚠️ **항공권에서 도시가 둘이면 앞이 출발지다** ("부산 하노이 항공권"). 노선을
  *    말하는 순서가 그렇고, 실제로 이렇게 들어온다. 예전에는 긴 쪽("하노이")만
  *    남기고 부산을 버려서 **부산 사람에게 서울 출발 항공권이 나갔다** — 게다가
  *    출발지를 추측했다는 고지(originAssumed)도 안 붙어 고칠 단서조차 없었다.
  *
- * 호텔·관광지는 둘이면 여전히 모델에 넘긴다. 거기엔 순서가 뜻하는 바가 없다.
+ * ⚠️ **"인천에서 오사카" 도 여기서 끝낸다.** 예전에는 "에서"·"출발" 이 보이면
+ *    무조건 모델에 넘겼는데, 그게 **항공권을 묻는 가장 흔한 말투**였다. 그래서
+ *    가장 자연스럽게 물은 사람만 파서 모델(최대 4초)을 타고, 애드픽 변환까지
+ *    겹치면 카카오 5초 예산을 넘겨 **말풍선이 통째로 안 나갔다.**
+ *
+ *    대신 조사를 믿는다 — 순서가 아니라 `findOriginInText` 가 "…에서" 가 붙은
+ *    쪽을 출발지로 집는다. 순서로만 읽으면 "오사카 갈건데 인천에서 출발" 이
+ *    오사카 출발이 된다.
+ *
+ * 호텔·관광지에 "에서" 가 붙으면 여전히 모델이 가른다. "제주에서 묵을" 의 제주는
+ * 출발지가 아니라 목적지이고, 그 구분에는 순서도 조사도 소용이 없다.
  */
 export function fromKeywords(utterance: string): ParsedIntent | null {
   const intent = intentFromKeywords(utterance);
   if (intent === 'unknown') return null;
-  if (/에서|출발/.test(utterance)) return null;
 
   const cities = findCitiesInText(utterance);
   const base = {
@@ -273,6 +283,19 @@ export function fromKeywords(utterance: string): ParsedIntent | null {
     tripType: tripTypeOf(utterance),
     ignored: ignoredConditions(utterance),
   };
+
+  if (ORIGIN_HINT.test(utterance)) {
+    // 노선을 말한 항공권만 사전으로 가린다. 도시가 둘이 아니면 단서가 모자란다
+    // ("서울에서 출발하는 항공권" 은 목적지가 없다).
+    if (intent !== 'flight' || cities.length !== 2) return null;
+
+    const origin = findOriginInText(utterance);
+    const destination = origin ? cities.find((city) => city.slug !== origin.slug) : null;
+    // "에서" 가 도시에 안 붙어 있다 ("이번에 오사카 도쿄 항공권"). 모델이 가른다.
+    if (!origin || !destination) return null;
+
+    return { ...base, place: destination.nameKo, from: origin.nameKo };
+  }
 
   if (intent === 'flight' && cities.length === 2) {
     return { ...base, place: cities[1].nameKo, from: cities[0].nameKo };
