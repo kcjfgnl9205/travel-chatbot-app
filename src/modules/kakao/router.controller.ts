@@ -47,7 +47,18 @@ import {
  *
  * ⚠️ **어떤 예외가 나도 200 + 안내 문구를 돌려준다.** 카카오에 500 을 주면 사용자에게는
  *    원인 불명 오류만 뜨고, 단톡방에서는 그게 봇이 죽은 것처럼 보인다.
+ *
+ * ⚠️ **늦어도 마찬가지다.** 카카오는 5초를 넘기면 응답을 버리고, 그때 사용자는
+ *    말풍선을 아예 못 받는다 — 오류도 도움말도 아닌 **침묵**이다. 그래서 예외만
+ *    막아서는 모자라고, `KAKAO_RESPONSE_BUDGET_SECONDS` 안에 못 끝내면 하던 일을
+ *    두고 도움말 카드를 먼저 보낸다 ([withinBudget](#)).
  */
+/**
+ * "예산을 넘겼다" 는 표시. **모듈 스코프여야 한다** — 함수 안에 두면 타입이 그냥
+ * `symbol` 이라 응답과 구별되지 않는다.
+ */
+const LATE = Symbol('late');
+
 @ApiTags('카카오 스킬')
 @ApiHeader({
   name: 'X-Skill-Token',
@@ -123,7 +134,7 @@ export class RouterController {
   async route(@Body() payload: KakaoSkillPayload): Promise<t.Json> {
     const request = payload ?? {};
     try {
-      return await this.dispatch(request);
+      return await this.withinBudget(request);
     } catch (err) {
       this.logger.error(
         `router failed utterance=${JSON.stringify(utteranceOf(request))} err=${err}`,
@@ -135,6 +146,50 @@ export class RouterController {
   }
 
   // ---------------------------------------------------------------- 내부
+  /**
+   * **예산 안에 못 끝내면 도움말 카드로 끊는다.**
+   *
+   * 카카오는 5초를 넘긴 응답을 버린다. 그때 사용자가 받는 것은 오류 메시지가
+   * 아니라 **아무것도 아니다** — 단톡방에서는 봇이 질문을 무시한 것처럼 보이고,
+   * 그게 "가끔 대답을 안 한다" 의 정체다. 늦은 정답보다 제때 온 도움말이 낫다.
+   *
+   * ⚠️ **하던 일을 멈추지 않는다.** 백그라운드 검색이 끝나 캐시에 남으면 같은
+   *    질문을 다시 했을 때 카드가 바로 나간다. 사용자가 실제로 하는 행동이 그것이다.
+   *
+   * ⚠️ **여기 걸린다는 건 어딘가 느리다는 뜻이다.** 카드가 나갔다고 해결된 게
+   *    아니므로 ERROR 로 남긴다 — 무엇이 예산을 먹었는지는 그 발화의 다른 로그
+   *    (`intent (model) … ms=`)에 있다.
+   */
+  private async withinBudget(payload: KakaoSkillPayload): Promise<t.Json> {
+    const budget = this.config.kakaoBudgetMs;
+    if (budget <= 0) return this.dispatch(payload);
+
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<typeof LATE>((resolve) => {
+      timer = setTimeout(() => resolve(LATE), budget);
+      timer.unref?.();
+    });
+
+    const running = this.dispatch(payload);
+    // ⚠️ race 가 끝난 뒤에 터지면 받을 사람이 없다. 핸들러 없는 rejection 은
+    //    프로세스를 죽이므로 여기서 한 번 더 받아둔다 — 아래 race 가 제때 끝나면
+    //    그쪽이 같은 예외를 route() 로 올려보낸다.
+    void running.catch(() => undefined);
+
+    try {
+      const answer = await Promise.race([running, deadline]);
+      if (answer !== LATE) return answer;
+    } finally {
+      clearTimeout(timer);
+    }
+
+    this.logger.error(
+      `예산 ${budget}ms 초과 utterance=${JSON.stringify(utteranceOf(payload))} — ` +
+        '도움말 카드로 끊는다. 카카오가 응답을 버리면 말풍선 자체가 안 나간다.',
+    );
+    return cards.notUnderstoodCard(botNameOf(payload));
+  }
+
   private async dispatch(payload: KakaoSkillPayload): Promise<t.Json> {
     const req = await this.request(payload);
 

@@ -32,6 +32,7 @@ export interface AppConfig {
 
   kakaoSkillToken: string;
   kakaoCallbackTimeoutMs: number;
+  kakaoBudgetMs: number;
   /** 검색 하나가 끌 수 있는 최대 시간. 넘기면 실패 카드를 보낸다. */
   searchTimeoutMs: number;
   debugToken: string;
@@ -119,6 +120,9 @@ export function loadConfig(): AppConfig {
     kakaoSkillToken: str('KAKAO_SKILL_TOKEN'),
     // 카카오는 콜백을 1분 안에 받는다. 그 안에 못 보내면 사용자는 아무것도 못 받는다.
     kakaoCallbackTimeoutMs: Math.round(num('KAKAO_CALLBACK_TIMEOUT_SECONDS', 10) * 1000),
+    // ⚠️ 카카오가 5초에 응답을 버리면 **말풍선 자체가 안 나간다.** 그 전에 끊고
+    //    도움말 카드라도 보낸다. 0 이면 가드를 끈다 (진단용).
+    kakaoBudgetMs: Math.round(num('KAKAO_RESPONSE_BUDGET_SECONDS', 3.5) * 1000),
     // ⚠️ **콜백 URL 은 발급 후 5분·1회만 유효하다.** 모델 호출마다 걸린 60초로는
     //    전체를 못 막는다 — 2단 호출 + 썸네일이면 합이 5분을 넘고, 그러면 URL 이
     //    만료돼 사용자는 "찾고 있어요" 만 보고 끝난다. 기본 4분은 그 앞에 둔 선이다.

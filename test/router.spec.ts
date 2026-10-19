@@ -541,6 +541,79 @@ describe('POST /api/v1/kakao/router', () => {
    *    수명(5분)을 넘길 수 있고, 그러면 URL 이 만료돼 사용자는 "찾고 있어요" 만
    *    보고 끝난다. **침묵보다 실패 카드가 낫다.**
    */
+  /**
+   * **"가끔 대답을 안 한다" 의 정체.**
+   *
+   * 카카오는 5초를 넘긴 응답을 버린다. 그때 사용자가 받는 건 오류 메시지가 아니라
+   * **아무것도 아니다** — 단톡방에서는 봇이 질문을 무시한 것처럼 보인다. 서버가
+   * 뒤늦게 완벽한 카드를 만들어봐야 배달될 곳이 없으므로, 그 전에 끊어야 한다.
+   */
+  describe('예산을 넘길 때', () => {
+    /** 느린 파서 + 짧은 예산. 설정 객체를 그대로 고쳐 쓰고 끝나면 되돌린다. */
+    async function withTightBudget(budgetMs: number, parseMs: number, run: () => Promise<void>) {
+      const config = ctx.app.get<AppConfig>(CONFIG);
+      const original = config.kakaoBudgetMs;
+      config.kakaoBudgetMs = budgetMs;
+      ctx.openai.delayMs = parseMs;
+      try {
+        await run();
+      } finally {
+        config.kakaoBudgetMs = original;
+        ctx.openai.delayMs = 0;
+      }
+    }
+
+    it('침묵 대신 도움말 카드를 보낸다', async () => {
+      await withTightBudget(30, 300, async () => {
+        // 사전에 없는 지명이라 모델 경로를 탄다 — 그 모델이 느리다.
+        const res = await post(ctx.app, kakaoPayload('@가자고 도톤보리 호텔 추천해줘'));
+
+        expect(res.status).toBe(201);
+        const card = notUnderstoodCardOf(res.body);
+        expect(card.title).toBe('🤔 어떤 여행을 찾으시나요?');
+        // ⚠️ 탓하지 않는다. 늦은 건 서버 사정이고 질문은 멀쩡했다.
+        expect(JSON.stringify(res.body)).not.toMatch(/잘못|오류|실패/);
+      });
+    });
+
+    it('예산 안에 끝나면 평소대로 답한다 — 가드는 늦을 때만 돈다', async () => {
+      await withTightBudget(2000, 0, async () => {
+        const res = await post(ctx.app, kakaoPayload('@가자고 오사카 호텔 추천해줘'));
+
+        expect(res.status).toBe(201);
+        expect(JSON.stringify(res.body)).not.toContain('어떤 여행을 찾으시나요');
+      });
+    });
+
+    /**
+     * ⚠️ **하던 일을 멈추지 않는다.** 사용자가 실제로 하는 행동은 같은 질문을 다시
+     *    하는 것이고, 그때 캐시가 차 있으면 카드가 바로 나간다. 끊었다고 검색까지
+     *    버리면 두 번째 질문도 똑같이 느리다.
+     */
+    it('끊어도 진행 중이던 일은 끝난다', async () => {
+      await withTightBudget(30, 120, async () => {
+        await post(ctx.app, kakaoPayload('@가자고 시부야 호텔 추천해줘'));
+        expect(ctx.openai.calls).toHaveLength(1);
+      });
+
+      // 파서가 뒤에서 끝나 의도 캐시에 남았다 → 같은 문장을 다시 물으면 모델이 안 돈다.
+      await new Promise((r) => setTimeout(r, 200));
+      const before = ctx.openai.calls.length;
+      await post(ctx.app, kakaoPayload('@가자고 시부야 호텔 추천해줘'));
+
+      expect(ctx.openai.calls.length).toBe(before);
+    });
+
+    it('0 이면 가드를 끈다 — 진단할 때 끝까지 기다려 본다', async () => {
+      await withTightBudget(0, 50, async () => {
+        const res = await post(ctx.app, kakaoPayload('@가자고 오사카 호텔 추천해줘'));
+
+        expect(res.status).toBe(201);
+        expect(JSON.stringify(res.body)).not.toContain('어떤 여행을 찾으시나요');
+      });
+    });
+  });
+
   describe('검색이 너무 오래 걸릴 때', () => {
     /** 느린 검색 + 짧은 타임아웃. 설정 객체를 그대로 고쳐 쓰고 끝나면 되돌린다. */
     async function withSlowSearch(run: (receiver: any) => Promise<void>) {
