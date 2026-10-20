@@ -9,7 +9,7 @@ import {
 import { OpenAiService, parseJsonLoose } from '../openai/openai.service';
 import { CityEntry, lookupCity } from './city-table';
 import { CountryEntry, lookupCountry } from './country-table';
-import { CityChoice, Place, PlaceDraft, PlaceKind, aliasKey, slugOf } from './places.types';
+import { CityChoice, Place, PlaceDraft, PlaceHint, PlaceKind, aliasKey, slugOf } from './places.types';
 
 /**
  * 지역 정규화.
@@ -25,7 +25,13 @@ import { CityChoice, Place, PlaceDraft, PlaceKind, aliasKey, slugOf } from './pl
  *   1. **프로세스 메모리** — 같은 지역을 연달아 물었을 때. 0ms·0원
  *   2. **place_aliases** — 전에 누군가 물어봐서 등록된 지역
  *   3. **도시 사전**([city-table.ts](./city-table.ts)) — 237개. 0ms·0원이고 공항 코드가 딸려 온다
- *   4. **모델** — 사전에 없는 곳(도톤보리·해운대·시부야). 표준명·국가·종류를 물어 등록한다
+ *   4. **발화 해석이 같이 준 값**([PlaceHint](./places.types.ts)) — 모델 왕복 0회
+ *   5. **모델** — 그래도 모르면 묻는다. 표준명·국가·종류를 받아 등록한다
+ *
+ * ⚠️ **4번이 5번을 거의 없앤다.** 사전에 없는 지명은 어차피 발화 해석이 모델을
+ *    타는데, 거기서 지명도 같이 읽어오기 때문이다. 예전에는 같은 모델에게 같은
+ *    지명을 두 번 물었고(각각 최대 4초), 그 둘이 직렬이라 카카오 5초 예산을 넘겨
+ *    **말풍선이 통째로 안 나갔다.**
  *
  * ⚠️ **지역을 검증하지 않는다.** "아는 도시인가?"를 묻지 않고 뽑힌 지명을 그대로
  *    쓴다. 모델까지 실패해도 원문으로 place 를 만들어 검색에 넘긴다 — 이것이
@@ -169,7 +175,10 @@ export class PlacesService {
    *
    * @param raw 발화에서 뽑힌 지명. "오사카", "도톤보리", "오사카시"
    */
-  async resolve(raw: string | null | undefined): Promise<Place | null> {
+  async resolve(
+    raw: string | null | undefined,
+    hint: PlaceHint | null = null,
+  ): Promise<Place | null> {
     const key = aliasKey(raw ?? '');
     if (!key) return null;
 
@@ -179,10 +188,12 @@ export class PlacesService {
     const stored = await this.fromStore(key);
     if (stored) return this.remember(key, stored);
 
-    // 나라 → 도시 사전 → 모델 순. 앞의 둘은 0ms·0원이고 **판정이 매번 같다.**
+    // 나라 → 도시 사전 → 발화 해석이 준 값 → 모델 순.
+    // 앞의 둘은 0ms·0원이고 **판정이 매번 같다.** 셋째는 이미 치른 호출의 부산물이다.
     const known = draftFromCountry(lookupCountry(raw)) ?? draftFromTable(lookupCity(raw));
-    const fromModel = known ? null : await this.askModel(raw ?? '');
-    const draft = known ?? fromModel?.draft ?? fallbackDraft(raw ?? '');
+    const fromHint = known ? null : await this.draftFromHint(hint);
+    const fromModel = known || fromHint ? null : await this.askModel(raw ?? '');
+    const draft = known ?? fromHint ?? fromModel?.draft ?? fallbackDraft(raw ?? '');
     const place = await this.register(draft);
 
     // 나라를 해석하면서 도시 목록도 같이 받아둔다 — 되묻기에 모델을 한 번 더 부르지 않는다.
@@ -385,7 +396,40 @@ export class PlacesService {
   }
 
   /**
+   * **발화 해석이 같이 준 지역 정보**를 draft 로 바꾼다. 모델을 부르지 않는다.
+   *
+   * ⚠️ 나라일 때는 대표 도시 목록이 같이 오지 않는다 — `askModel` 은 주는 값이다.
+   *    그 경우 되묻기에서 [citiesOf](#) 가 한 번 더 묻는데, 나라는 거의 전부
+   *    사전([country-table.ts](./country-table.ts))에 있어 여기까지 오지 않는다.
+   */
+  private async draftFromHint(hint: PlaceHint | null): Promise<PlaceDraft | null> {
+    if (!hint?.canonicalName) return null;
+
+    const kind = KINDS.has(hint.kind) ? hint.kind : 'city';
+    // 부모는 사전에서만 찾는다 (resolveParent 는 모델을 안 탄다) — 여기서 또 물으면
+    // 왕복을 줄이려고 한 일이 도로아미타불이다.
+    const parent = kind === 'city' ? null : await this.resolveParent(hint.parentName);
+
+    this.logger.log(
+      `place from intent "${hint.canonicalName}"/${kind} ` +
+        `parent=${parent?.canonicalName ?? '-'} — 모델 호출 0회`,
+    );
+    return {
+      canonicalName: hint.canonicalName,
+      slug: slugOf(hint.slug ?? hint.canonicalName),
+      countryCode: upper(hint.countryCode, 2) ?? parent?.countryCode ?? null,
+      kind,
+      iata: upper(hint.iata, 3) ?? null,
+      parentId: parent?.id ?? null,
+    };
+  }
+
+  /**
    * 사전에 없는 지명을 모델에게 묻는다.
+   *
+   * ⚠️ **이제 거의 안 탄다** — 발화 해석이 지명을 같이 읽어오기 때문이다
+   *    (`draftFromHint`). 모델이 그 칸을 비웠거나, place 와 어긋나 버려졌거나,
+   *    되묻기처럼 발화 해석을 안 거친 경로가 여기로 온다.
    *
    * ⚠️ 이건 카카오 5초 예산 안에서 돈다. 짧게 끊고(OPENAI_PARSE_TIMEOUT_SECONDS),
    *    실패하면 원문 그대로 등록한다 — 되묻는 것보다 검색해 보는 게 낫다.

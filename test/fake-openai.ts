@@ -141,6 +141,35 @@ export function parseIntent(utterance: string): Record<string, unknown> {
     from: origin?.entry[1] ?? null,
     trip_type: /편도/.test(utterance) ? 'ow' : 'rt',
     ignored,
+    // ⚠️ **지역 정보를 같이 준다.** 진짜 모델도 그렇게 답하도록 시킨다 — 그래야
+    //    places 가 같은 지명을 한 번 더 묻지 않는다. 안 주면 모델 왕복이 둘로
+    //    돌아가고, 그게 카카오 5초 예산을 넘기던 자리다.
+    place_detail: placeDetailOf(destination?.entry ?? null),
+  };
+}
+
+/** 표 한 줄 → place_detail. 4칸짜리는 세부 지역(부모 도시가 있다), 3칸은 도시·나라다. */
+function placeDetailOf(entry: string[] | null): Record<string, unknown> {
+  if (!entry) {
+    return {
+      canonical_name: null,
+      slug: null,
+      country_code: null,
+      kind: 'city',
+      iata: null,
+      parent_name: null,
+    };
+  }
+
+  const isArea = entry.length === 4;
+  const isCountry = COUNTRIES.some((c) => c[2] === entry[2]);
+  return {
+    canonical_name: entry[1],
+    slug: entry[2],
+    country_code: isCountry ? null : (entry[2] === 'busan' || entry[2] === 'haeundae' ? 'KR' : 'JP'),
+    kind: isCountry ? 'country' : isArea ? 'area' : 'city',
+    iata: isArea || isCountry ? null : (AIRPORTS[entry[2]] ?? null),
+    parent_name: isArea ? entry[3] : null,
   };
 }
 

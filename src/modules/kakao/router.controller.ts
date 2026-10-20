@@ -236,7 +236,14 @@ export class RouterController {
         // 보내게 되는데, 그때 도움말이 나가면 대화가 끊긴다.
         this.pending.remember(req.userKey, waiting);
         return this.search.serve(
-          { intent: waiting.kind, place: place.canonicalName, from: null, tripType: 'rt', ignored: [] },
+          {
+            intent: waiting.kind,
+            place: place.canonicalName,
+            from: null,
+            tripType: 'rt',
+            ignored: [],
+            placeHint: null,
+          },
           place,
           req,
         );
@@ -255,7 +262,9 @@ export class RouterController {
     if (!parsed.place) return cards.askPlaceCard(parsed.intent, req.botName);
 
     // 5. 지역 정규화. 모르는 지명도 등록해서 검색까지는 가본다.
-    const place = await this.places.resolve(parsed.place);
+    //    ⚠️ 해석이 지역 정보를 같이 받아왔으면 넘긴다 — 같은 모델에게 같은 지명을
+    //       두 번 묻지 않는다. 그 두 번이 직렬이라 5초 예산을 넘겼다.
+    const place = await this.places.resolve(parsed.place, parsed.placeHint);
     if (!place) return cards.askPlaceCard(parsed.intent, req.botName);
 
     // 5-b. 나라를 말했으면 검색하지 않고 **그 나라의 도시**로 되묻는다.

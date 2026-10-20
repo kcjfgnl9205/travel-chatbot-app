@@ -54,6 +54,28 @@ export interface CityChoice {
 export type PlaceDraft = Omit<Place, 'id'>;
 
 /**
+ * **발화 해석이 같이 받아온 지역 정보.**
+ *
+ * 사전에 없는 지명("신주쿠")은 원래 모델을 두 번 불렀다 — 발화에서 지명을 뽑는 데
+ * 한 번, 그 지명이 어디인지 묻는 데 또 한 번. 둘 다 최대 4초라 카카오 5초 예산을
+ * 넘겼고, 그때 사용자는 **아무 말풍선도 못 받았다.**
+ *
+ * 첫 호출이 이미 그 지명을 읽고 있으므로 거기서 같이 받아온다. 왕복이 하나 준다.
+ *
+ * ⚠️ **모델이 준 값이라 믿을 수 없다.** 검증하지 않고 그대로 등록하는 건 예전
+ *    경로와 같다 — 틀렸다면 검색 결과가 비는 것으로 드러난다.
+ */
+export interface PlaceHint {
+  canonicalName: string;
+  slug: string | null;
+  countryCode: string | null;
+  kind: PlaceKind;
+  iata: string | null;
+  /** area·landmark 가 속한 도시. 도시·나라면 null. */
+  parentName: string | null;
+}
+
+/**
  * 별칭 정규화 키. **공백 제거 + 소문자.**
  *
  * place_aliases 의 기본키이고, 표기가 흔들려도 같은 지역으로 모이게 하는 유일한 장치다.

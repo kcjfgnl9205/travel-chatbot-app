@@ -350,6 +350,47 @@ describe('IntentService', () => {
     expect(openai.calls).toHaveLength(1);
   });
 
+  /**
+   * ⚠️ **같은 모델에게 같은 지명을 두 번 묻고 있었다.**
+   *
+   * 발화에서 "신주쿠" 를 뽑는 데 한 번(parsed_intent), 그 신주쿠가 어디인지 묻는 데
+   * 또 한 번(place_lookup). 둘 다 최대 4초인데 **직렬**이라 카카오 5초 예산을 넘겼고,
+   * 그때 사용자는 아무 말풍선도 못 받았다. 첫 호출이 이미 그 지명을 읽고 있으므로
+   * 거기서 같이 받아온다.
+   */
+  describe('지역 정보를 발화 해석과 한 번에 받는다', () => {
+    it('모델이 준 지역 정보를 placeHint 로 들고 나온다', async () => {
+      const parsed = await service.extract('도쿄 신주쿠 호텔 찾아줘');
+
+      expect(parsed).toMatchObject({ intent: 'hotel', place: '신주쿠' });
+      expect(parsed.placeHint).toMatchObject({
+        canonicalName: '신주쿠',
+        kind: 'area',
+        parentName: '도쿄',
+      });
+      expect(openai.calls).toHaveLength(1);
+    });
+
+    it('사전으로 끝난 발화에는 힌트가 없다 — 모델을 안 탔으니 당연하다', async () => {
+      const parsed = await service.extract('오사카 호텔 추천해줘');
+
+      expect(parsed.placeHint).toBeNull();
+      expect(openai.calls).toHaveLength(0);
+    });
+
+    /**
+     * ⚠️ **캐시에도 같이 넣어야 한다.** 안 넣으면 캐시를 맞은 발화만 지역 정보를
+     *    잃고 places 가 모델을 한 번 더 부른다 — 캐시가 느려지는 거꾸로 된 상황이다.
+     */
+    it('캐시를 맞아도 힌트가 살아 있다', async () => {
+      await service.extract('도쿄 신주쿠 호텔 찾아줘');
+      const again = await service.extract('도쿄 신주쿠 호텔 찾아줘!');
+
+      expect(again.placeHint?.canonicalName).toBe('신주쿠');
+      expect(openai.calls).toHaveLength(1);
+    });
+  });
+
   it('같은 문장을 두 번 파싱하지 않는다 — 단톡방은 같은 말이 반복된다', async () => {
     await service.extract('도톤보리에서 가까운 호텔');
     await service.extract('도톤보리에서  가까운 호텔!');

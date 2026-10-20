@@ -1,3 +1,4 @@
+import { PlaceHint } from '../places/places.types';
 import { SearchKind, TripType } from '../search/search.types';
 
 /**
@@ -28,6 +29,14 @@ export interface ParsedIntent {
    * 호텔을 보고 속았다고 느낀다.
    */
   ignored: string[];
+  /**
+   * 모델이 `place` 를 읽으면서 **같이 준 지역 정보**. 사전 경로면 null 이다.
+   *
+   * 이게 있으면 [places.service.ts](../places/places.service.ts) 가 "이 지명이
+   * 어디냐" 를 **다시 묻지 않는다.** 모델 왕복 하나가 통째로 빠진다 — 그 왕복이
+   * 카카오 5초 예산을 넘겨 말풍선을 통째로 날리던 자리다.
+   */
+  placeHint: PlaceHint | null;
 }
 
 export const UNKNOWN_INTENT: ParsedIntent = {
@@ -36,6 +45,7 @@ export const UNKNOWN_INTENT: ParsedIntent = {
   from: null,
   tripType: 'rt',
   ignored: [],
+  placeHint: null,
 };
 
 /**
@@ -107,6 +117,8 @@ export function fromCommand(utterance: string): ParsedIntent | null {
     from: null,
     tripType: tripTypeOf(utterance),
     ignored: ignoredConditions(utterance),
+    // 대표 명령어는 모델을 안 탄다 — 지역 정보도 같이 올 수 없다.
+    placeHint: null,
   };
 }
 

@@ -336,6 +336,21 @@ describe('POST /api/v1/kakao/router', () => {
     });
   });
 
+  /**
+   * ⚠️ **요청 경로의 모델 호출은 많아야 한 번이다.**
+   *
+   * 사전에 없는 지명은 예전에 두 번 탔다 — 발화에서 지명을 뽑는 데 한 번,
+   * 그 지명이 어디인지 묻는 데 또 한 번. 둘 다 최대 4초인데 **직렬**이라 카카오
+   * 5초 예산을 넘겼고, 그때 사용자는 아무 말풍선도 못 받았다. 이 테스트가
+   * 그 왕복이 되살아나는 것을 막는다.
+   */
+  it('사전에 없는 지명이어도 모델은 한 번만 탄다', async () => {
+    await post(ctx.app, kakaoPayload('도쿄 신주쿠 호텔 찾아줘. 11월 10일 체크인, 성인 2명'));
+    await new Promise((r) => setTimeout(r, 150));
+
+    expect(ctx.openai.calls.map((c: any) => c.format?.name)).toEqual(['parsed_intent']);
+  });
+
   // ---------------------------------------------------------- 나라
   it('나라를 말하면 그 나라의 도시로 되묻는다', async () => {
     const res = await post(ctx.app, kakaoPayload('베트남 여행지 추천해줘'));

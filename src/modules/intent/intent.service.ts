@@ -7,6 +7,7 @@ import { IntentCacheRepository } from '../database/repositories/intent-cache.rep
 import { OpenAiService, parseJsonLoose } from '../openai/openai.service';
 import { findCitiesInText, findOriginInText, lookupCity, tokenAfterCity } from '../places/city-table';
 import { findCountryInText, lookupCountry, stripDomainWord } from '../places/country-table';
+import { PlaceHint, PlaceKind } from '../places/places.types';
 import { SearchKind } from '../search/search.types';
 import {
   ParsedIntent,
@@ -46,6 +47,13 @@ const INSTRUCTIONS = [
   'from 은 항공권의 출발지다. 말하지 않았으면 null 로 둔다. 서울이라고 추측하지 마라.',
   '"편도" 의미가 있으면 trip_type 은 ow, 아니면 rt 다.',
   'ignored 에는 날짜·인원·예산·테마(아이랑, 야경, 조용한 곳 등)처럼 검색에 반영할 수 없는 조건을 사용자가 말한 그대로 담는다.',
+  // ⚠️ 아래가 예전에 두 번째 모델 호출이던 것이다. 같은 지명을 이미 읽고 있으므로
+  //    여기서 같이 답하게 한다 — 왕복 하나가 통째로 빠진다.
+  'place 를 정했으면 place_detail 에 그 지역이 무엇인지도 같이 적는다.',
+  '나라면 kind=country, 도시면 kind=city, 도시 안의 구역·번화가면 kind=area, 단일 명소면 kind=landmark 다.',
+  'area/landmark 면 그것이 속한 도시를 parent_name 에 한국어로 적는다 (도톤보리 → 오사카, 신주쿠 → 도쿄).',
+  '도시에 대표 공항이 있으면 IATA 3자를 적는다 (오사카 → KIX). 없으면 null.',
+  'place 가 null 이면 place_detail.canonical_name 도 null 이다.',
 ].join(' ');
 
 const SCHEMA = {
@@ -55,7 +63,7 @@ const SCHEMA = {
   schema: {
     type: 'object',
     additionalProperties: false,
-    required: ['intent', 'place', 'from', 'trip_type', 'ignored'],
+    required: ['intent', 'place', 'from', 'trip_type', 'ignored', 'place_detail'],
     properties: {
       intent: { type: 'string', enum: ['hotel', 'flight', 'attraction', 'unknown'] },
       place: {
@@ -69,6 +77,27 @@ const SCHEMA = {
         items: { type: 'string' },
         description: '날짜·인원·예산 등 검색에 반영되지 않는 조건. 사용자가 말한 표현 그대로',
       },
+      // ⚠️ **strict 모드는 모든 키가 required 여야 한다.** 빼면 스키마가 거절된다.
+      //    "없음" 은 키를 생략하는 게 아니라 canonical_name 을 null 로 두는 것이다.
+      place_detail: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['canonical_name', 'slug', 'country_code', 'kind', 'iata', 'parent_name'],
+        properties: {
+          canonical_name: {
+            type: ['string', 'null'],
+            description: '표준 한국어 지명. 오타 교정 후. place 가 없으면 null',
+          },
+          slug: { type: ['string', 'null'], description: '영문 소문자 슬러그. osaka, shinjuku' },
+          country_code: { type: ['string', 'null'], description: 'ISO 3166-1 alpha-2. JP, KR' },
+          kind: { type: 'string', enum: ['country', 'city', 'area', 'landmark'] },
+          iata: { type: ['string', 'null'], description: '대표 공항 IATA 3자. 없으면 null' },
+          parent_name: {
+            type: ['string', 'null'],
+            description: 'area/landmark 가 속한 도시의 한국어명. 도시·나라면 null',
+          },
+        },
+      },
     },
   },
 };
@@ -79,6 +108,7 @@ interface RawIntent {
   from?: unknown;
   trip_type?: unknown;
   ignored?: unknown;
+  place_detail?: unknown;
 }
 
 interface CacheEntry {
@@ -134,7 +164,7 @@ export class IntentService {
     const parsed = await this.askModel(trimmed);
     // unknown 은 캐싱하지 않는다. 모델이 한 번 헛돈 것을 일주일씩 굳히면
     // 멀쩡한 질문이 그동안 계속 도움말로 떨어진다.
-    if (parsed.intent === 'unknown') return this.degrade(trimmed, parsed.place);
+    if (parsed.intent === 'unknown') return this.degrade(trimmed, parsed.place, parsed.placeHint);
     return this.remember(hash, parsed);
   }
 
@@ -156,7 +186,11 @@ export class IntentService {
    *    ("베트남 여행지 추천해줘"). 그걸 버리고 null 로 만들면 지역을 말한 사람에게
    *    "어느 지역이세요?" 를 되묻는 꼴이 된다.
    */
-  private degrade(utterance: string, place: string | null = null): ParsedIntent {
+  private degrade(
+    utterance: string,
+    place: string | null = null,
+    placeHint: PlaceHint | null = null,
+  ): ParsedIntent {
     const intent = intentFromKeywords(utterance);
     if (intent === 'unknown') return UNKNOWN_INTENT;
     return {
@@ -165,6 +199,8 @@ export class IntentService {
       from: null,
       tripType: tripTypeOf(utterance),
       ignored: ignoredConditions(utterance),
+      // 의도만 못 잡았을 뿐 지역은 제대로 읽었을 수 있다. 버리면 모델을 또 부른다.
+      placeHint,
     };
   }
 
@@ -298,11 +334,11 @@ export function fromKeywords(utterance: string): ParsedIntent | null {
     // "에서" 가 도시에 안 붙어 있다 ("이번에 오사카 도쿄 항공권"). 모델이 가른다.
     if (!origin || !destination) return null;
 
-    return { ...base, place: destination.nameKo, from: origin.nameKo };
+    return { ...base, place: destination.nameKo, from: origin.nameKo, placeHint: null };
   }
 
   if (intent === 'flight' && cities.length === 2) {
-    return { ...base, place: cities[1].nameKo, from: cities[0].nameKo };
+    return { ...base, place: cities[1].nameKo, from: cities[0].nameKo, placeHint: null };
   }
 
   // 도시가 먼저다. "일본 오사카 호텔" 은 오사카를 찾아야지 일본을 되물으면 안 된다.
@@ -318,7 +354,9 @@ export function fromKeywords(utterance: string): ParsedIntent | null {
   const place = only?.nameKo ?? (cities.length ? null : (findCountryInText(utterance)?.nameKo ?? null));
   if (!place) return null;
 
-  return { ...base, place, from: null };
+  // 사전 경로는 모델을 안 탄다 — 지역 정보도 같이 올 수 없다. 애초에 필요도 없다:
+  // 사전이 아는 지명이므로 places 도 사전에서 찾는다.
+  return { ...base, place, from: null, placeHint: null };
 }
 
 /**
@@ -367,8 +405,39 @@ function normalize(raw: RawIntent, utterance: string): ParsedIntent {
     tripType: (raw.trip_type === 'ow' ? 'ow' : 'rt'),
     // 모델이 날짜를 빠뜨려도 고지는 나가야 한다. 정규식으로 한 번 더 훑는다.
     ignored: mergeIgnored(modelIgnored, utterance ? ignoredConditions(utterance) : []),
+    placeHint: placeHintOf(raw.place_detail, place),
   };
 }
+
+/**
+ * `place_detail` → [PlaceHint](../places/places.types.ts).
+ *
+ * ⚠️ **place 와 어긋나면 버린다.** 모델이 place 는 "신주쿠" 로 주고 detail 은 도쿄로
+ *    주는 일이 있는데, 그걸 그대로 쓰면 신주쿠를 물은 사람의 place 가 도쿄로 등록되고
+ *    **그 뒤로 영영 도쿄로 검색된다**(place_aliases 에 남는다). 어긋나면 안 쓰고
+ *    places 가 평소대로 한 번 더 묻게 둔다 — 느린 게 조용히 틀린 것보다 낫다.
+ */
+function placeHintOf(detail: unknown, place: string | null): PlaceHint | null {
+  if (!place || !detail || typeof detail !== 'object') return null;
+  const raw = detail as Record<string, unknown>;
+
+  const canonicalName = text(raw.canonical_name);
+  if (!canonicalName) return null;
+
+  const kind = String(raw.kind);
+  if (!PLACE_KINDS.has(kind)) return null;
+
+  return {
+    canonicalName,
+    slug: text(raw.slug),
+    countryCode: text(raw.country_code),
+    kind: kind as PlaceKind,
+    iata: text(raw.iata),
+    parentName: text(raw.parent_name),
+  };
+}
+
+const PLACE_KINDS = new Set<string>(['country', 'city', 'area', 'landmark']);
 
 function toRaw(parsed: ParsedIntent): RawIntent {
   return {
@@ -377,6 +446,16 @@ function toRaw(parsed: ParsedIntent): RawIntent {
     from: parsed.from,
     trip_type: parsed.tripType,
     ignored: parsed.ignored,
+    // ⚠️ **캐시에도 같이 넣는다.** 안 넣으면 캐시를 맞은 발화만 지역 정보를 잃고
+    //    places 가 모델을 한 번 더 부른다 — 캐시가 느려지는 거꾸로 된 상황이 된다.
+    place_detail: parsed.placeHint && {
+      canonical_name: parsed.placeHint.canonicalName,
+      slug: parsed.placeHint.slug,
+      country_code: parsed.placeHint.countryCode,
+      kind: parsed.placeHint.kind,
+      iata: parsed.placeHint.iata,
+      parent_name: parsed.placeHint.parentName,
+    },
   };
 }
 
