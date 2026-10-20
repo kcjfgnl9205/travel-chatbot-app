@@ -84,8 +84,16 @@ function str(name: string, fallback = ''): string {
   return v === undefined || v === '' ? fallback : v;
 }
 
+/**
+ * ⚠️ **빈 값은 "안 적은 것" 으로 본다.** `Number('')` 는 0 이고 0 은 유한한 수라,
+ *    그냥 두면 `FAILED_TTL_MINUTES=` 한 줄이 기본값이 아니라 **0** 이 된다 —
+ *    빈손을 아예 안 굳히거나 타임아웃을 0 으로 만드는 식으로 조용히 망가진다.
+ *    .env 에서 값을 지울 때 키까지 지우는 사람은 드물다.
+ */
 function num(name: string, fallback: number): number {
-  const v = Number(process.env[name]);
+  const raw = (process.env[name] ?? '').trim();
+  if (!raw) return fallback;
+  const v = Number(raw);
   return Number.isFinite(v) ? v : fallback;
 }
 

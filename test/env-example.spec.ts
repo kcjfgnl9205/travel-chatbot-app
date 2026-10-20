@@ -1,3 +1,4 @@
+import { loadConfig } from '../src/config/app.config';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -35,6 +36,34 @@ describe('.env.example = 코드가 읽는 환경변수', () => {
   const documented = new Set(
     [...read('.env.example').matchAll(/^([A-Z_0-9]+)=/gm)].map((m) => m[1]),
   );
+
+  /**
+   * ⚠️ **빈 값은 기본값이 아니다 — 였다.**
+   *
+   * `Number('')` 는 0 이고 0 은 유한한 수라, `FAILED_TTL_MINUTES=` 한 줄이
+   * 기본값(3)이 아니라 0 으로 읽혔다. .env 에서 값을 지울 때 키까지 지우는
+   * 사람은 드물어서, 빈손을 아예 안 굳히거나 타임아웃이 0 이 되는 식으로
+   * 조용히 망가진다.
+   */
+  it('숫자 knob 은 비워둬도 기본값으로 떨어진다', () => {
+    const key = 'FAILED_TTL_MINUTES';
+    const original = process.env[key];
+    try {
+      delete process.env[key];
+      const absent = loadConfig().failedTtlMinutes;
+
+      process.env[key] = '';
+      expect(loadConfig().failedTtlMinutes).toBe(absent);
+      process.env[key] = '   ';
+      expect(loadConfig().failedTtlMinutes).toBe(absent);
+      // 값을 제대로 적으면 당연히 그 값이다.
+      process.env[key] = '7';
+      expect(loadConfig().failedTtlMinutes).toBe(7);
+    } finally {
+      if (original === undefined) delete process.env[key];
+      else process.env[key] = original;
+    }
+  });
 
   it('코드가 읽는 값은 전부 문서에 있다', () => {
     expect([...declared].filter((k) => !documented.has(k)).sort()).toEqual([]);
