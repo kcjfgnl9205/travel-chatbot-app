@@ -615,11 +615,16 @@ async function isDeadPage(url: string, timeoutMs: number): Promise<boolean> {
     return false;
   };
 
-  const head = gone(await probe(url, 'HEAD', {}, timeoutMs));
+  // ⚠️ **브라우저인 척해야 한다.** UA 를 안 보내면 이 사이트들은 봇으로 보고
+  //    막는데, 그게 403 이면 다행이고 **404 를 주는 곳이면 멀쩡한 호텔이 통째로
+  //    사라진다.** 같은 이유로 페이지 긁기(fetchHtml)도 UA 를 보낸다.
+  const headers = { 'user-agent': BROWSER_UA, 'accept-language': 'ko-KR,ko;q=0.9' };
+
+  const head = gone(await probe(url, 'HEAD', headers, timeoutMs));
   if (head !== null) return head;
 
   // HEAD 자체를 막는 CDN 이 있다. 1바이트만 받아서 다시 본다.
-  return gone(await probe(url, 'GET', { range: 'bytes=0-0' }, timeoutMs)) ?? false;
+  return gone(await probe(url, 'GET', { ...headers, range: 'bytes=0-0' }, timeoutMs)) ?? false;
 }
 
 /**

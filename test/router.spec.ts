@@ -351,6 +351,43 @@ describe('POST /api/v1/kakao/router', () => {
       expect(items[0].messageText).toContain('11월 23일 귀국');
     });
 
+    /**
+     * ⚠️ **예문은 그 자체로 통하는 문장이어야 한다.**
+     *
+     * 처음에는 날짜만 적어 「11월 20일 출발 11월 23일 귀국」이라고 안내했다. 그 문장에는
+     * 여행 신호가 없어서 1차 필터(TRAVEL_HINT)에서 떨어지고 **모델에 가기도 전에**
+     * "어떤 여행을 찾으시나요?" 가 나갔다 — 시킨 대로 보낸 사람이 이해 못 했다는 답을
+     * 받았다. 되묻기 카드가 막다른 길이 되는 최악의 경우다.
+     */
+    it('안내 예문을 그대로 보내도 통한다', async () => {
+      const res = await post(
+        ctx.app,
+        kakaoPayload('서울에서 도쿄 항공권 11월 23일 출발 11월 20일 귀국'),
+      );
+
+      const tail = res.body.template.outputs[1].textCard.description as string;
+      const example = /「(.+?)」/s.exec(tail)![1];
+      expect(example).toContain('서울에서 도쿄 항공권');
+
+      // 예문을 그대로 보내면 되묻기가 아니라 평소 경로를 타야 한다.
+      const again = await post(ctx.app, kakaoPayload(example));
+      expect(JSON.stringify(again.body)).not.toContain('어떤 여행을 찾으시나요');
+      expect(JSON.stringify(again.body)).not.toContain('빨라요');
+    });
+
+    /** 버튼이 보내는 문장도 같은 기준이다. 연도까지 박아서 다시 굴러가지 않게 한다. */
+    it('되묻기 버튼 문장도 그대로 통한다', async () => {
+      const res = await post(
+        ctx.app,
+        kakaoPayload('서울에서 도쿄 항공권 11월 23일 출발 11월 20일 귀국'),
+      );
+
+      const items = listCardOf(res.body).items as { messageText: string }[];
+      const again = await post(ctx.app, kakaoPayload(items[0].messageText));
+      expect(JSON.stringify(again.body)).not.toContain('어떤 여행을 찾으시나요');
+      expect(JSON.stringify(again.body)).not.toContain('빨라요');
+    });
+
     it('연도를 적은 지난 날짜는 다음 해로 바꾸지 않고 되묻는다', async () => {
       const res = await post(
         ctx.app,

@@ -24,6 +24,7 @@ import {
   intentFromKeywords,
   mergeIgnored,
   tripTypeOf,
+  usableIgnored,
 } from './intent.types';
 
 /**
@@ -147,7 +148,7 @@ export class IntentService {
     if (!trimmed) return UNKNOWN_INTENT;
 
     const hash = hashOf(trimmed);
-    const cached = this.fromMemory(hash) ?? (await this.fromStore(hash));
+    const cached = this.fromMemory(hash) ?? (await this.fromStore(hash, trimmed));
     if (cached) return cached;
 
     // 대표 명령어("여행지 오사카")는 의도가 확정이고 뒤가 곧 지명이다. 사전에 없는
@@ -222,12 +223,18 @@ export class IntentService {
     return hit.parsed;
   }
 
-  private async fromStore(hash: string): Promise<ParsedIntent | null> {
+  /**
+   * ⚠️ **발화를 같이 넘긴다.** 예전에는 빈 문자열을 넘겨서, 캐시에 굳은 엉뚱한
+   *    `ignored` 를 걸러낼 방법이 없었다 — 모델이 한 번 발화를 통째로 담아 보내면
+   *    그게 7일 동안 그대로 나갔다(INTENT_CACHE_TTL_MINUTES). 넘기면 `normalize` 가
+   *    읽을 때마다 다시 거른다.
+   */
+  private async fromStore(hash: string, utterance: string): Promise<ParsedIntent | null> {
     if (!this.repo.enabled) return null;
     try {
       const raw = await this.repo.get(hash);
       if (!raw || typeof raw !== 'object') return null;
-      const parsed = normalize(raw, '');
+      const parsed = normalize(raw, utterance);
       return parsed.intent === 'unknown' ? null : parsed;
     } catch (err) {
       this.logger.warn(`intent cache read failed err=${err}`);
@@ -460,8 +467,13 @@ function normalize(raw: RawIntent, utterance: string): ParsedIntent {
     place,
     from: text(raw.from),
     tripType: (raw.trip_type === 'ow' ? 'ow' : 'rt'),
-    // 모델이 날짜를 빠뜨려도 고지는 나가야 한다. 정규식으로 한 번 더 훑는다.
-    ignored: mergeIgnored(modelIgnored, utterance ? ignoredConditions(utterance) : []),
+    // ⚠️ **모델이 준 조건은 걸러서 쓴다.** 발화를 통째로 담아 보낼 때가 있고, 그러면
+    //    "일부 조건(호텔, 찾아줘, 도쿄, 신주쿠)은 반영되지 않았어요" 가 나간다.
+    //    모델이 날짜를 빠뜨려도 고지는 나가야 하므로 정규식으로 한 번 더 훑는다.
+    ignored: mergeIgnored(
+      usableIgnored(modelIgnored, utterance),
+      utterance ? ignoredConditions(utterance) : [],
+    ),
     placeHint: placeHintOf(raw.place_detail, place),
   };
 }

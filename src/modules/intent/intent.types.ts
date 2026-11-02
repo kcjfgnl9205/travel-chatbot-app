@@ -165,6 +165,38 @@ export function ignoredConditions(utterance: string): string[] {
   return [...found];
 }
 
+/**
+ * **모델이 준 조건 중 믿을 수 있는 것만 남긴다.**
+ *
+ * 모델은 가끔 발화를 통째로 `ignored` 에 담는다. 실제로 "도쿄 신주쿠 호텔 찾아줘" 가
+ * `["호텔","찾아줘","도쿄","신주쿠"]` 로 돌아왔고, 사용자는 **"일부 조건(호텔, 찾아줘,
+ * 도쿄, 신주쿠)은 반영되지 않았어요"** 를 받았다 — 지역도 도메인도 멀쩡히 반영했는데
+ * 안 했다고 말한 꼴이다. 게다가 그 값이 `intent_cache` 에 7일간 굳는다.
+ *
+ * 규칙 둘. 둘 다 통과해야 남는다.
+ *
+ *   1. **발화에 실제로 있던 말이어야 한다.** 모델이 지어낸 "4명" 을 막는다.
+ *   2. **우리 정규식이 그 안에서 조건을 찾아야 한다.** 날짜·인원·예산·테마 중
+ *      하나도 안 걸리면 그건 조건이 아니라 지명이거나 서술어다.
+ *
+ * ⚠️ **느슨하게 두면 조용히 거짓말이 된다.** 고지는 "이건 반영 안 됐다" 는 약속이라,
+ *    반영한 것을 안 했다고 적으면 사용자는 멀쩡한 결과를 의심한다. 반대 방향(놓친
+ *    조건을 안 적는 것)은 우리 정규식이 따로 훑어 막는다 — 그쪽이 더 촘촘하다.
+ */
+export function usableIgnored(list: string[], utterance: string): string[] {
+  const haystack = squeeze(utterance);
+  return list.filter((raw) => {
+    const text = String(raw ?? '').trim();
+    if (!text) return false;
+    if (haystack && !haystack.includes(squeeze(text))) return false;
+    return ignoredConditions(text).length > 0;
+  });
+}
+
+function squeeze(text: string): string {
+  return text.replace(/\s+/g, '').toLowerCase();
+}
+
 /** 두 곳에서 온 조건을 합친다. 표기가 같은 건 한 번만 남긴다. */
 export function mergeIgnored(...lists: string[][]): string[] {
   const seen = new Map<string, string>();

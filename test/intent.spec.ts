@@ -11,6 +11,7 @@ import {
   intentFromKeywords,
   mergeIgnored,
   tripTypeOf,
+  usableIgnored,
 } from '../src/modules/intent/intent.types';
 import { withObjectParticle } from '../src/modules/kakao/cards';
 import { OpenAiService } from '../src/modules/openai/openai.service';
@@ -337,6 +338,38 @@ describe('무시한 조건 추출', () => {
         expect(ignoredConditions(plain)).toEqual([]);
       }
     });
+  });
+});
+
+/**
+ * **모델이 준 "반영하지 않은 조건" 은 걸러서 쓴다.**
+ *
+ * 운영에서 "도쿄 신주쿠 호텔 찾아줘" 가 `["호텔","찾아줘","도쿄","신주쿠"]` 로 돌아왔고,
+ * 사용자는 **"일부 조건(호텔, 찾아줘, 도쿄, 신주쿠)은 반영되지 않았어요"** 를 받았다 —
+ * 지역도 도메인도 멀쩡히 반영했는데 안 했다고 말한 꼴이다. 게다가 그 값이 발화 해시로
+ * 7일간 굳는다(INTENT_CACHE_TTL_MINUTES).
+ */
+describe('모델이 준 조건 거르기', () => {
+  it('발화를 통째로 담아 보내면 전부 버린다', () => {
+    expect(usableIgnored(['호텔', '찾아줘', '도쿄', '신주쿠'], '도쿄 신주쿠 호텔 찾아줘')).toEqual(
+      [],
+    );
+  });
+
+  it('진짜 조건은 남긴다 — 날짜·인원·예산·테마', () => {
+    const utterance = '오사카 호텔 4명 아이랑 11월 20일 10만원 이하';
+    expect(usableIgnored(['4명', '아이랑', '11월 20일', '10만원', '오사카', '호텔'], utterance)).toEqual(
+      ['4명', '아이랑', '11월 20일', '10만원'],
+    );
+  });
+
+  /** ⚠️ 말하지도 않은 조건을 "반영 안 했다" 고 하면 사용자는 멀쩡한 결과를 의심한다. */
+  it('발화에 없던 말은 버린다 — 모델이 지어낸 값', () => {
+    expect(usableIgnored(['4명'], '오사카 호텔 추천해줘')).toEqual([]);
+  });
+
+  it('빈 값·공백은 조용히 버린다', () => {
+    expect(usableIgnored(['', '   '], '오사카 호텔')).toEqual([]);
   });
 });
 

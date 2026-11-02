@@ -287,6 +287,15 @@ export function fixDatesCard(
       ? `${fullDayText(problem.date)}은 이미 지난 날짜예요`
       : `귀국일(${dayText(problem.back)})이 출발일(${dayText(problem.depart)})보다 빨라요`;
 
+  // ⚠️ **예문에는 연도를 안 쓴다.** 버튼(messageText)과 달리 이건 한 해가 지나도
+  //    그대로 남는 글이라, 연도를 박으면 지난 날짜를 예문으로 권하게 된다. 연도가
+  //    없으면 파서가 다음 해로 굴려서 **항상 미래 날짜**가 된다.
+  const example = [
+    `${meta.fromName ?? '서울'}에서 ${meta.placeName} 항공권`,
+    '12월 1일 출발',
+    oneway ? '편도' : '12월 5일 귀국',
+  ].join(' ');
+
   const items = choicesFor(problem, trip).map((choice) => ({
     title: t.cut(choice.label, t.MAX_LIST_ITEM_TITLE),
     description: t.cut('이 날짜로 찾기', t.MAX_LIST_ITEM_DESC),
@@ -302,8 +311,13 @@ export function fixDatesCard(
       },
     },
     t.textCard({
+      // ⚠️ **예문은 그 자체로 통하는 문장이어야 한다.** 처음에는 날짜만 적어
+      //    「11월 20일 출발 11월 23일 귀국」이라고 안내했는데, 그 문장에는 여행
+      //    신호가 없어서(TRAVEL_HINT) 모델에 가기도 전에 "어떤 여행을 찾으시나요?"
+      //    로 떨어졌다 — **시킨 대로 보낸 사람이 이해 못 했다는 답을 받았다.**
+      //    출발지·도착지·'항공권' 까지 들어간 예문을 보여준다.
       description:
-        '다른 날짜를 원하면 아래 버튼을 누르고\n「11월 20일 출발 11월 23일 귀국」처럼 보내주세요.',
+        `다른 날짜로 찾으시려면 아래 버튼을 누르고\n「${example}」\n처럼 출발지까지 함께 보내주세요.`,
       buttons: [t.mentionButton(botName)],
     }),
   ]);
