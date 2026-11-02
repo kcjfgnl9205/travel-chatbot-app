@@ -74,6 +74,15 @@ export interface AppConfig {
   moreButtonStyle: 'block' | 'message';
   fallbackBlockId: string;
 
+  /**
+   * 예약 링크가 살아 있는지 확인하고 **죽은 줄을 버릴지.**
+   *
+   * 끄면 모델이 준 주소를 그대로 내보낸다 — 호스트만 맞으면 통과하므로 지어낸
+   * 경로가 그대로 나간다. 켜두는 것이 기본이고, 사이트가 전부 봇을 막아
+   * 멀쩡한 줄까지 사라지는 일이 생기면 그때 끈다.
+   */
+  hotelVerifyLinks: boolean;
+  hotelLinkCheckTimeoutMs: number;
   hotelThumbnails: boolean;
   hotelThumbnailTimeoutMs: number;
   hotelThumbnailMaxBytes: number;
@@ -182,6 +191,9 @@ export function loadConfig(): AppConfig {
 
     // 예약 페이지에서 대표 이미지를 긁어온다. 모델은 이미지 주소를 모른다(웹 검색은
     // 텍스트만 준다) — 그래서 시키면 지어낸다. 페이지에서 직접 읽는 게 유일한 정답이다.
+    hotelVerifyLinks: bool('HOTEL_VERIFY_LINKS', true),
+    // 백그라운드 검색에서만 돈다(카카오 5초 예산 밖). 줄마다 한 번씩이라 짧게 끊는다.
+    hotelLinkCheckTimeoutMs: Math.round(num('HOTEL_LINK_CHECK_TIMEOUT_SECONDS', 3) * 1000),
     hotelThumbnails: bool('HOTEL_THUMBNAILS', true),
     hotelThumbnailTimeoutMs: Math.round(num('HOTEL_THUMBNAIL_TIMEOUT_SECONDS', 4) * 1000),
     // 예약 페이지는 200~400KB 다. 이미지 주소는 앞쪽에 있으므로 다 읽을 이유가 없다.

@@ -65,6 +65,8 @@ export { chooseUrl, toKoreanUrl } from '../../../common/booking-url';
  * 건너뛴 사실(`searchCalls=0`)이 로그에만 있었다. 이제 응답에 실린다.
  */
 export interface SearchTrace extends TwoStageTrace {
+  /** 404·410 이라 버린 예약 링크 수. 모델이 주소를 지어낸 정도를 보여준다. */
+  deadLinks: number;
   /** 살아 있지 않아서 버린 이미지 주소 수. */
   droppedThumbnails: number;
   /** 최종적으로 이미지가 붙은 호텔 수. */
@@ -242,6 +244,7 @@ export class OpenAiHotelProvider
   async searchTraced(query: HotelQuery): Promise<TracedSearch> {
     const trace: SearchTrace = {
       ...newTwoStageTrace(),
+      deadLinks: 0,
       droppedThumbnails: 0,
       thumbnails: 0,
       thumbnailSources: {},
@@ -262,9 +265,10 @@ export class OpenAiHotelProvider
 
     const picks = await this.rank<RawCandidate>(query, candidates, trace);
     const normalized = this.toHotels(picks, query);
+    const alive = await this.dropDeadLinks(normalized, trace, query);
 
     return done(
-      await this.withThumbnails(normalized, trace, query),
+      await this.withThumbnails(alive, trace, query),
       JSON.stringify(candidates),
     );
   }
@@ -340,6 +344,58 @@ export class OpenAiHotelProvider
     }
 
     return hotels.slice(0, query.limit);
+  }
+
+  /**
+   * **열리지 않는 예약 링크를 버린다.**
+   *
+   * 호스트만 보던 때는 `kr.hotels.com/아무거나` 가 그대로 통과했다. 모델은 실재하지
+   * 않는 경로를 그럴듯하게 만들어내고, 그게 애드픽 변환을 타고 사용자에게 나간다 —
+   * 눌러보면 다른 지역이 뜨거나 결과가 없거나 홈으로 튕겼다. 사용자는 그걸
+   * **우리가 추천한 호텔**이라고 믿고 눌렀다.
+   *
+   * ⚠️ **404·410 만 죽은 것으로 본다.** 이 사이트들은 봇을 막아 403·429 를 자주
+   *    주는데, 그건 "주소가 틀렸다" 가 아니라 "우리가 봇으로 보인다" 는 뜻이다.
+   *    그걸 근거로 버리면 **멀쩡한 줄까지 전부 사라진다** — 영어 페이지가 뜨는 것을
+   *    감수하면서까지 지켜온 판단이고([booking-url.ts](../../../common/booking-url.ts)
+   *    `chooseUrl`), 여기서도 같다.
+   *
+   * ⚠️ **전부 버려져도 사용자는 빈손이 아니다.** 그때는 우리가 만든 지역 검색 링크가
+   *    나간다([hotel.service.ts](../hotel.service.ts) `emptyRows`). 그 출구가 없으면
+   *    이 검사는 "정리하지 못했어요" 를 늘리기만 한다.
+   *
+   * 백그라운드 검색에서만 도는 코드라 카카오 5초 예산과 무관하다.
+   */
+  private async dropDeadLinks(
+    hotels: Hotel[],
+    trace: SearchTrace,
+    query: HotelQuery,
+  ): Promise<Hotel[]> {
+    if (!this.config.hotelVerifyLinks || !hotels.length) return hotels;
+
+    const timeoutMs = this.config.hotelLinkCheckTimeoutMs;
+    const checked = await Promise.all(
+      hotels.map(async (hotel) => ({
+        hotel,
+        dead: await isDeadPage(hotel.sourceUrl, timeoutMs),
+      })),
+    );
+
+    const alive = checked.filter((c) => !c.dead).map((c) => c.hotel);
+    trace.deadLinks = hotels.length - alive.length;
+    if (trace.deadLinks) {
+      // ⚠️ **한 줄로 남긴다.** "호텔이 두 곳만 나온다" 를 만났을 때 모델이 적게 준
+      //    건지 링크가 죽어 버려진 건지 갈라야 하는데, 이 줄이 그 답이다.
+      const hosts = checked
+        .filter((c) => c.dead)
+        .map((c) => hostOf(c.hotel.sourceUrl))
+        .join(' ');
+      this.logger.warn(
+        `hotel dead links ${this.subjectOf(query)} checked=${hotels.length} ` +
+          `dropped=${trace.deadLinks} hosts=${hosts}`,
+      );
+    }
+    return alive;
   }
 
   /**
@@ -541,6 +597,32 @@ export function merchantOf(url: string): string | null {
 }
 
 /**
+ * **이 주소가 확실히 죽었는가.** 모르면 false — 살아 있는 쪽이 안전한 기본값이다.
+ *
+ * ⚠️ **404·410 만 죽은 것으로 센다.** 403·429(봇 차단)·타임아웃·네트워크 오류는
+ *    전부 "모르겠다" 다. 그걸 죽음으로 세면 사이트가 우리를 막는 날 **카드가 통째로
+ *    비어버린다.**
+ *
+ * HEAD 를 먼저 쓰고, 막히면 1바이트만 받아 다시 본다 — 예약 페이지는 수백 KB 라
+ * 본문을 받을 이유가 없다. 썸네일 검사(`isLiveImage`)와 같은 수법이다.
+ */
+async function isDeadPage(url: string, timeoutMs: number): Promise<boolean> {
+  if (!url) return true;
+  const gone = (res: Response | null): boolean | null => {
+    if (!res) return null;
+    if (res.status === 404 || res.status === 410) return true;
+    // 200 이든 403 이든 "404 는 아니다" 가 우리가 아는 전부다.
+    return false;
+  };
+
+  const head = gone(await probe(url, 'HEAD', {}, timeoutMs));
+  if (head !== null) return head;
+
+  // HEAD 자체를 막는 CDN 이 있다. 1바이트만 받아서 다시 본다.
+  return gone(await probe(url, 'GET', { range: 'bytes=0-0' }, timeoutMs)) ?? false;
+}
+
+/**
  * 주소가 실제로 살아 있는 이미지인지 본다. 2초 안에 답 없으면 버린다.
  *
  * CDN 마다 사정이 다르다. 실측하면서 걸린 것들:
@@ -569,9 +651,10 @@ async function probe(
   url: string,
   method: 'HEAD' | 'GET',
   headers: Record<string, string> = {},
+  timeoutMs: number = PROBE_TIMEOUT_MS,
 ): Promise<Response | null> {
   try {
-    return await fetchWithTimeout(url, { method, headers }, PROBE_TIMEOUT_MS, async (res) => {
+    return await fetchWithTimeout(url, { method, headers }, timeoutMs, async (res) => {
       // 요청 자체는 성공했으므로 판정은 호출부에 맡긴다.
       await res.body?.cancel().catch(() => undefined);
       return res;
