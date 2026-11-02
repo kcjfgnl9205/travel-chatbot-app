@@ -46,7 +46,7 @@ jobs:
   # 테스트가 깨진 커밋은 배포되지 않는다. 태그가 커밋 SHA 뿐이라(latest 없음)
   # 올라간 이미지를 누가 실수로 집어 갈 일도 없다.
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm # ← ubuntu-latest 에서 변경
     permissions:
       contents: read
       packages: write
@@ -68,7 +68,7 @@ jobs:
           # ⚠️ **서버 CPU 와 맞아야 한다.** 러너는 x86 이고, 다르면 컨테이너가
           #    `exec format error` 로 안 뜬다. NCP 서버가 ARM 이면 저장소 변수
           #    DEPLOY_PLATFORM=linux/arm64 로 바꾼다(QEMU 라 몇 배 느려진다).
-          platforms: ${{ vars.DEPLOY_PLATFORM || 'linux/amd64' }}
+          platforms: ${{ vars.DEPLOY_PLATFORM || 'linux/arm64' }} # ← 'linux/amd64' 에서 변경
           tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
           # test 잡이 같은 검사를 동시에 돌린다. 여기서 또 돌릴 이유가 없다.
           build-args: SKIP_TESTS=1
