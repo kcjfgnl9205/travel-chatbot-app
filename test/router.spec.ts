@@ -122,14 +122,22 @@ describe('POST /api/v1/kakao/router', () => {
     expect(notice).toContain('반영되지 않았어요');
   });
 
-  it('할 말이 없으면 고지 말풍선을 아예 안 붙인다', async () => {
+  it('호텔 카드에는 제휴 고지가 붙는다 — 누르기 전에 알아야 한다', async () => {
     const body = await askUntilCard(ctx.app, '오사카 호텔 추천해줘');
 
-    // 매 카드마다 같은 문장을 반복하지 않는다 — 말풍선이 두 개씩 쌓인다.
-    // 카드 + 멘션 버튼 둘뿐이고, 고지 말풍선이 그 사이에 끼지 않는다.
-    expect(body.template.outputs).toHaveLength(2);
-    expect(noticeOf(body)).toBe('');
+    // 줄 링크는 우리 리다이렉트를 거쳐 애드픽 커미션 링크로 간다. 사용자는 그 사실을
+    // 알 길이 없으므로 **카드 아래에 적는다.**
+    expect(noticeOf(body)).toContain('본 검색 결과에는 제휴 업체가 포함되어 있습니다.');
+    // ⚠️ 말풍선은 셋을 못 넘는다. 넘기면 멘션 버튼이 조용히 잘린다.
+    expect(body.template.outputs).toHaveLength(3);
     expect(mentionCardOf(body)).toBeDefined();
+  });
+
+  it('제휴가 없는 관광지에는 제휴 고지를 붙이지 않는다', async () => {
+    const body = await askUntilCard(ctx.app, '오사카 관광지 추천해줘');
+
+    // 관광지는 `/a/{id}` 로 바로 간다 — 제휴 변환 단계가 아예 없다.
+    expect(noticeOf(body)).not.toContain('제휴 업체');
   });
 
   it('같은 지역을 다시 물으면 저장된 결과가 나간다 — AI 는 한 번만 돈다', async () => {
@@ -301,6 +309,67 @@ describe('POST /api/v1/kakao/router', () => {
     expect(noticeOf(body)).not.toContain('귀국');
   });
 
+  /**
+   * **잘못된 날짜를 조용히 바꾸지 않는다.**
+   *
+   * 운영에서 "11월 23일 출발 11월 20일 귀국" 이 **11월 30일 귀국**으로 검색된다고
+   * 안내했고(출발일 + 7일), "2026년 10월 20일" 은 2027년으로 나갔다. 둘 다 사용자가
+   * 말한 적 없는 날짜의 링크이고, 카드 안내는 연도를 안 찍어서 7번은 드러나지도 않았다.
+   *
+   * ⚠️ 카카오에는 날짜 선택 버튼이 없다. 후보를 `message` 버튼으로 내놓는 것이 전부다.
+   */
+  describe('날짜가 잘못됐을 때', () => {
+    it('귀국일이 출발일보다 빠르면 링크 대신 되묻는다', async () => {
+      const res = await post(
+        ctx.app,
+        kakaoPayload('서울에서 도쿄 항공권 11월 23일 출발 11월 20일 귀국'),
+      );
+
+      const card = listCardOf(res.body);
+      expect(card.header.title).toContain('빨라요');
+      // ⚠️ **링크를 주면 안 된다.** 날짜에 동의하기 전이다.
+      expect(JSON.stringify(res.body)).not.toContain('/r/');
+      // 멋대로 고른 날짜(출발일 + 7일 = 11월 30일)가 결과처럼 나가서도 안 된다.
+      expect(JSON.stringify(res.body)).not.toContain('11월 30일');
+    });
+
+    it('되묻기 버튼은 고쳐진 문장을 그대로 보낸다 — 누르면 평소 경로를 탄다', async () => {
+      const res = await post(
+        ctx.app,
+        kakaoPayload('서울에서 도쿄 항공권 11월 23일 출발 11월 20일 귀국'),
+      );
+
+      const items = listCardOf(res.body).items as { action: string; messageText: string }[];
+      expect(items.length).toBeGreaterThan(0);
+      for (const item of items) {
+        expect(item.action).toBe('message');
+        // 연도를 박아 보낸다 — 안 박으면 그 문장이 또 굴러간다.
+        expect(item.messageText).toMatch(/\d{4}년/);
+      }
+      // 가장 흔한 의도는 두 날짜를 바꿔 끼우는 것이다.
+      expect(items[0].messageText).toContain('11월 20일 출발');
+      expect(items[0].messageText).toContain('11월 23일 귀국');
+    });
+
+    it('연도를 적은 지난 날짜는 다음 해로 바꾸지 않고 되묻는다', async () => {
+      const res = await post(
+        ctx.app,
+        kakaoPayload('서울에서 도쿄 항공권 2020년 10월 20일 출발 2020년 10월 23일 귀국'),
+      );
+
+      const card = listCardOf(res.body);
+      expect(card.header.title).toContain('지난 날짜');
+      expect(card.header.title).toContain('2020년');
+      expect(JSON.stringify(res.body)).not.toContain('/r/');
+    });
+
+    it('멀쩡한 날짜는 평소대로 카드가 나간다', async () => {
+      const body = await askUntilCard(ctx.app, '서울에서 도쿄 항공권 12월 20일 출발 12월 23일 귀국');
+
+      expect(listCardOf(body).header.title).toContain('항공권');
+    });
+  });
+
   // ---------------------------------------------------------- 관광지
   it('관광지는 지도 링크로 간다', async () => {
     const body = await askUntilCard(ctx.app, '오사카 관광지 추천해줘');
@@ -345,10 +414,19 @@ describe('POST /api/v1/kakao/router', () => {
    * 그 왕복이 되살아나는 것을 막는다.
    */
   it('사전에 없는 지명이어도 모델은 한 번만 탄다', async () => {
-    await post(ctx.app, kakaoPayload('도쿄 신주쿠 호텔 찾아줘. 11월 10일 체크인, 성인 2명'));
+    await post(ctx.app, kakaoPayload('도쿄 기타센주 호텔 찾아줘. 11월 10일 체크인, 성인 2명'));
     await new Promise((r) => setTimeout(r, 150));
 
     expect(ctx.openai.calls.map((c: any) => c.format?.name)).toEqual(['parsed_intent']);
+  });
+
+  it('사전에 있는 동네는 모델을 아예 안 탄다 — "도쿄 신주쿠 호텔"', async () => {
+    await post(ctx.app, kakaoPayload('도쿄 신주쿠 호텔 찾아줘'));
+    await new Promise((r) => setTimeout(r, 150));
+
+    // 발화 해석도 지역 정규화도 사전에서 끝난다. 응답 예산을 넘길 자리가 없다 —
+    // 이 발화가 "어떤 여행을 찾으시나요?" 를 받던 것이 수정 요청 3번이다.
+    expect(ctx.openai.calls.map((c: any) => c.format?.name)).not.toContain('parsed_intent');
   });
 
   // ---------------------------------------------------------- 나라
@@ -591,17 +669,92 @@ describe('POST /api/v1/kakao/router', () => {
       }
     }
 
-    it('지역을 좁혀 보라는 출구를 준다', async () => {
+    /**
+     * **호텔은 빈손이어도 줄 것이 있다.**
+     *
+     * 모델이 빈손으로 돌아오는 건 막을 수 없지만(허용 호스트 밖 링크만 주거나 웹
+     * 검색을 건너뛴다) 사용자가 원래 하려던 일 — 그 지역 호텔 보기 — 는 우리가
+     * 모델 없이 해줄 수 있다. "정리하지 못했어요" 는 막다른 길이다.
+     */
+    it('호텔은 직접 만든 검색 링크로 길을 열어준다', async () => {
       await withEmptySearch(async () => {
-        // 첫 요청이 검색을 띄우고, 빈손이 저장된 뒤 두 번째 요청이 그 문구를 받는다.
-        await post(ctx.app, kakaoPayload('오사카 호텔 추천해줘'));
+        // 첫 요청이 검색을 띄우고, 빈손이 저장된 뒤 두 번째 요청이 그 응답을 받는다.
+        await post(ctx.app, kakaoPayload('오사카 호텔 11월 20일 체크인 11월 23일 체크아웃 2명'));
         await new Promise((r) => setTimeout(r, 120));
-        const res = await post(ctx.app, kakaoPayload('오사카 호텔 추천해줘'));
+        const res = await post(
+          ctx.app,
+          kakaoPayload('오사카 호텔 11월 20일 체크인 11월 23일 체크아웃 2명'),
+        );
 
-        const text = textOf(res.body);
-        expect(text).toContain('정리하지 못했어요');
-        expect(text).toContain('동네 이름을 붙여');
+        const card = listCardOf(res.body);
+        expect(card.header.title).toContain('오사카');
+        const titles = (card.items as { title: string }[]).map((i) => i.title);
+        expect(titles.join(' ')).toContain('호텔스닷컴');
+        expect(titles.join(' ')).toContain('마이리얼트립');
+
+        // ⚠️ 왜 추천이 아니라 검색 링크인지 말해야 한다. 안 그러면 품질이 갑자기
+        //    나빠진 것처럼 보인다. 제휴 고지도 같이 나간다.
+        const notice = noticeOf(res.body);
+        expect(notice).toContain('추천 목록을 정리하지 못해');
+        expect(notice).toContain('제휴 업체');
+
+        // 줄 링크는 우리 리다이렉트를 거쳐야 클릭이 집계되고 수수료가 붙는다.
+        for (const item of card.items as { link?: { web: string } }[]) {
+          expect(item.link?.web).toContain('/r/');
+        }
       });
+    });
+
+    /**
+     * ⚠️ **링크 줄은 결과가 아니다.** 저장하면 그 지역은 TTL 동안 AI 검색을 다시
+     *    안 하고 영영 링크 두 줄만 나간다 — 행은 빈손으로 두고 화면만 채운다.
+     *
+     * 저장하지 않았다는 건 **페이지가 생기지 않는 것**으로 드러난다. 저장된 결과는
+     * 20건을 5건씩 끊어 "더 보기" 가 붙는데, 이 줄들은 그 경로를 타지 않는다.
+     * 그리고 빈손이 굳어 있는 동안 모델을 다시 때리지도 않는다.
+     */
+    it('검색 링크를 결과로 저장하지 않는다', async () => {
+      await withEmptySearch(async () => {
+        await post(ctx.app, kakaoPayload('삿포로 호텔 추천해줘'));
+        await new Promise((r) => setTimeout(r, 120));
+        const calls = ctx.provider.calls.length;
+
+        const res = await post(ctx.app, kakaoPayload('삿포로 호텔 추천해줘'));
+        const card = listCardOf(res.body);
+
+        // 페이지가 없다 — 저장된 결과가 아니기 때문이다.
+        const labels = ((card.buttons ?? []) as { label: string }[]).map((b) => b.label);
+        expect(labels).not.toContain('더 보기');
+        // 빈손이 굳어 있는 동안 모델을 또 부르지 않는다.
+        expect(ctx.provider.calls).toHaveLength(calls);
+      });
+    });
+
+    it('관광지는 지역을 좁혀 보라는 출구를 준다', async () => {
+      const { emptyText } = await import('../src/modules/kakao/cards');
+      const text = JSON.stringify(
+        emptyText(
+          { kind: 'attraction', placeName: '오사카', placeSlug: 'osaka' } as any,
+          null,
+        ),
+      );
+
+      expect(text).toContain('정리하지 못했어요');
+      expect(text).toContain('동네 이름을 붙여');
+    });
+
+    /** ⚠️ 이미 동네를 말한 사람에게 동네를 말하라고 하면 안 된다. 시킨 대로 이미 했다. */
+    it('세부 지역을 말한 사람에게는 그 출구를 권하지 않는다', async () => {
+      const { emptyText } = await import('../src/modules/kakao/cards');
+      const text = JSON.stringify(
+        emptyText(
+          { kind: 'attraction', placeName: '신주쿠', placeSlug: 'shinjuku', placeKind: 'area' } as any,
+          null,
+        ),
+      );
+
+      expect(text).toContain('정리하지 못했어요');
+      expect(text).not.toContain('동네 이름');
     });
 
     /**
@@ -644,17 +797,45 @@ describe('POST /api/v1/kakao/router', () => {
       }
     }
 
-    it('침묵 대신 도움말 카드를 보낸다', async () => {
+    it('콜백이 꺼져 있으면 "정리 중" 이라고 말한다 — 못 알아들은 게 아니다', async () => {
       await withTightBudget(30, 300, async () => {
         // 사전에 없는 지명이라 모델 경로를 탄다 — 그 모델이 느리다.
-        const res = await post(ctx.app, kakaoPayload('@가자고 도톤보리 호텔 추천해줘'));
+        const res = await post(ctx.app, kakaoPayload('@가자고 기타센주 호텔 추천해줘'));
 
         expect(res.status).toBe(201);
-        const card = notUnderstoodCardOf(res.body);
-        expect(card.title).toBe('🤔 어떤 여행을 찾으시나요?');
+        const text = JSON.stringify(res.body);
+        // ⚠️ **"어떤 여행을 찾으시나요?" 를 쓰면 안 된다.** 질문은 멀쩡했고 우리가
+        //    늦었을 뿐인데, 그 문구는 사용자에게 자기 문장이 틀렸다고 읽힌다 —
+        //    실제로 멀쩡한 질문을 다르게 바꿔 치며 헤매게 만들었다.
+        expect(text).not.toContain('어떤 여행을 찾으시나요');
+        expect(text).toContain('정리 중');
         // ⚠️ 탓하지 않는다. 늦은 건 서버 사정이고 질문은 멀쩡했다.
-        expect(JSON.stringify(res.body)).not.toMatch(/잘못|오류|실패/);
+        expect(text).not.toMatch(/잘못|오류|실패/);
       });
+    });
+
+    it('콜백이 켜져 있으면 늦은 답을 콜백으로 민다 — 버리지 않는다', async () => {
+      const receiver = await callbackReceiver();
+      try {
+        await withTightBudget(30, 300, async () => {
+          const res = await post(
+            ctx.app,
+            kakaoPayload('@가자고 기타센주 호텔 추천해줘', { callbackUrl: receiver.url }),
+          );
+
+          expect(res.status).toBe(201);
+          // 지금 줄 수 있는 건 "기다려" 뿐이고, 진짜 답은 콜백으로 간다.
+          expect(res.body.useCallback).toBe(true);
+          expect(JSON.stringify(res.body)).not.toContain('어떤 여행을 찾으시나요');
+
+          // ⚠️ **콜백 URL 은 1회용이다.** 예산 가드와 백그라운드 검색이 각자 쏘면
+          //    하나는 버려진다. 밀린 것이 "못 알아들었다" 가 아니어야 한다.
+          const pushed = await receiver.received;
+          expect(JSON.stringify(pushed)).not.toContain('어떤 여행을 찾으시나요');
+        });
+      } finally {
+        await receiver.close();
+      }
     });
 
     it('예산 안에 끝나면 평소대로 답한다 — 가드는 늦을 때만 돈다', async () => {
@@ -673,14 +854,14 @@ describe('POST /api/v1/kakao/router', () => {
      */
     it('끊어도 진행 중이던 일은 끝난다', async () => {
       await withTightBudget(30, 120, async () => {
-        await post(ctx.app, kakaoPayload('@가자고 시부야 호텔 추천해줘'));
+        await post(ctx.app, kakaoPayload('@가자고 기타센주 호텔 추천해줘'));
         expect(ctx.openai.calls).toHaveLength(1);
       });
 
       // 파서가 뒤에서 끝나 의도 캐시에 남았다 → 같은 문장을 다시 물으면 모델이 안 돈다.
       await new Promise((r) => setTimeout(r, 200));
       const before = ctx.openai.calls.length;
-      await post(ctx.app, kakaoPayload('@가자고 시부야 호텔 추천해줘'));
+      await post(ctx.app, kakaoPayload('@가자고 기타센주 호텔 추천해줘'));
 
       expect(ctx.openai.calls.length).toBe(before);
     });

@@ -1,4 +1,4 @@
-import { TripParams, seoulDate } from './search-url';
+import { TripDateProblem, TripParams, seoulDate } from './search-url';
 
 /**
  * 발화에서 날짜·인원을 뽑는다. **모델을 부르지 않는다.**
@@ -21,16 +21,27 @@ export function parseTripParams(utterance: string, now: Date): TripParams {
   const today = seoulDate(now);
   const used: string[] = [];
   /** 발화에 나온 순서가 뜻을 가진다 — 앞이 출발일이다. */
-  const found: { at: number; date: string }[] = [];
+  const found: { at: number; date: string; explicit: boolean }[] = [];
   let text = utterance ?? '';
   let nights: number | null = null;
   let adults: number | null = null;
+  /** 연도까지 적었는데 이미 지난 날짜. 다음 해로 굴리지 않고 되묻는다. */
+  let past: { date: string; raw: string } | null = null;
 
-  const keep = (at: number, raw: string, date: string | null): boolean => {
+  /**
+   * @param explicit 사용자가 날짜를 **콕 집어** 말했는가. "11월 23일" 은 true,
+   *   "다음 주 금요일" 은 false 다. 조용히 고쳐도 되는지가 여기서 갈린다.
+   */
+  const keep = (at: number, raw: string, date: string | null, explicit = false): boolean => {
     if (!date) return false;
-    found.push({ at, date });
+    found.push({ at, date, explicit });
     if (raw) used.push(raw.trim());
     return true;
+  };
+
+  /** 가장 앞선 과거 날짜 하나만 남긴다. 두 개를 다 보여줘도 할 일은 같다. */
+  const markPast = (date: string, raw: string): void => {
+    if (!past || date < past.date) past = { date, raw: raw.trim() };
   };
 
   // 인원. '2인천' 같은 지명 조각을 먹지 않게 '인' 뒤를 본다.
@@ -69,6 +80,19 @@ export function parseTripParams(utterance: string, now: Date): TripParams {
     return true;
   });
 
+  // ⚠️ **연도를 가장 먼저 읽는다.** 예전에는 `2026년` 을 아무 패턴도 안 받아서
+  //    그냥 버렸고, 남은 `10월 20일` 이 "지났으면 내년" 규칙을 타 **2027년**이 됐다.
+  //    사용자가 연도를 적었는데 다른 연도로 바뀐 것이고, 안내에는 연도를 안 찍어서
+  //    (dayText) 드러나지도 않았다.
+  text = scan(text, YEAR_RANGE, (m) => keepYearRange(m, today, keep, markPast));
+  text = scan(text, YEAR_MONTH_DAY, (m) => {
+    const iso = isoOf(Number(m[1]), Number(m[2]), Number(m[3]));
+    if (!iso) return false;
+    // ⚠️ **굴리지 않는다.** 연도를 적은 사람에게는 그 연도가 답이다.
+    if (iso < today) markPast(iso, m[0]);
+    return keep(at(m), m[0], iso, true);
+  });
+
   // ⚠️ '다음 달 15일' 을 통째로 읽는다. '다음 달' 과 '15일' 을 따로 읽으면
   //    다음 달 1일(출발)과 이번 달 15일(귀국)이 되어 일정이 거꾸로 선다.
   text = scan(text, MONTH_WORD_DAY, (m) =>
@@ -87,16 +111,16 @@ export function parseTripParams(utterance: string, now: Date): TripParams {
   text = scan(text, RANGE_KO, (m) => keepRange(m, today, keep));
   text = scan(text, RANGE_SLASH, (m) => keepRange(m, today, keep));
 
-  // 단일 날짜. '10월 20일' · '10/20' · '20일'.
+  // 단일 날짜. '10월 20일' · '10/20' · '20일'. **전부 직접 말한 날짜다.**
   text = scan(text, /(\d{1,2})\s*월\s*(\d{1,2})\s*일?/g, (m) =>
-    keep(at(m), m[0], monthDay(Number(m[1]), Number(m[2]), today)),
+    keep(at(m), m[0], monthDay(Number(m[1]), Number(m[2]), today), true),
   );
   text = scan(text, /(\d{1,2})\s*\/\s*(\d{1,2})/g, (m) =>
-    keep(at(m), m[0], monthDay(Number(m[1]), Number(m[2]), today)),
+    keep(at(m), m[0], monthDay(Number(m[1]), Number(m[2]), today), true),
   );
   // '3일간'·'3일 동안' 은 기간이지 날짜가 아니다.
   text = scan(text, /(\d{1,2})\s*일(?!\s*(?:간|동안))/g, (m) =>
-    keep(at(m), m[0], dayOnly(Number(m[1]), today)),
+    keep(at(m), m[0], dayOnly(Number(m[1]), today), true),
   );
 
   // 요일 범위를 단일 요일보다 먼저 본다.
@@ -107,15 +131,72 @@ export function parseTripParams(utterance: string, now: Date): TripParams {
   scan(text, RELATIVE, (m) => keep(at(m), m[0], relativeDate(squeeze(m[0]), today)));
 
   found.sort((a, b) => a.at - b.at);
+  const depart = found[0] ?? null;
+  const back = found[1] ?? null;
+  const explicit = { depart: Boolean(depart?.explicit), return: Boolean(back?.explicit) };
+
   return {
     // ⚠️ 날짜가 하나면 **출발일**이다. 귀국일만 말하는 사람은 드물고, 틀려도
     //    사용자가 폼에서 고친다.
-    departDate: found[0]?.date ?? null,
-    returnDate: found[1]?.date ?? null,
+    departDate: depart?.date ?? null,
+    returnDate: back?.date ?? null,
     nights,
     adults,
     used,
+    explicit,
+    problem: problemOf(past, depart, back, explicit),
   };
+}
+
+/**
+ * **우리가 고쳐서는 안 되는 날짜 문제**를 가려낸다. 없으면 null 이다.
+ *
+ * 둘 다 "사용자가 직접 말한 날짜" 일 때만 문제로 삼는다. 상대 표현을 파서가
+ * 잘못 읽은 것은 조용히 고치는 게 맞다 — 사용자는 그런 날짜를 말한 적이 없어서
+ * 되물어봐야 무슨 소린지 모른다.
+ *
+ * 과거 날짜가 먼저다. 둘 다 걸리면 날짜를 다시 받아야 하는 건 마찬가지인데,
+ * "지난 날짜" 쪽이 사용자가 바로 알아듣는 설명이다.
+ */
+function problemOf(
+  past: { date: string; raw: string } | null,
+  depart: { date: string; explicit: boolean } | null,
+  back: { date: string; explicit: boolean } | null,
+  explicit: { depart: boolean; return: boolean },
+): TripDateProblem | null {
+  if (past) return { kind: 'past', date: past.date, raw: past.raw };
+  // 같은 날은 정상이다 — 당일치기가 그 자리다. 앞선 날짜만 문제다.
+  if (depart && back && back.date < depart.date && explicit.depart && explicit.return) {
+    return { kind: 'reversed', depart: depart.date, back: back.date };
+  }
+  return null;
+}
+
+/**
+ * '2026년 10월 20일~23일'. 뒤쪽은 연도·월을 생략할 수 있고, 그때는 **앞쪽을 따른다.**
+ *
+ * 연도를 적은 범위는 드물지만, 없으면 앞쪽만 YEAR_MONTH_DAY 가 먹고 뒤쪽 '23일' 이
+ * `dayOnly` 로 새어 **다음 달 23일**이 된다. 조용히 틀리는 자리라 받아둔다.
+ */
+function keepYearRange(
+  m: RegExpMatchArray,
+  today: string,
+  keep: (at: number, raw: string, date: string | null, explicit?: boolean) => boolean,
+  markPast: (date: string, raw: string) => void,
+): boolean {
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const start = isoOf(year, month, Number(m[3]));
+  if (!start) return false;
+
+  let end = isoOf(year, m[4] ? Number(m[4]) : month, Number(m[5]));
+  // 끝이 앞서면 달을 넘는 일정이다 ('2026년 10월 30일~2일' → 11월 2일).
+  if (end && end < start) end = m[4] ? isoOf(year + 1, Number(m[4]), Number(m[5])) : nextMonthDay(year, month, Number(m[5]));
+
+  if (start < today) markPast(start, m[0]);
+  if (!keep(at(m), m[0], start, true)) return false;
+  if (end) keep(at(m) + 0.5, '', end, true);
+  return true;
 }
 
 /**
@@ -140,6 +221,16 @@ function normalize(text: string): string {
 }
 
 // ------------------------------------------------------------------ 패턴
+/**
+ * '2026년 10월 20일'. **연도를 적은 날짜는 그 연도가 답이다.**
+ *
+ * ⚠️ 이 패턴이 없어서 `2026년` 이 버려지고 남은 '10월 20일' 이 "지났으면 내년"
+ *    규칙을 타 2027년으로 나갔다 (수정 요청 7번).
+ */
+const YEAR_MONTH_DAY = /(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일?/g;
+/** '2026년 10월 20일~23일' · '2026년 10월 20일 ~ 11월 2일'. */
+const YEAR_RANGE =
+  /(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일?\s*[~\-–]\s*(?:(\d{1,2})\s*월\s*)?(\d{1,2})\s*일?/g;
 /** '10월 20일~24일' · '10월 20일 ~ 11월 2일'. 뒷쪽 월은 없을 수 있다. */
 const RANGE_KO = /(\d{1,2})\s*월\s*(\d{1,2})\s*일?\s*[~\-–]\s*(?:(\d{1,2})\s*월\s*)?(\d{1,2})\s*일?/g;
 /** '10/20~24' · '10/20 ~ 11/2'. */
@@ -168,7 +259,7 @@ const WEEKDAY_INDEX = '일월화수목금토';
 function keepRange(
   m: RegExpMatchArray,
   today: string,
-  keep: (at: number, raw: string, date: string | null) => boolean,
+  keep: (at: number, raw: string, date: string | null, explicit?: boolean) => boolean,
 ): boolean {
   const month = Number(m[1]);
   const start = monthDay(month, Number(m[2]), today);
@@ -182,10 +273,10 @@ function keepRange(
     // 끝이 시작보다 앞선다 — 달을 넘는 일정이다. '10/30~2' 는 11월 2일이다.
     end = m[3] ? isoOf(year + 1, Number(m[3]), day) : nextMonthDay(year, month, day);
   }
-  if (!keep(at(m), m[0], start)) return false;
+  if (!keep(at(m), m[0], start, true)) return false;
   // 귀국일은 같은 표현에서 나왔다. 자리를 반 칸 뒤로 둬서 출발일 다음에 서게 한다
   // (표현 전체는 출발일 쪽에 한 번만 담긴다 — 고지에서 뺄 때 한 덩어리여야 한다).
-  if (end) keep(at(m) + 0.5, '', end);
+  if (end) keep(at(m) + 0.5, '', end, true);
   return true;
 }
 
@@ -199,7 +290,7 @@ function keepRange(
 function keepWeekdayRange(
   m: RegExpMatchArray,
   today: string,
-  keep: (at: number, raw: string, date: string | null) => boolean,
+  keep: (at: number, raw: string, date: string | null, explicit?: boolean) => boolean,
 ): boolean {
   const start = weekdayDate(m[1], m[2], today);
   const endIndex = WEEKDAY_INDEX.indexOf(m[4]);

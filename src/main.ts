@@ -5,6 +5,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { AppConfig, CONFIG } from './config/app.config';
 import { PAGE_SIZE } from './modules/kakao/paging';
+import { areaTableProblems } from './modules/places/area-table';
 
 const LEVELS: Record<string, LogLevel[]> = {
   DEBUG: ['error', 'warn', 'log', 'debug', 'verbose'],
@@ -56,6 +57,20 @@ async function bootstrap(): Promise<void> {
   logger.log(`swagger  on http://0.0.0.0:${port}/docs`);
 
   warnAboutPaging(app.get<AppConfig>(CONFIG), logger);
+  warnAboutAreaTable(logger);
+}
+
+/**
+ * **세부 지역 사전이 도시 사전과 어긋나는지 본다.**
+ *
+ * 어긋나도 서버는 멀쩡히 뜨고, 그래서 더 나쁘다 — 같은 지명이 도시로도 동네로도
+ * 잡혀 캐시가 둘로 갈리거나, 부모 없는 동네가 등록돼 검색 질의에 도시가 안 붙는다
+ * ("신주쿠" 만으로 웹 검색). 둘 다 **조용히 결과만 나빠진다.**
+ */
+function warnAboutAreaTable(logger: Logger): void {
+  const problems = areaTableProblems();
+  if (!problems.length) return;
+  for (const problem of problems) logger.warn(`area-table: ${problem}`);
 }
 
 /**

@@ -19,6 +19,7 @@ import {
 } from '../kakao/paging';
 import { Place } from '../places/places.types';
 import { PlacesService } from '../places/places.service';
+import { adpickCarries } from '../adpick/adpick.service';
 import { SearchStoreService, isExpired } from './search-store.service';
 import {
   RenderContext,
@@ -85,6 +86,9 @@ export class SearchService {
       kind,
       placeName: place.canonicalName,
       placeSlug: place.slug,
+      // 빈손 안내가 이걸로 갈린다 — 세부 지역을 말한 사람에게 "동네를 붙여 말하라" 고
+      // 하면 안 된다 ([cards.ts](../kakao/cards.ts) narrowerHint).
+      placeKind: place.kind,
       fromName: from?.canonicalName ?? null,
       tripType: kind === 'flight' ? parsed.tripType : null,
       originAssumed: kind === 'flight' ? !parsed.from : false,
@@ -92,6 +96,21 @@ export class SearchService {
     const cacheKey = cacheKeyOf(kind, place, from, parsed.tripType);
     const messageId = await this.logMessage(req, kind, place.slug);
     const domain = this.domainOf(kind);
+
+    // ⚠️ **고칠 수 없는 날짜는 링크를 만들기 전에 되묻는다.** 지난 날짜거나 귀국일이
+    //    출발일보다 빠른데, 둘 다 사용자가 직접 적은 경우다. 예전에는 조용히 고쳐서
+    //    **말한 적 없는 날짜로 검색된 링크**를 줬다 — 11월 20일 귀국이 11월 30일로,
+    //    2026년이 2027년으로 바뀌었고 안내에는 연도를 안 찍어 드러나지도 않았다.
+    //
+    //    검색을 시작하기 전에 끊는 게 중요하다. 항공권은 캐시가 노선 단위라 날짜가
+    //    틀려도 캐시는 멀쩡히 채워지고, 그러면 다음 사람이 그 행을 받는다.
+    const asked = kind === 'flight' ? parseTripParams(req.utterance, new Date(req.started)) : null;
+    if (asked?.problem) {
+      this.logger.log(
+        `date problem kind=${asked.problem.kind} utterance=${JSON.stringify(req.utterance)}`,
+      );
+      return cards.fixDatesCard(meta, asked, req.botName);
+    }
 
     // ⚠️ **즉시 답할 수 있으면 캐시도 선점도 거치지 않는다** (관광지).
     //
@@ -113,7 +132,7 @@ export class SearchService {
           return null;
         });
       if (instant) {
-        if (!instant.length) return cards.emptyText(meta, req.botName);
+        if (!instant.length) return await this.emptyResponse(meta, req);
         await this.store.complete(cacheKey, instant, this.ttlOf(kind), meta);
         this.logger.log(`instant key=${cacheKey} items=${instant.length}`);
         return this.respond(instant, meta, 0, cacheKey, req, {
@@ -159,7 +178,7 @@ export class SearchService {
     }
 
     // 방금 실패했거나 빈손이었다. 짧은 TTL 이 지나면 다시 찾아본다.
-    if (row?.status === 'failed' && !isExpired(row)) return cards.emptyText(meta, req.botName);
+    if (row?.status === 'failed' && !isExpired(row)) return await this.emptyResponse(meta, req);
 
     const claimed = await this.store.claim(
       {
@@ -280,7 +299,7 @@ export class SearchService {
         const ttl = streak >= 2 ? this.config.failedTtlMinutes : 1;
         await this.store.fail(cacheKey, 'empty result', ttl, { ...meta, emptyStreak: streak });
         this.logger.warn(`search empty key=${cacheKey} streak=${streak} ttl=${ttl}m`);
-        await pushOnce(cards.emptyText(meta, req.botName));
+        await pushOnce(await this.emptyResponse(meta, req));
         return;
       }
 
@@ -376,7 +395,7 @@ export class SearchService {
     // 저장 당시와 필드가 달라졌을 수 있다(배포 직후). 모양이 안 맞는 항목은 버린다.
     const valid = items.filter((item) => domain.isItem(item));
     const { page, start } = pageOf(valid, offset, this.config.resultMaxItems);
-    if (!page.length) return cards.emptyText(meta, req.botName);
+    if (!page.length) return await this.emptyResponse(meta, req);
 
     // ⚠️ **날짜·인원은 여기서 발화에서 읽는다. 행에서 읽지 않는다.**
     //    행은 모두가 공유하고 6시간 산다 — A 가 말한 10월 20일을 저장해두면 B 의
@@ -396,7 +415,7 @@ export class SearchService {
       trip,
     };
     const rows = await domain.rows(page, render);
-    if (!rows.length) return cards.emptyText(meta, req.botName);
+    if (!rows.length) return await this.emptyResponse(meta, req);
 
     const buttons: t.Json[] = [];
     if (hasNextPage(valid.length, start, this.config.resultMaxItems)) {
@@ -433,6 +452,7 @@ export class SearchService {
         meta,
         trip,
         now: new Date(req.started),
+        affiliate: carriesAffiliate(meta.kind, page),
       }),
       req.botName,
     );
@@ -448,11 +468,25 @@ export class SearchService {
    *    안 되면 콜백을 아예 끄고 "잠시 뒤 다시 물어봐 주세요" 로 통일해야 한다.
    */
   private async push(req: RouterRequest, body: t.Json): Promise<void> {
-    if (!req.callbackUrl) return;
+    return this.pushCallback(req.callbackUrl, body);
+  }
+
+  /**
+   * 콜백 주소로 응답 하나를 민다. **라우터도 쓴다.**
+   *
+   * 라우터가 응답 예산을 넘겨 `useCallback` 으로 끊은 경우, 늦게 끝난 답을 여기로
+   * 보낸다([router.controller.ts](../kakao/router.controller.ts) `pushWhenReady`).
+   * 검색 쪽 `push` 와 같은 코드를 타야 재시도·로그가 한 곳에 남는다.
+   *
+   * ⚠️ **콜백 URL 은 1회만 유효하다.** 두 번 쏘면 둘 중 하나는 버려지고 어느 쪽이
+   *    버려질지는 운이다. 부르는 쪽이 한 번만 부르도록 책임진다.
+   */
+  async pushCallback(callbackUrl: string | null, body: t.Json): Promise<void> {
+    if (!callbackUrl) return;
 
     try {
       await fetchWithTimeout(
-        req.callbackUrl,
+        callbackUrl,
         {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -471,6 +505,54 @@ export class SearchService {
     } catch (err) {
       this.logger.warn(`kakao callback failed err=${err}`);
     }
+  }
+
+  /**
+   * **빈손 응답.** 도메인이 대신 내놓을 줄이 있으면 그걸 쓰고, 없으면 평소 문구다.
+   *
+   * 호텔만 줄을 갖는다 — AI 가 빈손이어도 "그 지역 호텔 검색 결과" 는 우리가
+   * 모델 없이 열어줄 수 있기 때문이다([hotel.service.ts](../hotel/hotel.service.ts)
+   * `emptyRows`). "정리하지 못했어요" 는 막다른 길이라, 같은 말을 반복하는 사용자가
+   * 같은 문구만 받는다.
+   *
+   * ⚠️ **줄을 캐시에 저장하지 않는다.** 저장하면 그 지역은 TTL 동안 AI 검색을 다시
+   *    안 하고 영영 링크 두 줄만 나간다. 빈손은 빈손으로 기록하고 화면만 채운다.
+   *
+   * ⚠️ **여기서 터지면 안 된다.** 빈손을 알리러 온 길에서 예외가 나면 사용자는
+   *    원인 불명 오류를 받는다. 실패하면 평소 문구로 떨어진다.
+   */
+  private async emptyResponse(meta: SearchMeta, req: RouterRequest): Promise<t.Json> {
+    const domain = this.domains.get(meta.kind);
+    if (!domain?.emptyRows) return cards.emptyText(meta, req.botName);
+
+    const render: RenderContext = {
+      meta,
+      userId: req.userId,
+      messageId: null,
+      started: req.started,
+      cacheHit: false,
+      // 날짜·인원은 **그 사람의 발화**에서 읽는다. 행에서 읽으면 남이 말한 날짜가 묻어난다.
+      trip: parseTripParams(req.utterance, new Date(req.started)),
+    };
+
+    const rows = await domain.emptyRows(meta, render).catch((err) => {
+      this.logger.warn(`emptyRows failed kind=${meta.kind} err=${err}`);
+      return [] as t.Json[];
+    });
+    if (!rows.length) return cards.emptyText(meta, req.botName);
+
+    this.logger.log(`empty fallback kind=${meta.kind} place=${meta.placeName} rows=${rows.length}`);
+    return t.listCardWithNotice(
+      {
+        headerTitle: cards.emptyFallbackHeader(meta),
+        items: rows,
+        buttons: [t.shareButton()],
+      },
+      // ⚠️ 왜 추천이 아니라 검색 링크인지 반드시 말한다. 안 그러면 추천 품질이
+      //    갑자기 나빠진 것처럼 보인다. 제휴 고지는 이 줄들도 제휴를 타므로 같이.
+      [cards.EMPTY_FALLBACK_NOTICE, cards.AFFILIATE_NOTICE].join('\n'),
+      req.botName,
+    );
   }
 
   // ------------------------------------------------------------- 잡동사니
@@ -540,4 +622,24 @@ export function cacheKeyOf(
 ): string {
   if (kind === 'flight') return `flight:${from?.id ?? 0}>${place.id}:${tripType}`;
   return `${kind}:${place.id}`;
+}
+
+/**
+ * 이 페이지에 **제휴 링크가 섞여 있는가.** 카드 아래 고지 한 줄이 여기서 갈린다.
+ *
+ * 줄마다 판정이 다르다 — 항공권은 제휴를 타는 도메인인데 스카이스캐너 줄만 못 탄다
+ * (애드픽에 광고주가 없다). 그래서 kind 만으로는 정할 수 없고 줄을 봐야 한다.
+ *
+ * ⚠️ **관광지는 줄을 보지 않고 제외한다.** 제휴 단계가 아예 없고(`/a/{id}` 로 바로
+ *    간다) merchant 칸도 없는데, `adpickCarries(undefined)` 는 "모르면 취급한다"
+ *    쪽이라 true 를 준다 — 줄만 보면 관광지에도 고지가 붙는다.
+ *
+ * ⚠️ **리다이렉트와 같은 함수로 판정한다.** 두 곳이 각자 기억하면 언젠가 갈리고,
+ *    그러면 고지가 붙은 줄이 제휴를 안 타거나 그 반대가 된다.
+ */
+export function carriesAffiliate(kind: SearchKind, page: unknown[]): boolean {
+  if (kind === 'attraction') return false;
+  return page.some((item) =>
+    adpickCarries((item as { merchant?: string | null } | null)?.merchant ?? null),
+  );
 }

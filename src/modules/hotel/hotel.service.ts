@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import { dedupeBy } from '../../common/dedupe';
+import { TripParams } from '../flight/search-url';
 import * as t from '../kakao/templates';
 import { RecommendationRowsService } from '../recommendation/rows.service';
 import { searchName } from '../search/search-name';
@@ -11,6 +12,7 @@ import {
   SearchMeta,
   SearchTrace,
 } from '../search/search.types';
+import { HotelStay, hotelSearchUrls, resolveStay } from './search-url';
 import {
   HOTEL_PROVIDER,
   Hotel,
@@ -174,6 +176,48 @@ export class HotelService implements SearchDomain<Hotel> {
     return `${meta.placeName} 호텔 더 보기`;
   }
 
+  /**
+   * **AI 가 빈손일 때 대신 내놓는 줄.** 우리가 만든 검색 주소라 모델과 무관하게 열린다.
+   *
+   * 모델은 같은 질의에도 가끔 빈손으로 돌아온다 — 허용 호스트 밖 링크만 주거나
+   * (실제로 `picks=20 kept=0` 이 났다) 웹 검색을 건너뛴다. 그때 "정리하지 못했어요"
+   * 만 주면 막다른 길이다. 사용자가 원래 하려던 일(그 지역 호텔 보기)은
+   * [search-url.ts](./search-url.ts) 가 모델 없이 해줄 수 있다.
+   *
+   * ⚠️ **`render` 를 쓴다** (`renderCounted` 가 아니다). 제휴를 타는 줄이라
+   *    clickId 와 애드픽 변환이 걸려야 한다 — `renderCounted` 로 가면 수수료가
+   *    통째로 샌다([rows.service.ts](../recommendation/rows.service.ts)).
+   *
+   * ⚠️ **날짜·인원이 여기서는 반영된다.** AI 목록은 캐시를 지역으로만 갈라서 못
+   *    넣지만(`queryOf`), 이 주소에는 넣을 수 있다. 그래서 설명 줄에 그 값을 적는다 —
+   *    적어두지 않으면 사용자는 어떤 조건으로 열리는지 모른다.
+   */
+  async emptyRows(meta: SearchMeta, ctx: RenderContext): Promise<t.Json[]> {
+    const now = new Date(ctx.started);
+    const stay = stayOf(ctx.trip);
+    const links = hotelSearchUrls({ placeName: meta.placeName, stay }, now);
+    if (!links.length) return [];
+
+    const { checkIn, checkOut, adults } = resolveStay(stay, now);
+    const when = `${dayText(checkIn)}~${dayText(checkOut)} · ${adults}명`;
+
+    return this.renderer.render(
+      links.map((link) => ({
+        // DB 에 남는 이름. 추천 호텔 한 곳과 구별돼야 나중에 집계를 가를 수 있다.
+        label: `search:${link.merchant}:${meta.placeSlug}`,
+        sourceUrl: link.url,
+        title: `${link.label}에서 ${meta.placeName} 호텔 보기`,
+        description: when,
+        imageUrl: null,
+        // 가격을 모른다. 0 이나 null 이 아니라 **없음**이 맞다.
+        price: null,
+        merchant: link.merchant,
+      })),
+      ctx,
+      { provider: `${this.provider.name}-empty` },
+    );
+  }
+
 
   /**
    * 한 페이지를 listCard 줄로 만든다. **노출 기록과 클릭 링크 발급이 여기서 일어난다.**
@@ -216,4 +260,26 @@ export function queryOf(ctx: SearchContext): HotelQuery {
     guests: null,
     limit: ctx.limit,
   };
+}
+
+/**
+ * 발화에서 읽은 날짜·인원([TripParams](../flight/search-url.ts))을 숙박 조건으로.
+ *
+ * 같은 파서를 쓴다 — "11월 20일 체크인 11월 23일 체크아웃" 도 "11월 20일 출발
+ * 11월 23일 귀국" 과 똑같이 **앞이 시작, 뒤가 끝**이라 가를 이유가 없다. 파서를
+ * 하나 더 만들면 호텔과 항공권이 같은 문장을 다르게 읽기 시작한다.
+ */
+function stayOf(trip: TripParams | null | undefined): HotelStay | null {
+  if (!trip) return null;
+  return {
+    checkIn: trip.departDate,
+    checkOut: trip.returnDate,
+    nights: trip.nights,
+    adults: trip.adults,
+  };
+}
+
+/** '2026-11-20' → '11월 20일'. 카드 한 줄이 좁아 연도는 뺀다. */
+function dayText(iso: string): string {
+  return `${Number(iso.slice(5, 7))}월 ${Number(iso.slice(8, 10))}일`;
 }

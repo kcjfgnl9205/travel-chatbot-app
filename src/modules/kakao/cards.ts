@@ -7,7 +7,7 @@
  */
 
 import * as t from './templates';
-import { TripParams, resolveTrip } from '../flight/search-url';
+import { TripDateProblem, TripParams, resolveTrip } from '../flight/search-url';
 import { CityChoice } from '../places/places.types';
 import { SearchKind, SearchMeta } from '../search/search.types';
 
@@ -70,6 +70,25 @@ export function notUnderstoodCard(botName: string | null): t.Json {
     }),
     t.mentionCard(botName),
   ]);
+}
+
+/**
+ * **예산을 넘겼는데 콜백도 없을 때.**
+ *
+ * 예전에는 이 자리에 `notUnderstoodCard` 가 나갔다. 그게 틀린 말이었다 — 못 알아들은
+ * 게 아니라 **제때 못 끝낸 것**이고, 사용자는 "어떤 여행을 찾으시나요?" 를 보고
+ * 자기 문장이 잘못된 줄 알아 같은 말을 다르게 바꿔 치며 헤맸다. 실제로 "부산 관광지
+ * 추천해줘" 가 이 카드를 받았고, "부산 관광지" 로 줄여 치니 결과가 나왔다 — 짧아서가
+ * 아니라 그 사이 백그라운드 작업이 끝나 캐시가 따뜻해졌기 때문이다.
+ *
+ * ⚠️ **콜백이 켜져 있으면 여기 오지 않는다.** 그때는 늦은 답을 콜백으로 밀어준다
+ *    ([router.controller.ts](./router.controller.ts) `pushWhenReady`).
+ */
+export function slowText(botName: string | null): t.Json {
+  return t.simpleTextWithMention(
+    '아직 정리 중이에요 🔍\n잠시 뒤 같은 질문을 다시 보내주시면 바로 보여드릴게요!',
+    botName,
+  );
 }
 
 /**
@@ -234,6 +253,111 @@ export function askPlaceCard(kind: SearchKind, botName: string | null): t.Json {
 }
 
 /**
+ * **날짜가 잘못됐을 때 되묻는다. 멋대로 고치지 않는다.**
+ *
+ * 예전에는 조용히 고쳤다 — "11월 23일 출발 11월 20일 귀국" 에 **11월 30일 귀국**으로
+ * 검색된다고 안내했고(출발일 + 7일), 사용자는 자기가 말한 적 없는 날짜의 링크를 받았다.
+ * 연도도 마찬가지로 2026년을 적었는데 2027년으로 나갔다.
+ *
+ * ⚠️ **카카오에는 날짜 선택 버튼이 없다.** 버튼 action 은 `webLink`·`message`·`block`·
+ *    `phone`·`share`·`operator` 가 전부이고 달력 입력은 없다. 게다가 팀채팅 챗봇은
+ *    QuickReplies 도 못 쓴다. 그래서 **후보 날짜를 message 버튼으로 내놓는 것이
+ *    유일한 길**이다 — 누르면 고쳐진 문장이 그대로 전송돼 평소 경로를 탄다.
+ *
+ * ⚠️ **고친 날짜를 우리가 고르지만, 적용은 사용자가 누를 때다.** 그게 요청의 핵심이다
+ *    ("사용자가 날짜를 수정하거나 변경에 동의한 뒤에 링크를 제공").
+ */
+export function fixDatesCard(
+  meta: SearchMeta,
+  trip: TripParams,
+  botName: string | null,
+): t.Json {
+  // 부르는 쪽이 problem 을 보고 이 카드를 골랐다. 여기까지 왔는데 없으면 버그다.
+  const problem = trip.problem!;
+  const oneway = meta.tripType === 'ow';
+  const say = (depart: string, back: string | null): string =>
+    [
+      `${meta.fromName ?? '서울'}에서 ${meta.placeName} 항공권`,
+      `${fullDayText(depart)} 출발`,
+      oneway || !back ? '편도' : `${fullDayText(back)} 귀국`,
+    ].join(' ');
+
+  const header =
+    problem.kind === 'past'
+      ? `${fullDayText(problem.date)}은 이미 지난 날짜예요`
+      : `귀국일(${dayText(problem.back)})이 출발일(${dayText(problem.depart)})보다 빨라요`;
+
+  const items = choicesFor(problem, trip).map((choice) => ({
+    title: t.cut(choice.label, t.MAX_LIST_ITEM_TITLE),
+    description: t.cut('이 날짜로 찾기', t.MAX_LIST_ITEM_DESC),
+    action: 'message',
+    messageText: say(choice.depart, choice.back),
+  }));
+
+  return t.skillResponse([
+    {
+      listCard: {
+        header: { title: t.cut(header, t.MAX_LIST_HEADER_TITLE) },
+        items: items.slice(0, t.MAX_LIST_ITEMS),
+      },
+    },
+    t.textCard({
+      description:
+        '다른 날짜를 원하면 아래 버튼을 누르고\n「11월 20일 출발 11월 23일 귀국」처럼 보내주세요.',
+      buttons: [t.mentionButton(botName)],
+    }),
+  ]);
+}
+
+/**
+ * 되묻기 카드에 내놓을 **고친 날짜 후보**.
+ *
+ * ⚠️ **우리가 고른 날짜를 자동으로 쓰지 않는다.** 여기 있는 건 버튼 라벨이고,
+ *    실제로 적용되는 건 사용자가 누른 뒤다.
+ */
+function choicesFor(
+  problem: TripDateProblem,
+  trip: TripParams,
+): { label: string; depart: string; back: string | null }[] {
+  if (problem.kind === 'past') {
+    // 연도만 한 해 민다. **달·일은 사용자가 적은 그대로 둔다** — 거기까지 고치면
+    // 무슨 날짜로 검색되는지 사용자가 못 쫓아간다.
+    //
+    // ⚠️ **귀국일도 같이 민다.** 출발일만 밀면 왕복으로 물은 사람이 편도 링크를
+    //    받는다 — 되묻기가 조건을 또 하나 버리는 꼴이 된다.
+    const depart = plusYear(trip.departDate ?? problem.date);
+    const back = trip.returnDate ? plusYear(trip.returnDate) : null;
+    const label = back
+      ? `${fullDayText(depart)} 출발 · ${dayText(back)} 귀국`
+      : `${fullDayText(depart)}로 바꾸기`;
+    return [{ label, depart, back }];
+  }
+
+  // 거꾸로 선 일정. 두 날짜를 **바꿔 끼우는 것**이 가장 흔한 의도다
+  // (11월 23일 출발 11월 20일 귀국 → 11월 20일 출발 11월 23일 귀국).
+  const swapped = { label: `${dayText(problem.back)} 출발 · ${dayText(problem.depart)} 귀국`, depart: problem.back, back: problem.depart };
+  // 출발일을 그대로 두고 싶은 사람도 있다. 3박이 가장 흔한 일정이다.
+  const later = addDays(problem.depart, 3);
+  return [
+    swapped,
+    { label: `${dayText(problem.depart)} 출발 · ${dayText(later)} 귀국`, depart: problem.depart, back: later },
+  ];
+}
+
+/** '2027-10-20' → '2027년 10월 20일'. **연도를 반드시 찍는다** — 7번이 연도 문제다. */
+function fullDayText(iso: string): string {
+  return `${iso.slice(0, 4)}년 ${dayText(iso)}`;
+}
+
+function plusYear(iso: string): string {
+  return `${Number(iso.slice(0, 4)) + 1}${iso.slice(4)}`;
+}
+
+function addDays(iso: string, days: number): string {
+  return new Date(Date.parse(`${iso}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+/**
  * 카드 아래 안내 말풍선. **필요할 때만 붙는다.**
  *
  * 예전에는 "AI가 정리한 참고 정보예요. 가격은 실제와 다를 수 있어요." 를 항상 달았는데,
@@ -255,6 +379,14 @@ export function noticeText(opts: {
   /** 발화에서 읽은 날짜·인원. 링크가 그 값으로 열리므로 **그대로 적는다.** */
   trip?: TripParams | null;
   now?: Date;
+  /**
+   * 이 카드에 **제휴 링크가 섞여 있는가.**
+   *
+   * 판정은 호출부가 한다 — 줄마다 merchant 가 다르고, 애드픽이 취급하지 않는
+   * 제휴몰(스카이스캐너)만 남은 카드는 제휴 카드가 아니기 때문이다
+   * ([adpick.service.ts](../adpick/adpick.service.ts) `adpickCarries`).
+   */
+  affiliate?: boolean;
 }): string {
   const lines: string[] = [];
 
@@ -278,8 +410,25 @@ export function noticeText(opts: {
     lines.push(`${opts.meta.fromName} 출발 기준이에요. 다른 곳이면 "부산에서 출발" 처럼 알려주세요.`);
   }
 
+  // ⚠️ **맨 아래에 둔다.** 사용자가 고쳐 말할 수 있는 정보(반영 안 된 조건·출발지)가
+  //    먼저고, 이건 읽고 끝나는 고지다. 위에 두면 행동할 정보를 밀어낸다.
+  if (opts.affiliate) lines.push(AFFILIATE_NOTICE);
+
   return lines.join('\n');
 }
+
+/**
+ * 제휴 고지. **링크를 누르기 전에 보여야 한다.**
+ *
+ * 카드 줄은 우리 리다이렉트(`/r/{clickId}`)를 가리키고 그 302 목적지가 애드픽
+ * 커미션 링크다([redirect.controller.ts](../redirect/redirect.controller.ts)).
+ * 사용자는 그 사실을 알 길이 없으므로 카드 아래에 적는다.
+ *
+ * ⚠️ **말풍선을 새로 만들지 않는다.** 카드 + 고지 + 멘션 버튼이 이미 MAX_OUTPUTS(3)
+ *    로 꽉 차서, 하나 더 얹으면 멘션 버튼이 조용히 잘린다
+ *    ([templates.ts](./templates.ts)). 기존 고지에 한 줄로 합친다.
+ */
+export const AFFILIATE_NOTICE = '본 검색 결과에는 제휴 업체가 포함되어 있습니다.';
 
 /**
  * '10월 20일 출발 · 24일 귀국 · 4인'.
@@ -305,11 +454,14 @@ function dayText(iso: string): string {
 function conditionLabel(ignored: string[]): string {
   const labels: string[] = [];
   const joined = ignored.join(' ');
-  if (/\d+\s*(월|일|박|\/)|내일|모레|주말|다음\s*주|다음주|담주|이번주|다음\s*달|다음달/.test(joined)) {
+  if (/\d+\s*(월|일|\/)|내일|모레|주말|다음\s*주|다음주|담주|이번주|다음\s*달|다음달/.test(joined)) {
     labels.push('날짜');
   }
   if (/\d+\s*(명|인)/.test(joined)) labels.push('인원');
-  if (/만원/.test(joined)) labels.push('예산');
+  // ⚠️ **"1박" 은 날짜가 아니라 가격 기준이다.** "1박 10만원 이하" 의 1박은 머무는
+  //    기간이 아니라 **하루치 가격**을 말한다. 날짜로 분류하면 "날짜는 반영되지
+  //    않았어요" 가 붙는데, 날짜를 반영하는 지금은 그게 거짓말이 된다.
+  if (/만원|\d+\s*박/.test(joined)) labels.push('예산');
   // 동행·분위기. "아이랑" 을 '인원' 이라고 하면 틀린 이름이고, 이름이 틀리면
   // 사용자는 자기가 말한 것과 고지된 것을 못 잇는다.
   if (/아이|애기|애들|아기|가족|부모님|친구|연인|커플|혼자|야경|일몰|노을|실내|조용한|한적한|이색|힐링/.test(joined)) {
@@ -347,9 +499,12 @@ export function searchStartedText(meta: SearchMeta, botName: string | null): t.J
  *    같은 질문을 다르게 쓰며 헤맨다. 원인이 다르면 문구도 달라야 한다.
  */
 export function emptyText(meta: SearchMeta, botName: string | null): t.Json {
+  // ⚠️ **빈 힌트를 템플릿에 끼워 넣지 마라.** 예전에는 `주세요. ${hint}` 였는데,
+  //    힌트가 빈 문자열이면 문장 끝에 공백이 남았다.
+  const hint = narrowerHint(meta);
   return t.simpleTextWithMention(
     `${subject(meta)} 정보를 지금은 정리하지 못했어요 🙏\n` +
-      `잠시 뒤 다시 물어봐 주세요. ${narrowerHint(meta)}`,
+      ['잠시 뒤 다시 물어봐 주세요.', hint].filter(Boolean).join(' '),
     botName,
   );
 }
@@ -366,10 +521,34 @@ export function emptyText(meta: SearchMeta, botName: string | null): t.Json {
 function narrowerHint(meta: SearchMeta): string {
   // 항공권은 노선이 이미 확정이라 좁힐 자리가 없다 — 괜히 권하면 딴소리다.
   if (meta.kind === 'flight') return '';
+  // ⚠️ **이미 동네를 말한 사람에게 동네를 말하라고 하지 않는다.** "도쿄 신주쿠 호텔"
+  //    을 물은 사람이 "동네 이름을 붙여 말해도 좋아요 (예: 도쿄 신주쿠)" 를 받았다 —
+  //    시킨 대로 이미 했는데 같은 말이 돌아오면 사용자는 봇이 고장 났다고 읽는다.
+  if (meta.placeKind === 'area' || meta.placeKind === 'landmark') return '';
   // ⚠️ 예시에 **그 사람이 말한 도시를 끼워 넣지 않는다.** 동네 이름을 모르므로
   //    "오사카 신주쿠" 같은 없는 조합이 나간다. 고정 예시가 덜 똑똑해도 안 틀린다.
   return '동네 이름을 붙여 말해도 좋아요 (예: 도쿄 신주쿠).';
 }
+
+/**
+ * 빈손이지만 **직접 만든 검색 링크는 줄 수 있을 때.**
+ *
+ * `emptyText` 는 막다른 길이다 — 빈손은 짧게 굳으므로(FAILED_TTL_MINUTES) 같은 말을
+ * 반복하면 같은 문구만 돌아오고, 사용자는 봇이 고장 난 줄 안다. 모델이 빈손이어도
+ * **그 지역 호텔 검색 결과**는 우리가 열어줄 수 있다.
+ */
+export function emptyFallbackHeader(meta: SearchMeta): string {
+  return `${meta.placeName} ${KIND_LABEL[meta.kind]} 검색 결과 바로가기`;
+}
+
+/**
+ * 그 줄이 왜 거기 있는지 한 줄로. **없으면 사용자는 이게 추천인 줄 안다.**
+ *
+ * 평소 카드는 "우리가 고른 다섯 곳" 인데 이건 "직접 보시라" 라서, 말 안 하면
+ * 추천 품질이 갑자기 나빠진 것처럼 보인다.
+ */
+export const EMPTY_FALLBACK_NOTICE =
+  '지금은 추천 목록을 정리하지 못해 검색 결과를 바로 열어드려요.';
 
 /**
  * 검색을 **아예 할 수 없는 상태** (provider 에 키가 없다 등).

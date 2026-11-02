@@ -73,7 +73,36 @@ export interface TripParams {
   adults: number | null;
   /** 반영한 표현 그대로. "반영하지 않았어요" 고지에서 빼는 데 쓴다. */
   used: string[];
+  /**
+   * **사용자가 날짜를 콕 집어 말했는가** ("11월 23일"). 상대 표현("다음 주 금요일")과
+   * 구분한다.
+   *
+   * 손으로 만든 TripParams(테스트·링크 조립)에는 없을 수 있다. 없으면 "직접 말한
+   * 적 없음" 으로 본다 — 조용히 고쳐도 되는 쪽이 안전한 기본값이다.
+   *
+   * ⚠️ 이 구분이 없으면 **고쳐주기와 멋대로 바꾸기를 못 가린다.** 파서가 상대
+   *    표현을 잘못 읽은 것은 조용히 고쳐도 되지만(사용자는 그런 날짜를 말한 적이
+   *    없다), 직접 적은 날짜를 고치면 **말한 적 없는 날짜로 검색된 링크**가 나간다 —
+   *    11월 20일 귀국이라고 적었는데 11월 30일로 검색된다고 안내한 적이 있다.
+   */
+  explicit?: { depart: boolean; return: boolean };
+  /**
+   * **우리가 고쳐서는 안 되는 날짜 문제.** 있으면 링크를 만들지 않고 되묻는다.
+   *
+   * null 이면 평소대로 간다. 값이 있으면 [cards.ts](../kakao/cards.ts) `fixDatesCard`
+   * 가 버튼으로 고칠 길을 준다 — 카카오에는 날짜 선택 버튼이 없어서
+   * (`webLink`·`message`·`block`·`phone`·`share`·`operator` 가 전부다)
+   * **후보 날짜를 message 버튼으로 내놓는 것이 유일한 길**이다.
+   */
+  problem?: TripDateProblem | null;
 }
+
+/** 되물어야 하는 날짜 문제. */
+export type TripDateProblem =
+  /** 지난 날짜를 **연도까지 적어** 말했다. 다음 해로 굴리면 안 된다. */
+  | { kind: 'past'; date: string; raw: string }
+  /** 귀국일이 출발일보다 빠르다. 둘 다 직접 말한 경우에만. */
+  | { kind: 'reversed'; depart: string; back: string };
 
 /** 실제로 링크에 박히는 값. 카드 고지도 **같은 함수**를 보고 적는다. */
 export interface ResolvedTrip {
@@ -103,6 +132,11 @@ export function resolveTrip(
   //    (실제로 "다음주 수요일~금요일" 이 그랬다) 플랫폼은 귀국일이 앞선 폼을 열고
   //    사용자는 고치는 대신 창을 닫는다. 못 읽은 것으로 보고 기본값으로 돌린다.
   // 같은 날은 정상이다 — 당일치기(nights=0)가 그 자리다. 앞선 날짜만 되돌린다.
+  //
+  // ⚠️ **사용자가 직접 적은 날짜는 여기까지 오지 않는다.** 그건 조용히 고칠 일이
+  //    아니라 되물을 일이라, `parseTripParams` 가 `problem` 으로 표시하고 호출부가
+  //    링크를 만들기 전에 끊는다 — 여기서 덮으면 **말한 적 없는 날짜로 검색된 링크**
+  //    가 나간다 (11월 20일 귀국 → 11월 30일로 안내한 적이 있다).
   if (back && back < depart) back = fallbackBack;
   return { depart, back, adults: trip?.adults ?? 1 };
 }

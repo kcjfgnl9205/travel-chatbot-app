@@ -151,10 +151,52 @@ describe('키워드 해석', () => {
    * 말한 사람만 손해를 봤다.
    */
   describe('도시 뒤에 붙은 세부 지역', () => {
-    it('모델에 넘긴다 — 사전이 도시로 확정해버리면 안 된다', () => {
-      expect(fromKeywords('도쿄 신주쿠 호텔 찾아줘')).toBeNull();
-      expect(fromKeywords('오사카 도톤보리 호텔')).toBeNull();
-      expect(fromKeywords('부산 해운대 호텔')).toBeNull();
+    /**
+     * **사전에 있는 동네는 모델을 안 탄다.**
+     *
+     * 모델에 넘기는 것만으로는 모자랐다 — 그 경로가 카카오 응답 예산을 넘겨
+     * "어떤 여행을 찾으시나요?" 로 떨어졌고, 사용자는 **도움말에 적힌 예시를 그대로
+     * 쳤는데도** 이해 못 한다는 답을 받았다. 자주 나오는 동네는 사전이 받는다
+     * ([area-table.ts](../src/modules/places/area-table.ts)).
+     */
+    it('아는 동네는 사전에서 끝낸다 — 부모 도시까지 같이 들고 나온다', () => {
+      expect(fromKeywords('도쿄 신주쿠 호텔 찾아줘')).toMatchObject({
+        intent: 'hotel',
+        place: '신주쿠',
+        placeHint: { kind: 'area', parentName: '도쿄' },
+      });
+      expect(fromKeywords('오사카 도톤보리 호텔')).toMatchObject({ place: '도톤보리' });
+      expect(fromKeywords('부산 해운대 호텔')).toMatchObject({
+        place: '해운대',
+        placeHint: { kind: 'area', parentName: '부산' },
+      });
+    });
+
+    it('도시 없이 동네만 말해도 된다 — "해운대 호텔"', () => {
+      expect(fromKeywords('해운대 호텔')).toMatchObject({
+        place: '해운대',
+        placeHint: { parentName: '부산' },
+      });
+    });
+
+    /**
+     * ⚠️ **항공권은 동네가 아니라 도시로 간다.** 동네에는 공항이 없어서 노선을
+     *    못 만들고 카드가 빈다. "도쿄 신주쿠 항공권" 이 원하는 건 도쿄행이다.
+     */
+    it('항공권은 부모 도시로 올려 잡는다', () => {
+      expect(fromKeywords('도쿄 신주쿠 항공권')).toMatchObject({
+        intent: 'flight',
+        place: '도쿄',
+      });
+    });
+
+    it('사전에 없는 동네는 여전히 모델에 넘긴다', () => {
+      expect(fromKeywords('도쿄 기타센주 호텔')).toBeNull();
+    });
+
+    /** 말한 도시에 속한 동네만 받는다. 아니면 말하지도 않은 지역으로 검색하게 된다. */
+    it('도시와 동네가 안 맞으면 사전에서 끝내지 않는다', () => {
+      expect(fromKeywords('도쿄 해운대 호텔')).toBeNull();
     });
 
     it('도메인 말·서술어는 지명이 아니다 — 평범한 문장은 그대로 0원이다', () => {
@@ -191,7 +233,7 @@ describe('키워드 해석', () => {
   });
 
   it('사전에 없는 지명도 모델에 넘긴다', () => {
-    expect(fromKeywords('도톤보리 호텔')).toBeNull();
+    expect(fromKeywords('기타센주 호텔')).toBeNull();
   });
 
   it('붙여 쓴 나라도 알아본다 — "중국호텔"', () => {
@@ -343,10 +385,18 @@ describe('IntentService', () => {
     expect(openai.calls).toHaveLength(1);
   });
 
-  it('"도쿄 신주쿠" 는 모델이 신주쿠로 뽑는다 — 도쿄로 검색되면 안 된다', async () => {
+  it('"도쿄 신주쿠" 는 사전이 신주쿠로 끝낸다 — 도쿄로 검색되면 안 된다', async () => {
     const parsed = await service.extract('도쿄 신주쿠 호텔 찾아줘');
 
     expect(parsed).toMatchObject({ intent: 'hotel', place: '신주쿠' });
+    // 사전에 있으므로 모델을 안 탄다. 예산을 넘길 일 자체가 없다.
+    expect(openai.calls).toHaveLength(0);
+  });
+
+  it('사전에 없는 동네는 모델이 뽑는다 — 도시로 뭉개면 안 된다', async () => {
+    const parsed = await service.extract('도쿄 기타센주 호텔 찾아줘');
+
+    expect(parsed).toMatchObject({ intent: 'hotel', place: '기타센주' });
     expect(openai.calls).toHaveLength(1);
   });
 
@@ -360,11 +410,11 @@ describe('IntentService', () => {
    */
   describe('지역 정보를 발화 해석과 한 번에 받는다', () => {
     it('모델이 준 지역 정보를 placeHint 로 들고 나온다', async () => {
-      const parsed = await service.extract('도쿄 신주쿠 호텔 찾아줘');
+      const parsed = await service.extract('도쿄 기타센주 호텔 찾아줘');
 
-      expect(parsed).toMatchObject({ intent: 'hotel', place: '신주쿠' });
+      expect(parsed).toMatchObject({ intent: 'hotel', place: '기타센주' });
       expect(parsed.placeHint).toMatchObject({
-        canonicalName: '신주쿠',
+        canonicalName: '기타센주',
         kind: 'area',
         parentName: '도쿄',
       });
@@ -383,10 +433,10 @@ describe('IntentService', () => {
      *    잃고 places 가 모델을 한 번 더 부른다 — 캐시가 느려지는 거꾸로 된 상황이다.
      */
     it('캐시를 맞아도 힌트가 살아 있다', async () => {
-      await service.extract('도쿄 신주쿠 호텔 찾아줘');
-      const again = await service.extract('도쿄 신주쿠 호텔 찾아줘!');
+      await service.extract('도쿄 기타센주 호텔 찾아줘');
+      const again = await service.extract('도쿄 기타센주 호텔 찾아줘!');
 
-      expect(again.placeHint?.canonicalName).toBe('신주쿠');
+      expect(again.placeHint?.canonicalName).toBe('기타센주');
       expect(openai.calls).toHaveLength(1);
     });
   });
@@ -401,10 +451,21 @@ describe('IntentService', () => {
   it('모델이 뻗어도 의도가 분명하면 지역만 되묻는다', async () => {
     openai.failNext = true;
 
-    const parsed = await service.extract('시부야 호텔 알려줘');
+    // 사전이 모르는 지명이라 모델이 유일한 길이다 — 그 모델이 뻗었다.
+    const parsed = await service.extract('기타센주 호텔 알려줘');
 
     // 도움말 카드를 주면 "나는 호텔을 물었는데 왜 메뉴가 나오지?" 가 된다.
     expect(parsed).toMatchObject({ intent: 'hotel', place: null });
+  });
+
+  it('사전에 있는 동네는 모델이 뻗어도 멀쩡하다', async () => {
+    openai.failNext = true;
+
+    const parsed = await service.extract('시부야 호텔 알려줘');
+
+    // 모델을 아예 안 타므로 모델 장애와 무관하다. 사전을 둔 보람이 여기 있다.
+    expect(parsed).toMatchObject({ intent: 'hotel', place: '시부야' });
+    expect(openai.calls).toHaveLength(0);
   });
 
   it('의도도 못 잡으면 unknown 이다 — 5초를 넘기는 것보다 낫다', async () => {

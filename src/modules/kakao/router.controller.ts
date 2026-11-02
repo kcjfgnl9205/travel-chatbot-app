@@ -8,7 +8,7 @@ import { IntentService } from '../intent/intent.service';
 import { TRAVEL_HINT, intentFromKeywords } from '../intent/intent.types';
 import { PlacesService } from '../places/places.service';
 import { SearchService } from '../search/search.service';
-import { RouterRequest } from '../search/search.types';
+import { RouterRequest, SearchKind } from '../search/search.types';
 import * as cards from './cards';
 import * as t from './templates';
 import { cacheKeyOf, needsCursorFallback, offsetOf } from './paging';
@@ -183,11 +183,48 @@ export class RouterController {
       clearTimeout(timer);
     }
 
+    const callbackUrl = callbackUrlOf(payload);
     this.logger.error(
-      `예산 ${budget}ms 초과 utterance=${JSON.stringify(utteranceOf(payload))} — ` +
-        '도움말 카드로 끊는다. 카카오가 응답을 버리면 말풍선 자체가 안 나간다.',
+      `예산 ${budget}ms 초과 utterance=${JSON.stringify(utteranceOf(payload))} ` +
+        `callback=${callbackUrl ? 'on' : 'off'} — 카카오가 응답을 버리면 말풍선 자체가 안 나간다.`,
     );
-    return cards.notUnderstoodCard(botNameOf(payload));
+
+    // ⚠️ **콜백이 켜져 있으면 답을 버리지 않는다.** 예전에는 여기서 도움말 카드를
+    //    보내고 하던 일을 통째로 버렸는데, 그러면 **제대로 알아들은 질문에도
+    //    "어떤 여행을 찾으시나요?" 가 나간다.** 사용자는 자기 문장이 틀린 줄 알고
+    //    같은 뜻을 다르게 바꿔 치며 헤맨다 — 테스트에서 반복해서 나온 증상이다.
+    //    늦었을 뿐이므로 늦게 보낸다.
+    if (callbackUrl) {
+      void this.pushWhenReady(running, callbackUrl, botNameOf(payload));
+      return t.callbackAck('찾고 있어요. 잠시만요 🔍');
+    }
+
+    // 콜백이 꺼져 있으면 밀어줄 길이 없다. 다시 물으면 따뜻해진 캐시가 바로 답한다.
+    return cards.slowText(botNameOf(payload));
+  }
+
+  /**
+   * **예산을 넘겨 끊은 뒤, 늦게 끝난 답을 콜백으로 민다.**
+   *
+   * ⚠️ **답이 이미 `useCallback` 이면 밀지 않는다.** 그건 검색이 미스라
+   *    [SearchService](../search/search.service.ts) 가 백그라운드에서 밀기로
+   *    예약했다는 뜻이다. 콜백 URL 은 **1회만 유효해서** 둘이 같이 쏘면 하나는
+   *    버려지고, 어느 쪽이 버려질지는 운이다 — 사용자가 카드 대신 "찾고 있어요"
+   *    만 받는 경우가 그래서 생긴다.
+   *
+   * 요청 경로 밖이라 **여기서 던지면 아무도 못 받는다.** 전부 삼킨다.
+   */
+  private async pushWhenReady(
+    running: Promise<t.Json>,
+    callbackUrl: string,
+    botName: string | null,
+  ): Promise<void> {
+    const answer = await running.catch((err) => {
+      this.logger.error(`late dispatch failed err=${err}`);
+      return cards.notUnderstoodCard(botName);
+    });
+    if (answer?.useCallback) return;
+    await this.search.pushCallback(callbackUrl, answer);
   }
 
   private async dispatch(payload: KakaoSkillPayload): Promise<t.Json> {
@@ -259,13 +296,17 @@ export class RouterController {
     // 4. 의도 + 지역.
     const parsed = await this.intent.extract(req.utterance);
     if (parsed.intent === 'unknown') return cards.notUnderstoodCard(req.botName);
-    if (!parsed.place) return cards.askPlaceCard(parsed.intent, req.botName);
+    // ⚠️ **되물을 때는 반드시 기다리는 상태를 남긴다.** 안 남기면 사용자가 "제주"
+    //    한 마디로 답했을 때 받아줄 데가 없고, "제주" 에는 여행 신호가 없어
+    //    1차 필터(TRAVEL_HINT)에서 도움말로 떨어진다 — 되묻어 놓고 그 답을 못
+    //    알아듣는 꼴이다. "다른 도시" 버튼과 나라 되묻기는 이미 이렇게 한다.
+    if (!parsed.place) return this.askPlace(parsed.intent, req);
 
     // 5. 지역 정규화. 모르는 지명도 등록해서 검색까지는 가본다.
     //    ⚠️ 해석이 지역 정보를 같이 받아왔으면 넘긴다 — 같은 모델에게 같은 지명을
     //       두 번 묻지 않는다. 그 두 번이 직렬이라 5초 예산을 넘겼다.
     const place = await this.places.resolve(parsed.place, parsed.placeHint);
-    if (!place) return cards.askPlaceCard(parsed.intent, req.botName);
+    if (!place) return this.askPlace(parsed.intent, req);
 
     // 5-b. 나라를 말했으면 검색하지 않고 **그 나라의 도시**로 되묻는다.
     //      나라 단위 검색은 다낭·하노이가 섞인 목록이 되어 아무에게도 쓸모가 없다.
@@ -287,6 +328,17 @@ export class RouterController {
 
     // 6. 캐시 → 응답.
     return this.search.serve(parsed, place, req);
+  }
+
+  /**
+   * 지역을 되묻는다. **그 사람의 다음 발화를 지명으로 받을 준비까지 한다.**
+   *
+   * 되묻기와 기억하기가 늘 짝이어야 한다 — 한쪽만 하면 대화가 거기서 끊긴다.
+   * 묶어두는 이유가 그것이고, 실제로 이 자리에서 `remember` 가 빠져 있었다.
+   */
+  private askPlace(kind: SearchKind, req: RouterRequest): t.Json {
+    this.pending.remember(req.userKey, { kind, country: null });
+    return cards.askPlaceCard(kind, req.botName);
   }
 
   /** 요청 한 건의 맥락. 사용자 등록까지가 여기 책임이고, 메시지 로그는 검색 쪽이 남긴다. */

@@ -176,7 +176,64 @@ describe('발화에서 날짜·인원 읽기', () => {
       nights: null,
       adults: null,
       used: [],
+      explicit: { depart: false, return: false },
+      problem: null,
     });
+  });
+});
+
+/**
+ * **우리가 고쳐서는 안 되는 날짜.**
+ *
+ * 둘 다 운영에서 실제로 나왔다 — 11월 20일 귀국이라고 적었는데 11월 30일로 검색된다고
+ * 안내했고(출발일 + 7일), 2026년이라고 적었는데 2027년으로 나갔다. 둘 다 사용자에게는
+ * **말한 적 없는 날짜의 링크**이고, 안내에 연도를 안 찍어서 7번은 드러나지도 않았다.
+ */
+describe('되물어야 하는 날짜', () => {
+  it('연도를 적었으면 그 연도로 읽는다 — 다음 해로 굴리지 않는다', () => {
+    // NOW 가 2026-10-14 라 10월 20일은 아직 안 지났다. 연도만 확인한다.
+    expect(parse('도쿄 항공권 2026년 10월 20일 출발')).toMatchObject({
+      departDate: '2026-10-20',
+    });
+    // ⚠️ 예전에는 `2026년` 을 아무 패턴도 안 받아 버렸고, 남은 '10월 20일' 이
+    //    "지났으면 내년" 규칙을 타 2027년이 됐다.
+    expect(parse('도쿄 항공권 2026년 9월 20일 출발')).toMatchObject({
+      departDate: '2026-09-20',
+    });
+  });
+
+  it('연도까지 적은 지난 날짜는 problem 으로 표시한다', () => {
+    const trip = parse('서울에서 도쿄 항공권 2026년 9월 20일 출발 2026년 9월 23일 귀국');
+
+    expect(trip.departDate).toBe('2026-09-20');
+    expect(trip.problem).toMatchObject({ kind: 'past', date: '2026-09-20' });
+  });
+
+  it('귀국일이 출발일보다 빠르면 problem 으로 표시한다', () => {
+    const trip = parse('서울에서 도쿄 항공권 11월 23일 출발 11월 20일 귀국');
+
+    // ⚠️ **값을 고치지 않는다.** 읽은 그대로 두고 문제만 표시한다 —
+    //    고치는 건 사용자가 버튼을 누른 뒤다.
+    expect(trip).toMatchObject({ departDate: '2026-11-23', returnDate: '2026-11-20' });
+    expect(trip.problem).toMatchObject({ kind: 'reversed' });
+  });
+
+  /**
+   * ⚠️ **상대 표현은 되묻지 않는다.** "다음주 수요일~금요일" 을 파서가 거꾸로 읽은
+   *    적이 있는데(10/21 출발 10/16 귀국), 그건 사용자가 말한 적 없는 날짜라
+   *    되물어봐야 무슨 소린지 모른다. 조용히 고치는 게 맞다.
+   */
+  it('직접 말하지 않은 날짜는 되묻지 않는다 — 조용히 고친다', () => {
+    const trip = parse('도쿄 항공권 다음주 수요일~금요일');
+
+    expect(trip.explicit).toEqual({ depart: false, return: false });
+    expect(trip.problem).toBeNull();
+  });
+
+  it('멀쩡한 날짜에는 problem 이 없다', () => {
+    expect(parse('도쿄 항공권 11월 20일 출발 11월 23일 귀국').problem).toBeNull();
+    // 당일치기는 같은 날이다 — 거꾸로가 아니다.
+    expect(parse('도쿄 항공권 11월 20일 당일치기').problem).toBeNull();
   });
 });
 

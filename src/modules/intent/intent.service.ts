@@ -5,7 +5,14 @@ import { clip, text } from '../../common/parse';
 import { AppConfig, CONFIG } from '../../config/app.config';
 import { IntentCacheRepository } from '../database/repositories/intent-cache.repository';
 import { OpenAiService, parseJsonLoose } from '../openai/openai.service';
-import { findCitiesInText, findOriginInText, lookupCity, tokenAfterCity } from '../places/city-table';
+import { AreaEntry, cityOfArea, findAreaInText, lookupArea } from '../places/area-table';
+import {
+  CityEntry,
+  findCitiesInText,
+  findOriginInText,
+  lookupCity,
+  tokenAfterCity,
+} from '../places/city-table';
 import { findCountryInText, lookupCountry, stripDomainWord } from '../places/country-table';
 import { PlaceHint, PlaceKind } from '../places/places.types';
 import { SearchKind } from '../search/search.types';
@@ -346,10 +353,27 @@ export function fromKeywords(utterance: string): ParsedIntent | null {
   // 도시가 둘 이상이면(위 항공권 경우가 아니면) 사전으로는 못 가린다 — 모델에 넘긴다.
   const only = cities.length === 1 ? cities[0] : null;
 
-  // ⚠️ **도시 뒤에 모르는 말이 붙어 있으면 그게 세부 지역이다** ("도쿄 신주쿠").
-  //    사전은 도시까지만 알아서, 여기서 안 넘기면 도시로 확정돼 **모델에 갈 기회가
-  //    사라진다** — 신주쿠를 물은 사람이 도쿄 호텔을 받고 본인은 모른다.
-  if (only && looksLikeSubArea(tokenAfterCity(utterance, only))) return null;
+  if (only) {
+    const next = tokenAfterCity(utterance, only);
+    // **아는 세부 지역이면 여기서 끝낸다** ("부산 해운대", "도쿄 신주쿠").
+    // 모델을 안 타므로 0ms 다 — 이 경로가 모델로 가면 응답 예산을 넘겨
+    // "어떤 여행을 찾으시나요?" 가 나간다([area-table.ts](../places/area-table.ts)).
+    const area = lookupArea(next, only);
+    if (area) return { ...base, ...areaPlace(intent, area, only) };
+
+    // ⚠️ **도시 뒤에 모르는 말이 붙어 있으면 그게 세부 지역이다** ("도쿄 기타센주").
+    //    사전은 거기까지는 모른다. 여기서 안 넘기면 도시로 확정돼 **모델에 갈 기회가
+    //    사라진다** — 그 동네를 물은 사람이 도쿄 호텔을 받고 본인은 모른다.
+    if (looksLikeSubArea(next)) return null;
+  }
+
+  // 도시를 말하지 않고 동네만 말한 경우 ("해운대 호텔"). 도시가 하나라도 잡혔으면
+  // 위에서 이미 갈렸으므로 여기는 도시가 아예 없을 때만 본다.
+  if (!cities.length) {
+    const area = findAreaInText(utterance);
+    const parent = area ? cityOfArea(area) : null;
+    if (area && parent) return { ...base, ...areaPlace(intent, area, parent) };
+  }
 
   const place = only?.nameKo ?? (cities.length ? null : (findCountryInText(utterance)?.nameKo ?? null));
   if (!place) return null;
@@ -357,6 +381,39 @@ export function fromKeywords(utterance: string): ParsedIntent | null {
   // 사전 경로는 모델을 안 탄다 — 지역 정보도 같이 올 수 없다. 애초에 필요도 없다:
   // 사전이 아는 지명이므로 places 도 사전에서 찾는다.
   return { ...base, place, from: null, placeHint: null };
+}
+
+/**
+ * 사전에서 찾은 세부 지역을 `ParsedIntent` 의 지명 칸으로.
+ *
+ * **지역 정보(PlaceHint)까지 같이 채운다.** 그래야 [places.service.ts](../places/places.service.ts)
+ * 가 "신주쿠가 어디냐" 를 다시 묻지 않는다 — 발화 해석에서 모델을 아낀 보람이
+ * 거기서 날아가면 아무것도 아니다.
+ *
+ * ⚠️ **항공권은 동네가 아니라 도시로 간다.** 동네에는 공항이 없어서
+ *    ([link-offers.ts](../flight/link-offers.ts)) 노선을 못 만들고 카드가 빈다.
+ *    "도쿄 신주쿠 항공권" 이 원하는 건 도쿄행이지 신주쿠행이 아니다.
+ */
+function areaPlace(
+  intent: SearchKind,
+  area: AreaEntry,
+  city: CityEntry,
+): Pick<ParsedIntent, 'place' | 'from' | 'placeHint'> {
+  if (intent === 'flight') return { place: city.nameKo, from: null, placeHint: null };
+  return {
+    place: area.nameKo,
+    from: null,
+    placeHint: {
+      canonicalName: area.nameKo,
+      slug: area.slug,
+      // 사전은 국내 도시에만 country 를 달아뒀다. 없으면 부모에서 채워진다.
+      countryCode: city.country ?? null,
+      kind: 'area',
+      // 동네에는 공항이 없다. 있는 척하면 항공권이 그 코드로 노선을 만든다.
+      iata: null,
+      parentName: city.nameKo,
+    },
+  };
 }
 
 /**

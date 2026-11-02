@@ -1,5 +1,5 @@
 import * as t from '../kakao/templates';
-import { Place } from '../places/places.types';
+import { Place, PlaceKind } from '../places/places.types';
 import { TripParams } from '../flight/search-url';
 
 /** 우리가 처리하는 세 가지. 그 외는 도움말 카드로 간다. */
@@ -40,6 +40,16 @@ export interface SearchMeta {
   kind: SearchKind;
   placeName: string;
   placeSlug: string;
+  /**
+   * 지역의 종류. **빈손 안내 문구가 이걸로 갈린다.**
+   *
+   * ⚠️ 세부 지역을 말한 사람에게 "동네 이름을 붙여 말해도 좋아요" 라고 하면 안 된다.
+   *    이미 붙여 말했기 때문이다 — "도쿄 신주쿠 호텔" 을 물은 사람이 그 안내를 받았고,
+   *    시키는 대로 다시 쳐도 같은 답이 돌아왔다 (cards.narrowerHint).
+   *
+   * 저장된 행에서 되살아날 수 있으므로 optional 이다. 없으면 예전처럼 동작한다.
+   */
+  placeKind?: PlaceKind;
   fromName?: string | null;
   tripType?: TripType | null;
   /** 출발지를 사용자가 말하지 않아 서울로 채웠는가. 안내 문구가 갈린다. */
@@ -138,6 +148,21 @@ export interface SearchDomain<T = unknown> {
   rows(items: T[], ctx: RenderContext): Promise<t.Json[]>;
   /** "더 보기" 버튼이 보낼 문장. '오사카 호텔 더 보기' */
   moreText(meta: SearchMeta): string;
+  /**
+   * **빈손일 때 대신 내놓을 줄.** 없거나 빈 배열이면 "정리하지 못했어요" 로 끝난다.
+   *
+   * 호텔이 쓴다. AI 검색은 가끔 빈손으로 돌아오는데(모델이 허용 호스트 밖 링크만
+   * 주거나 웹 검색을 건너뛴다) 그때 사용자에게 줄 것이 아무것도 없었다 — 같은 말을
+   * 반복하면 같은 문구만 돌아오고, 사용자는 봇이 고장 난 줄 안다.
+   *
+   * **우리가 직접 만든 검색 주소**는 모델과 무관하게 늘 열린다
+   * ([hotel/search-url.ts](../hotel/search-url.ts)). 덤으로 날짜·인원이 반영된다.
+   *
+   * ⚠️ **이 줄을 캐시에 저장하면 안 된다.** 저장하면 그 지역은 TTL 동안 AI 검색을
+   *    다시 시도하지 않고, 영영 링크 두 줄만 나간다. 빈손은 빈손으로 기록하고
+   *    (`emptyStreak`) 화면에만 이 줄을 세운다.
+   */
+  emptyRows?(meta: SearchMeta, ctx: RenderContext): Promise<t.Json[]>;
 }
 
 /**
