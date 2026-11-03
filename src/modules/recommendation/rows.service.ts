@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 
 import { AppConfig, CONFIG, redirectUrl } from '../../config/app.config';
 import { MemoryStoreService } from '../database/memory-store.service';
@@ -96,7 +96,12 @@ export class RecommendationRowsService {
   ) {}
 
   async render(items: ItemRow[], ctx: RenderContext, opts: RenderOptions): Promise<t.Json[]> {
-    const recommendationId = await this.logRecommendation(ctx, opts.provider, items.length);
+    // ⚠️ **id 를 여기서 정하고 쓰기는 응답 뒤로 미룬다.** 예전에는 insert 를 기다려
+    //    id 를 받았는데, 그 왕복(약 50ms)이 카카오 3.5초 예산 안에 있었다. 줄마다
+    //    clickId 발급과 메모리 등록은 아래에서 **동기로** 끝나므로, 카드를 받자마자
+    //    눌러도 리다이렉트는 메모리 빠른 길로 동작한다
+    //    ([redirect.controller.ts](../redirect/redirect.controller.ts)).
+    const recommendationId = ctx.persist === false ? null : randomUUID();
 
     const dbRows: Record<string, unknown>[] = [];
     const listItems: t.Json[] = [];
@@ -161,7 +166,9 @@ export class RecommendationRowsService {
 
     // ⚠️ **변환 실패 경고는 여기 없다.** 변환을 안 하기 때문이다 — 그 경고는
     //    실제로 변환하는 자리인 리다이렉트로 옮겨갔다 (0015).
-    if (recommendationId && dbRows.length) await this.items.createMany(dbRows);
+    if (recommendationId && dbRows.length) {
+      void this.persistExposure(ctx, opts.provider, items.length, recommendationId, dbRows);
+    }
     return listItems;
   }
 
@@ -206,13 +213,41 @@ export class RecommendationRowsService {
    * persist:false 면 남기지 않는다 (진단 경로) — 섞이면 전환율 집계가 틀어진다.
    * 그때 null 이 돌아가고 호출부의 노출 기록도 자연히 건너뛰어진다.
    */
+  /**
+   * 노출 기록을 **응답 뒤에** 남긴다 (recommendations → recommendation_items).
+   *
+   * ⚠️ **순서를 지켜야 한다.** `recommendations.message_id` 가 messages 를,
+   *    `recommendation_items.recommendation_id` 가 recommendations 를 FK 로 문다.
+   *    셋을 한꺼번에 날리면 부모 없는 행이 들어가 insert 가 통째로 실패한다.
+   *
+   * 실패해도 사용자는 이미 카드를 받았다. 잃는 것은 집계 한 건이다.
+   */
+  private async persistExposure(
+    ctx: RenderContext,
+    provider: string,
+    itemCount: number,
+    recommendationId: string,
+    dbRows: Record<string, unknown>[],
+  ): Promise<void> {
+    try {
+      // 메시지 행이 먼저 있어야 한다. 아직 쓰는 중이면 기다린다.
+      await ctx.messageWrite;
+      await this.logRecommendation(ctx, provider, itemCount, recommendationId);
+      await this.items.createMany(dbRows);
+    } catch (err) {
+      this.logger.warn(`exposure persist failed rec=${recommendationId} err=${err}`);
+    }
+  }
+
   private async logRecommendation(
     ctx: RenderContext,
     provider: string,
     itemCount: number,
+    id?: string,
   ): Promise<string | null> {
     if (ctx.persist === false) return null;
     const row = await this.recommendations.create({
+      id,
       userId: ctx.userId,
       messageId: ctx.messageId,
       domain: ctx.meta.kind,

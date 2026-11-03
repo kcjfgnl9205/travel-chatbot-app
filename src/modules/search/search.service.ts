@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 
 import { fetchWithTimeout } from '../../common/fetch';
 import { AppConfig, CONFIG } from '../../config/app.config';
@@ -52,6 +53,18 @@ import {
  * 구현이 알고, 여기는 캐시 키·페이지·고지·콜백만 다룬다. 네 번째 도메인이 생겨도
  * 이 파일은 그대로다.
  */
+/**
+ * 쓰고 있는 중인 메시지 행. id 는 먼저 정해지고 쓰기는 뒤따른다.
+ * 노출 기록이 FK 때문에 `write` 를 기다려야 한다.
+ */
+interface PendingMessage {
+  id: string | null;
+  write: Promise<unknown>;
+}
+
+/** 메시지를 남기지 않는 경로(백그라운드 재검색·진단)가 쓴다. */
+const NO_MESSAGE: PendingMessage = { id: null, write: Promise.resolve(null) };
+
 @Injectable()
 export class SearchService {
   private readonly logger = new Logger(SearchService.name);
@@ -94,7 +107,7 @@ export class SearchService {
       originAssumed: kind === 'flight' ? !parsed.from : false,
     };
     const cacheKey = cacheKeyOf(kind, place, from, parsed.tripType);
-    const messageId = await this.logMessage(req, kind, place.slug);
+    const message = this.logMessage(req, kind, place.slug);
     const domain = this.domainOf(kind);
 
     // ⚠️ **고칠 수 없는 날짜는 링크를 만들기 전에 되묻는다.** 지난 날짜거나 귀국일이
@@ -137,7 +150,7 @@ export class SearchService {
         this.logger.log(`instant key=${cacheKey} items=${instant.length}`);
         return this.respond(instant, meta, 0, cacheKey, req, {
           ignored: parsed.ignored,
-          messageId,
+          message,
           cacheHit: false,
         });
       }
@@ -159,7 +172,7 @@ export class SearchService {
       this.logger.log(`cache ${stale ? 'stale' : 'hit'} key=${cacheKey} items=${row.items.length}`);
       return this.respond(row.items, meta, 0, cacheKey, req, {
         ignored: parsed.ignored,
-        messageId,
+        message,
         cacheHit: true,
       });
     }
@@ -200,7 +213,7 @@ export class SearchService {
       cacheKey,
       row,
       req,
-      { ignored: parsed.ignored, messageId },
+      { ignored: parsed.ignored, message },
     );
 
     if (!req.callbackUrl) {
@@ -223,7 +236,7 @@ export class SearchService {
     }
     return this.respond(row.items, row.meta, offset, cacheKey, req, {
       ignored: [],
-      messageId: null,
+      message: NO_MESSAGE,
       cacheHit: true,
     });
   }
@@ -257,7 +270,7 @@ export class SearchService {
     cacheKey: string,
     previous: SearchRow | null,
     req: RouterRequest,
-    opts: { ignored: string[]; messageId: string | null },
+    opts: { ignored: string[]; message: PendingMessage },
   ): Promise<void> {
     const domain = this.domainOf(meta.kind);
 
@@ -308,7 +321,7 @@ export class SearchService {
 
       const response = await this.respond(items, meta, 0, cacheKey, req, {
         ignored: opts.ignored,
-        messageId: opts.messageId,
+        message: opts.message,
         cacheHit: false,
       });
       await pushOnce(response);
@@ -374,7 +387,7 @@ export class SearchService {
       cacheKey,
       row,
       { ...req, callbackUrl: null },
-      { ignored: parsed.ignored, messageId: null },
+      { ignored: parsed.ignored, message: NO_MESSAGE },
     );
   }
 
@@ -387,7 +400,7 @@ export class SearchService {
     req: RouterRequest,
     opts: {
       ignored: string[];
-      messageId: string | null;
+      message: PendingMessage;
       cacheHit: boolean;
     },
   ): Promise<t.Json> {
@@ -409,7 +422,8 @@ export class SearchService {
     const render: RenderContext = {
       meta,
       userId: req.userId,
-      messageId: opts.messageId,
+      messageId: opts.message.id,
+      messageWrite: opts.message.write,
       started: req.started,
       cacheHit: opts.cacheHit,
       trip,
@@ -573,21 +587,38 @@ export class SearchService {
     return this.places.resolve(from ?? this.config.flightDefaultOriginName);
   }
 
-  private async logMessage(
+  /**
+   * 발화를 기록한다. **기다리지 않는다.**
+   *
+   * ⚠️ 예전에는 `await` 해서 id 를 받아왔다. 분석용 insert 한 건을 카카오 3.5초
+   *    예산 안에서 기다린 것인데, Supabase 왕복이 약 50ms 라 그만큼이 매 요청에
+   *    그대로 붙었다. id 를 **여기서 만들어** 넘기면 기다릴 이유가 없어진다.
+   *
+   * ⚠️ 돌려주는 `write` 를 노출 기록이 기다려야 한다 — FK 때문이다
+   *    ([RenderContext.messageWrite](./search.types.ts)).
+   */
+  private logMessage(
     req: RouterRequest,
     kind: SearchKind,
     placeSlug: string | null,
-  ): Promise<string | null> {
-    const message = await this.messages.log({
-      userId: req.userId,
-      domain: kind,
-      utterance: req.utterance,
-      blockName: null,
-      parsedCity: placeSlug,
-      params: {},
-      rawPayload: null,
-    });
-    return (message?.id as string) ?? null;
+  ): PendingMessage {
+    const id = randomUUID();
+    const write = this.messages
+      .log({
+        id,
+        userId: req.userId,
+        domain: kind,
+        utterance: req.utterance,
+        blockName: null,
+        parsedCity: placeSlug,
+        params: {},
+        rawPayload: null,
+      })
+      .catch((err) => {
+        this.logger.warn(`message log failed id=${id} err=${err}`);
+        return null;
+      });
+    return { id, write };
   }
 }
 

@@ -87,6 +87,13 @@ export interface RenderContext {
   meta: SearchMeta;
   userId: string | null;
   messageId: string | null;
+  /**
+   * 메시지 행을 쓰고 있는 중인 약속. **노출 기록이 이걸 기다려야 한다.**
+   *
+   * ⚠️ `recommendations.message_id` 가 messages 를 FK 로 문다. 둘 다 응답 뒤로
+   *    미루면서 순서를 안 지키면 **부모가 없는 행을 넣어 FK 위반**이 난다.
+   */
+  messageWrite?: Promise<unknown>;
   started: number;
   cacheHit: boolean;
   /** 통계를 남길지. 진단 경로만 false 다 — 섞이면 전환율 집계가 틀어진다. */

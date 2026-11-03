@@ -48,6 +48,12 @@ function build(over: Partial<AppConfig> = {}) {
   return { service, inserted, memory };
 }
 
+/**
+ * 노출 기록은 **응답을 보낸 뒤에** 쓴다 (recommendations → recommendation_items).
+ * 카드가 돌아왔다고 행이 들어간 것은 아니므로, 검사 전에 그 약속들을 흘려보낸다.
+ */
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+
 const CTX: RenderContext = {
   meta: { kind: 'hotel', placeName: '오사카', placeSlug: 'osaka' },
   userId: null,
@@ -73,6 +79,7 @@ describe('노출 기록 + 클릭 링크 발급', () => {
     const { service, inserted } = build();
 
     const rows = await service.render([item()], CTX, { provider: 'openai' });
+    await flush();
 
     expect(rows).toHaveLength(1);
     const link = (rows[0] as { link: { web: string } }).link.web;
@@ -87,6 +94,7 @@ describe('노출 기록 + 클릭 링크 발급', () => {
       const { service, inserted } = build();
 
       await service.render([item()], CTX, { provider: 'openai' });
+      await flush();
 
       expect(inserted[0][0].domain).toBe('hotel');
     });
@@ -103,6 +111,7 @@ describe('노출 기록 + 클릭 링크 발급', () => {
         CTX,
         { provider: 'openai' },
       );
+      await flush();
 
       expect(inserted).toHaveLength(1);
       expect(inserted[0][0]).toMatchObject({
@@ -121,6 +130,7 @@ describe('노출 기록 + 클릭 링크 발급', () => {
       const ctx = { ...CTX, meta: { ...CTX.meta, kind: 'flight' as const } };
 
       await service.render([item({ price: 210000 })], ctx, { provider: 'openai' });
+      await flush();
 
       expect(inserted[0][0]).toMatchObject({ domain: 'flight', price: 210000 });
     });
@@ -130,6 +140,7 @@ describe('노출 기록 + 클릭 링크 발급', () => {
       const { service, inserted } = build();
 
       await service.render([item()], CTX, { provider: 'openai' });
+      await flush();
 
       expect(inserted[0][0]).toMatchObject({ price: null, merchant: null, image_url: null });
     });
@@ -149,6 +160,7 @@ describe('노출 기록 + 클릭 링크 발급', () => {
       const { service, inserted } = build();
 
       await service.render([hotel], CTX, { provider: 'openai' });
+      await flush();
 
       const row = inserted[0][0];
       expect(row.target_url).toBe(BOOKING);
@@ -164,6 +176,7 @@ describe('노출 기록 + 클릭 링크 발급', () => {
       const { service, inserted } = build({ adpickSubidParam: 'subid' });
 
       await service.render([hotel], CTX, { provider: 'openai' });
+      await flush();
 
       expect(String(inserted[0][0].target_url)).toBe(BOOKING);
     });
@@ -177,6 +190,7 @@ describe('노출 기록 + 클릭 링크 발급', () => {
       const { service, inserted } = build();
 
       await service.render([hotel], CTX, { provider: 'openai' });
+      await flush();
 
       expect(inserted[0][0]).toHaveProperty('affiliate_link_id', null);
     });
@@ -186,6 +200,7 @@ describe('노출 기록 + 클릭 링크 발급', () => {
       const warn = jest.spyOn(service['logger'], 'warn');
 
       await service.render([hotel], CTX, { provider: 'openai' });
+      await flush();
 
       expect(warn).not.toHaveBeenCalled();
       warn.mockRestore();
@@ -207,6 +222,7 @@ describe('노출 기록 + 클릭 링크 발급', () => {
       });
 
       await service.render([meta], CTX, { provider: 'openai' });
+      await flush();
 
       expect(inserted[0][0].merchant).toBe('skyscanner');
     });
@@ -217,6 +233,7 @@ describe('노출 기록 + 클릭 링크 발급', () => {
     const { service, inserted, memory } = build();
 
     await service.render([item({ merchant: 'trip' })], CTX, { provider: 'openai' });
+    await flush();
 
     const clickId = String(inserted[0][0].click_id);
     // ⚠️ merchant 도 같이 남겨야 한다. 빠른 길(인메모리)로 들어온 클릭은 DB 를 안
@@ -228,6 +245,7 @@ describe('노출 기록 + 클릭 링크 발급', () => {
     const { service, inserted } = build();
 
     const rows = await service.render([item()], { ...CTX, persist: false }, { provider: 'openai' });
+    await flush();
 
     // 카드는 그대로 나오지만 recommendation_items 는 비어 있다.
     expect(rows).toHaveLength(1);

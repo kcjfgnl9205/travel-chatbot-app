@@ -4,6 +4,8 @@ import { SupabaseService } from '../supabase.service';
 import { BaseRepository } from './base.repository';
 
 export interface CreateRecommendationInput {
+  /** 행 id 를 호출부가 정한다. 비우면 DB 가 만든다 ([messages](./messages.repository.ts) 와 같은 이유). */
+  id?: string;
   userId: string | null;
   messageId: string | null;
   domain: string;
@@ -25,6 +27,7 @@ export class RecommendationsRepository extends BaseRepository {
 
   async create(input: CreateRecommendationInput): Promise<Record<string, any> | null> {
     const record = {
+      ...(input.id ? { id: input.id } : {}),
       user_id: input.userId,
       message_id: input.messageId,
       domain: input.domain,

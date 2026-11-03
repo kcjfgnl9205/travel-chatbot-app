@@ -148,8 +148,16 @@ export class IntentService {
     if (!trimmed) return UNKNOWN_INTENT;
 
     const hash = hashOf(trimmed);
-    const cached = this.fromMemory(hash) ?? (await this.fromStore(hash, trimmed));
-    if (cached) return cached;
+
+    // 메모리는 0ms 다. 맨 앞에 둔다.
+    const memo = this.fromMemory(hash);
+    if (memo) return memo;
+
+    // ⚠️ **사전이 DB 캐시보다 먼저다.** 예전에는 intent_cache 를 먼저 읽었는데,
+    //    사전 판정은 입력이 같으면 결과가 **늘 같아서 캐시할 이유가 없다.**
+    //    "오사카 호텔 추천해줘" 가 0ms 에 끝날 수 있는데 그 앞에서 Supabase 를
+    //    한 번 다녀오고 있었다 — 왕복 1회가 약 50ms 이고 예산은 3.5초다.
+    //    캐시는 **모델을 아끼려고** 있는 것이므로 모델 바로 앞에 둔다.
 
     // 대표 명령어("여행지 오사카")는 의도가 확정이고 뒤가 곧 지명이다. 사전에 없는
     // 지명이어도 모델을 안 부른다 — 대표 명령어를 쓰는 사용자는 늘 0원이 된다.
@@ -158,7 +166,7 @@ export class IntentService {
       this.logger.log(
         `intent (command) "${clip(trimmed, LOG_UTTERANCE)}" → ${command.intent}/${command.place}`,
       );
-      return this.remember(hash, command);
+      return this.rememberInMemory(hash, command);
     }
 
     const fast = fromKeywords(trimmed);
@@ -166,8 +174,12 @@ export class IntentService {
       this.logger.log(
         `intent (keyword) "${clip(trimmed, LOG_UTTERANCE)}" → ${fast.intent}/${fast.place}`,
       );
-      return this.remember(hash, fast);
+      return this.rememberInMemory(hash, fast);
     }
+
+    // 사전이 못 잡았다. 여기서부터가 비싼 길이라 그 앞에 캐시를 본다.
+    const stored = await this.fromStore(hash, trimmed);
+    if (stored) return stored;
 
     const parsed = await this.askModel(trimmed);
     // unknown 은 캐싱하지 않는다. 모델이 한 번 헛돈 것을 일주일씩 굳히면
@@ -242,12 +254,33 @@ export class IntentService {
     }
   }
 
-  private remember(hash: string, parsed: ParsedIntent): ParsedIntent {
+  /**
+   * **메모리에만 남긴다.** 사전·명령어 판정 전용이다.
+   *
+   * ⚠️ intent_cache 에 쓰지 않는다. 그 캐시는 모델 호출을 아끼려고 있는 것인데
+   *    사전 판정은 공짜라 아낄 것이 없다. 쓰면 왕복만 한 번 더 난다 — 비동기라
+   *    응답이 늦어지지는 않지만, Supabase 동시 연결이 몇 개뿐이라 그 한 칸이
+   *    다른 요청의 대기가 된다.
+   */
+  private rememberInMemory(hash: string, parsed: ParsedIntent): ParsedIntent {
+    this.evictIfFull();
+    this.cache.set(hash, {
+      parsed,
+      expiresAt: Date.now() + this.config.intentCacheTtlMinutes * 60_000,
+    });
+    return parsed;
+  }
+
+  private evictIfFull(): void {
     if (this.cache.size >= MAX_ENTRIES) {
       // 가장 오래된 항목부터 버린다 (Map 은 삽입 순서를 지킨다).
       const oldest = this.cache.keys().next().value;
       if (oldest !== undefined) this.cache.delete(oldest);
     }
+  }
+
+  private remember(hash: string, parsed: ParsedIntent): ParsedIntent {
+    this.evictIfFull();
     this.cache.set(hash, {
       parsed,
       expiresAt: Date.now() + this.config.intentCacheTtlMinutes * 60_000,
