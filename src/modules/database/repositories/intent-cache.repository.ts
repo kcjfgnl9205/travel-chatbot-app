@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
-import { SupabaseService } from '../supabase.service';
+import { MysqlService } from '../mysql.service';
+import { IntentCacheRow } from '../rows.types';
 import { BaseRepository } from './base.repository';
 
 /**
@@ -13,14 +14,15 @@ import { BaseRepository } from './base.repository';
 export class IntentCacheRepository extends BaseRepository {
   protected readonly tableName = 'intent_cache';
 
-  constructor(supabase: SupabaseService) {
-    super(supabase);
+  constructor(db: MysqlService) {
+    super(db);
   }
 
   /** 만료되지 않은 결과. 없으면 null. */
   async get(hash: string): Promise<unknown> {
-    const row = await this.runOne(
-      (t) => t.select('result, expires_at').eq('utterance_hash', hash).limit(1),
+    const row = await this.selectOne<Pick<IntentCacheRow, 'result' | 'expires_at'>>(
+      'SELECT result, expires_at FROM intent_cache WHERE utterance_hash = ? LIMIT 1',
+      [hash],
       'select intent cache',
     );
     if (!row) return null;
@@ -31,19 +33,16 @@ export class IntentCacheRepository extends BaseRepository {
   }
 
   async put(hash: string, result: unknown, ttlMinutes: number): Promise<void> {
-    await this.run(
-      (t) =>
-        t
-          .upsert(
-            {
-              utterance_hash: hash,
-              result,
-              expires_at: new Date(Date.now() + ttlMinutes * 60_000).toISOString(),
-            },
-            { onConflict: 'utterance_hash' },
-          )
-          .select('utterance_hash'),
-      'upsert intent cache',
+    const { sql, params } = this.insertSql(
+      [
+        {
+          utterance_hash: hash,
+          result,
+          expires_at: new Date(Date.now() + ttlMinutes * 60_000),
+        },
+      ],
+      { update: ['result', 'expires_at'] },
     );
+    await this.execute(sql, params, 'upsert intent cache');
   }
 }

@@ -6,8 +6,8 @@ import { AppConfig, CONFIG, adpickApiEnabled, dbEnabled, openaiEnabled } from '.
 import { AttractionService } from '../attraction/attraction.service';
 import { FlightService } from '../flight/flight.service';
 import { HotelService } from '../hotel/hotel.service';
-import { EXPECTED_TABLES, TABLES_BY_MIGRATION } from '../../config/database.config';
-import { SupabaseService } from '../database/supabase.service';
+import { EXPECTED_TABLES, SCHEMA_FILE } from '../../config/database.config';
+import { MysqlService } from '../database/mysql.service';
 
 /**
  * 헬스체크. 두 개로 나눈 이유:
@@ -15,7 +15,7 @@ import { SupabaseService } from '../database/supabase.service';
  *   /health     앱이 살아있나 (liveness). Caddy·compose 가 30초마다 두드린다.
  *               DB 를 건드리지 않는다 — DB 가 잠깐 흔들렸다고 컨테이너가 재시작되면 안 된다.
  *
- *   /health/db  Supabase 자격증명이 **실제로 먹는가** (진단용).
+ *   /health/db  MySQL 접속 정보가 **실제로 먹는가** (진단용).
  *               환경변수가 채워졌는지가 아니라 진짜 쿼리를 날려본다.
  */
 
@@ -28,7 +28,7 @@ export class HealthController {
 
   constructor(
     @Inject(CONFIG) private readonly config: AppConfig,
-    private readonly supabase: SupabaseService,
+    private readonly mysql: MysqlService,
     private readonly hotels: HotelService,
     private readonly flights: FlightService,
     private readonly attractions: AttractionService,
@@ -44,7 +44,7 @@ export class HealthController {
     return {
       status: 'ok',
       env: this.config.appEnv,
-      db: dbEnabled(this.config) ? 'supabase' : 'disabled(no-op)',
+      db: dbEnabled(this.config) ? 'mysql' : 'disabled(no-op)',
       // ⚠️ 설정값이 아니라 **실제로 주입된 provider** 를 찍는다. 예전에는
       //    HOTEL_PROVIDER 를 그대로 보여줬는데, 그 값은 아무도 읽지 않아서
       //    .env 에 static 이라고 적어두면 OpenAI 를 부르면서 static 이라고 보고했다.
@@ -58,13 +58,13 @@ export class HealthController {
     };
   }
 
-  /** Supabase 에 실제로 붙는지, 테이블이 다 있는지 확인한다. */
+  /** MySQL 에 실제로 붙는지, 테이블이 다 있는지 확인한다. */
   @Get('health/db')
   @ApiOperation({
-    summary: 'Supabase 실제 연결 진단',
+    summary: 'MySQL 실제 연결 진단',
     description:
-      '환경변수가 채워졌는지가 아니라 6개 테이블에 진짜 쿼리를 날려본다.\n' +
-      '실패하면 원인별로 안내한다 (키 거부 / 마이그레이션 미실행 / URL 형식).',
+      '환경변수가 채워졌는지가 아니라 테이블마다 진짜 쿼리를 날려본다.\n' +
+      '실패하면 원인별로 안내한다 (접속 불가 / 계정 거부 / 스키마 미적용).',
   })
   @ApiResponse({ status: 200, description: '전 테이블 정상' })
   @ApiResponse({ status: 503, description: '미설정 · 키 거부 · 테이블 없음' })
@@ -72,18 +72,17 @@ export class HealthController {
     if (!dbEnabled(this.config)) {
       res.status(503).json({
         status: 'disabled',
-        reason: 'SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 가 비어 있습니다.',
+        reason: 'MYSQL_HOST / MYSQL_USER 가 비어 있습니다.',
         hint: '.env 를 확인하고 서버를 재시작하세요.',
       });
       return;
     }
 
-    const client = this.supabase.getClient();
-    if (!client) {
+    if (!this.mysql.getPool()) {
       res.status(503).json({
         status: 'error',
-        reason: 'Supabase 클라이언트 생성 실패',
-        hint: 'SUPABASE_URL 형태가 https://{ref}.supabase.co 인지 확인하세요.',
+        reason: 'MySQL 커넥션 풀 생성 실패',
+        hint: 'MYSQL_* 값을 확인하세요. 서버 로그에 원인이 남습니다.',
       });
       return;
     }
@@ -105,23 +104,22 @@ export class HealthController {
   /**
    * 테이블 하나에 최소 쿼리를 날려본다. 성공하면 true, 실패하면 사유 문자열.
    *
-   * 한 번은 재시도한다. 6개를 동시에 찌르면 Supabase 게이트웨이가 그중 하나를
-   * 순간 거절하는 일이 있는데(빈 본문 401), 그걸로 "DB 고장" 이라고 보고하면
-   * 진짜 문제를 찾는 데 방해가 된다.
+   * 한 번은 재시도한다. 배포 직후 첫 접속이 순간 끊기는 일이 있는데, 그걸로
+   * "DB 고장" 이라고 보고하면 진짜 문제를 찾는 데 방해가 된다.
    */
   private async probe(table: string, attempts = 2): Promise<[string, ProbeResult]> {
-    const client = this.supabase.getClient();
-    if (!client) return [table, 'no client'];
+    const pool = this.mysql.getPool();
+    if (!pool) return [table, 'no pool'];
 
     let last = 'unknown error';
     for (let attempt = 0; attempt < attempts; attempt += 1) {
-      const { error } = await client
-        .from(table)
-        .select('*', { head: true, count: 'exact' })
-        .limit(1);
-      if (!error) return [table, true];
-
-      last = short(error.message || String(error));
+      try {
+        await pool.query(`SELECT 1 FROM \`${table}\` LIMIT 1`);
+        return [table, true];
+      } catch (err) {
+        const code = (err as { code?: string }).code;
+        last = short(`${code ?? ''} ${(err as Error).message ?? String(err)}`.trim());
+      }
       this.logger.warn(
         `health/db probe failed table=${table} attempt=${attempt + 1} err=${last}`,
       );
@@ -148,29 +146,21 @@ export function hintFor(tables: Record<string, ProbeResult>): string {
   const blob = failed.map(([, v]) => String(v)).join(' ').toLowerCase();
   const everything = failed.length === Object.keys(tables).length;
 
-  if (blob.includes('not exist') || blob.includes('schema cache') || blob.includes('pgrst205')) {
-    // 어느 마이그레이션을 안 돌렸는지까지 짚어준다. "테이블이 없다" 만으로는
-    // 네 개 파일 중 무엇을 실행해야 하는지 알 수 없다.
-    const missing = new Set(failed.map(([name]) => name));
-    const files = Object.entries(TABLES_BY_MIGRATION)
-      .filter(([, tables]) => tables.some((t) => missing.has(t)))
-      .map(([file]) => file);
-    const which = files.length ? files.join(' → ') : '0001_init.sql';
-    return `테이블이 없습니다. SQL Editor 에서 ${which} 을 실행하세요.`;
+  if (blob.includes('er_no_such_table') || blob.includes("doesn't exist")) {
+    return `테이블이 없습니다. ${SCHEMA_FILE} 을 실행하세요 (배포 스크립트가 db/mysql/*.sql 을 자동으로 적용합니다 — 배포 로그를 확인하세요).`;
   }
 
-  if (
-    blob.includes('401') ||
-    blob.includes('invalid') ||
-    blob.includes('jwt') ||
-    blob.includes('api key')
-  ) {
+  if (blob.includes('er_access_denied') || blob.includes('access denied')) {
     return everything
-      ? '키가 거부되었습니다. anon/publishable 이 아니라 Settings → API Keys 의 secret(sb_secret_...) 또는 Legacy 탭의 service_role 인지 확인하세요.'
-      : '일부만 401 입니다. 키가 틀렸다면 전부 실패해야 하므로, 동시 요청에 대한 일시적 거절일 가능성이 큽니다. 다시 호출해보세요.';
+      ? '계정이 거부되었습니다. MYSQL_USER / MYSQL_PASSWORD / MYSQL_DATABASE 와 그 계정의 권한을 확인하세요.'
+      : '일부 테이블만 권한이 없습니다. 계정 권한(GRANT)을 확인하세요.';
+  }
+
+  if (/econnrefused|etimedout|enotfound|ehostunreach|connect/.test(blob)) {
+    return 'DB 에 접속하지 못했습니다. MYSQL_HOST(사설 IP)·MYSQL_PORT, 그리고 DB 서브넷 Security List 가 앱 서버에서 오는 3306 을 여는지 확인하세요.';
   }
 
   return everything
-    ? '전 테이블 실패. SUPABASE_URL·키·네트워크를 확인하세요.'
+    ? '전 테이블 실패. MYSQL_* 값과 네트워크를 확인하세요.'
     : `${failed.map(([k]) => k).join(', ')} 만 실패했습니다. 다시 호출해도 같으면 스키마를 확인하세요.`;
 }

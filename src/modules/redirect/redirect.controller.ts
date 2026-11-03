@@ -216,7 +216,7 @@ export class RedirectController {
     // ⚠️ **모르면 구글맵이다.** 카카오맵은 해외 데이터가 거의 없어서 "모르겠으면
     //    카카오맵" 은 빈 결과를 띄운다. 구글맵은 국내도 되므로, 모를 때 틀려도
     //    손해가 작은 쪽이 구글맵이다 — isKorea 가 모르면 false 인 이유이기도 하다.
-    const domestic = isKorea(cityName, (row?.country_code as string) ?? null);
+    const domestic = isKorea(cityName, row?.country_code ?? null);
     const targetUrl = domestic ? kakaoMapUrl(name, cityName) : mapsUrl(name, cityName);
 
     this.logger.log(

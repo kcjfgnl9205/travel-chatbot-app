@@ -17,8 +17,12 @@ export interface AppConfig {
    */
   publicBaseUrl: string;
 
-  supabaseUrl: string;
-  supabaseServiceRoleKey: string;
+  mysqlHost: string;
+  mysqlPort: number;
+  mysqlUser: string;
+  mysqlPassword: string;
+  mysqlDatabase: string;
+  mysqlPoolSize: number;
 
   adpickApiBase: string;
   adpickApiKey: string;
@@ -117,8 +121,12 @@ export function loadConfig(): AppConfig {
     appEnv: str('APP_ENV', 'local'),
     publicBaseUrl: str('PUBLIC_BASE_URL', 'http://localhost:8000'),
 
-    supabaseUrl: str('SUPABASE_URL'),
-    supabaseServiceRoleKey: str('SUPABASE_SERVICE_ROLE_KEY'),
+    mysqlHost: str('MYSQL_HOST'),
+    mysqlPort: num('MYSQL_PORT', 3306),
+    mysqlUser: str('MYSQL_USER'),
+    mysqlPassword: str('MYSQL_PASSWORD'),
+    mysqlDatabase: str('MYSQL_DATABASE', 'travel'),
+    mysqlPoolSize: num('MYSQL_POOL_SIZE', 10),
 
     adpickApiBase: str('ADPICK_API_BASE', 'https://biz.adpick.co.kr'),
     adpickApiKey: str('ADPICK_API_KEY'),

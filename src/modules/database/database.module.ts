@@ -15,10 +15,10 @@ import {
 } from './repositories/places.repository';
 import { SearchResultsRepository } from './repositories/search-results.repository';
 import { UsersRepository } from './repositories/users.repository';
-import { SupabaseService } from './supabase.service';
+import { MysqlService } from './mysql.service';
 
 const PROVIDERS = [
-  SupabaseService,
+  MysqlService,
   MemoryStoreService,
   UsersRepository,
   MessagesRepository,

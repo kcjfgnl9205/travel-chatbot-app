@@ -89,11 +89,18 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # DB 접속 정보는 GitHub Secrets 가 원본이다. 아래 write-env.sh 가 서버 .env 에 옮겨 적는다.
+          # 등록 안 한 시크릿은 빈 값으로 오고, 그러면 서버 값을 그대로 둔다.
+          MYSQL_HOST: ${{ secrets.MYSQL_HOST }}
+          MYSQL_PORT: ${{ secrets.MYSQL_PORT }}
+          MYSQL_USER: ${{ secrets.MYSQL_USER }}
+          MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+          MYSQL_DATABASE: ${{ secrets.MYSQL_DATABASE }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          envs: IMAGE_TAG,GHCR_USER,GHCR_TOKEN
+          envs: IMAGE_TAG,GHCR_USER,GHCR_TOKEN,MYSQL_HOST,MYSQL_PORT,MYSQL_USER,MYSQL_PASSWORD,MYSQL_DATABASE
           # 서버는 이미지를 받아 갈아끼우기만 한다. 대부분 1분 안에 끝난다.
           command_timeout: 10m
           script: |
@@ -123,6 +130,11 @@ jobs:
             # 토큰은 잡이 끝나면 죽는다. 그래도 서버 디스크에 남기지 않게 끝나면 지운다.
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
             trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
+
+            # GitHub Secrets → 서버 .env. 마이그레이션과 새 컨테이너가 둘 다 이 파일을 읽으므로
+            # remote.sh 보다 먼저 한다. 값은 로그에 안 찍힌다.
+            echo "▸ 시크릿 → .env"
+            bash deploy/write-env.sh .env MYSQL_HOST MYSQL_PORT MYSQL_USER MYSQL_PASSWORD MYSQL_DATABASE
 
             # IMAGE_TAG 가 있으면 remote.sh 는 빌드하지 않고 그 이미지를 받는다.
             IMAGE_TAG="$IMAGE_TAG" bash deploy/remote.sh

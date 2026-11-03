@@ -7,15 +7,19 @@ Oracle Cloud 는 Railway 같은 PaaS 가 아니라 **그냥 리눅스 서버**�
 
 ## 1. 시크릿을 어디에 둘 것인가
 
-결론: **서버의 `.env` 파일**. GitHub Secrets 가 아니다.
+결론: **컨테이너는 서버의 `.env` 파일만 읽는다.** 다만 DB 접속 정보(`MYSQL_*`)는
+**GitHub Secrets 가 원본**이고, 배포할 때 Actions 가 서버 `.env` 에 옮겨 적는다.
 
 | | 언제 읽히나 | 이 프로젝트에서 |
 |---|---|---|
 | 내 PC 의 `.env` | 로컬에서 `npm run start:dev` 할 때 | 개발용 값 |
-| **서버의 `.env`** | **컨테이너가 실행 중일 때** | **운영 키 ← 여기** |
-| GitHub Secrets | GitHub Actions 워크플로 실행 중에만 | 나중에 CI 배포를 붙이면 SSH 키 |
+| **서버의 `.env`** | **컨테이너가 실행 중일 때** | **운영 키 ← 컨테이너는 여기만 본다** |
+| **GitHub Secrets** | GitHub Actions 워크플로 실행 중에만 | SSH 키 + **`MYSQL_*` 의 원본** |
 
-**GitHub Secrets 는 런타임 저장소가 아니다.** 오라클 서버에서 도는 컨테이너는 GitHub Secrets 를 읽지 못한다. CI 를 붙이지 않았다면 쓸 일이 없다.
+**GitHub Secrets 는 런타임 저장소가 아니다.** 오라클 서버에서 도는 컨테이너는 GitHub Secrets 를 직접 읽지 못한다.
+그래서 배포 잡이 [`deploy/write-env.sh`](../deploy/write-env.sh) 로 `MYSQL_*` 를 서버 `.env` 에 덮어쓴다 —
+**서버에서 `.env` 의 `MYSQL_*` 를 손으로 고쳐도 다음 배포가 시크릿 값으로 되돌린다.** 바꾸려면 시크릿을 바꾼다.
+시크릿이 비어 있으면 서버 값을 그대로 둔다. 나머지(OpenAI·애드픽·카카오)는 지금도 서버 `.env` 가 원본이다.
 
 ### 서버에서
 
@@ -37,8 +41,10 @@ chmod 600 .env       # 본인만 읽게. 이게 사실상 유일한 보호막이
 PUBLIC_BASE_URL=https://bot.example.com   # ★ 실제 도메인. 카드 링크가 이 주소로 나간다
 DOMAIN=bot.example.com                    # ★ Caddy 인증서 발급용
 
-SUPABASE_URL=https://xxxxx.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=eyJ...          # Settings → API → service_role
+MYSQL_HOST=10.0.1.23                      # HeatWave 사설 IP (2절)
+MYSQL_USER=travel_app
+MYSQL_PASSWORD=...
+MYSQL_DATABASE=travel
 ADPICK_API_KEY=...
 KAKAO_SKILL_TOKEN=아무거나_긴_랜덤값
 ```
@@ -47,42 +53,49 @@ KAKAO_SKILL_TOKEN=아무거나_긴_랜덤값
 
 ---
 
-## 2. Supabase 연결
+## 2. MySQL (OCI HeatWave) 연결
 
-1. [supabase.com](https://supabase.com) 프로젝트 생성 — **서버와 같은 리전으로.** 현재 서버는 `ap-chuncheon-1`(춘천), Supabase 는 `ap-northeast-2`(서울)다. 요청당 왕복이 약 7회라 거리가 그대로 응답시간이 된다 (실측 왕복 1회 ≈ 50ms, [LOADTEST.md](LOADTEST.md) 참고).
-2. SQL Editor 에 [`supabase/migrations/`](../supabase/migrations/) 의 파일을 **번호순으로** 붙여넣고 실행 (`0001_init.sql` 부터). 전부 재실행해도 안전하다
-   > ⚠️ **운영 중인 DB 에도 새 번호는 올려야 한다.** 안 올리면 그 기능만 조용히 예전 동작으로 돈다 — 예를 들어 [`0015`](../supabase/migrations/0015_click_time_affiliate.sql) 가 빠지면 클릭 시점 제휴 변환이 통째로 건너뛰어지고 수수료가 안 붙는다 (링크는 멀쩡히 열린다).
-3. 대시보드에서 두 값 복사
+DB 는 **OCI MySQL HeatWave** 다. 앱 서버(`ap-chuncheon-1`)와 **같은 VCN** 안에 있고,
+앱은 사설 IP 로 붙는다 — 공인 주소가 없다. 예전 Supabase 는 요청당 왕복 7회 × 약 50ms 가
+응답시간과 처리량 천장을 정했다 ([LOADTEST.md](LOADTEST.md)). 같은 VCN 이면 왕복이 1ms 안쪽이다.
 
-### `SUPABASE_URL`
+1. OCI 콘솔 → MySQL HeatWave → DB 시스템 생성. **앱 서버와 같은 VCN** 을 고른다
+2. DB 서브넷의 Security List 에 Ingress 추가 — Source: 앱 서버 서브넷 CIDR, TCP **3306**
+3. 데이터베이스와 앱 계정을 만든다 (관리자 계정으로 한 번):
 
-**Dashboard → 프로젝트 선택 → Settings → API** 의 `Project URL`.
-형태는 `https://{project-ref}.supabase.co` 이고, 브라우저 주소창의 `/project/{ref}/` 에 있는 값이 그 `ref` 다.
+   ```sql
+   CREATE DATABASE travel;
+   CREATE USER 'travel_app'@'%' IDENTIFIED BY '<비밀번호>';
+   GRANT ALL PRIVILEGES ON travel.* TO 'travel_app'@'%';
+   ```
 
-### `SUPABASE_SERVICE_ROLE_KEY`
+4. **GitHub Secrets 에 등록한다** (저장소 → Settings → Secrets and variables → Actions).
+   배포할 때 서버 `.env` 에 옮겨 적힌다 — 서버에서 직접 고치지 않는다.
 
-**Settings → API Keys** (직접 주소: `supabase.com/dashboard/project/_/settings/api`)
+   | 이름 | 값 |
+   |---|---|
+   | `MYSQL_HOST` | HeatWave **사설 IP** (콘솔 → DB 시스템 → 연결) |
+   | `MYSQL_PORT` | `3306` (비우면 서버 값, 없으면 3306) |
+   | `MYSQL_USER` | `travel_app` |
+   | `MYSQL_PASSWORD` | 비밀번호. ⚠️ **작은따옴표(`'`)는 못 쓴다** — 배포가 멈춘다 |
+   | `MYSQL_DATABASE` | `travel` |
 
-Supabase 가 키 체계를 새로 바꿔서 **두 세대가 공존한다. 어느 쪽이든 이 변수에 넣으면 동작한다.**
+5. **스키마는 배포가 적용한다.** `deploy/remote.sh` 가 새 컨테이너를 띄우기 **전에**
+   `node dist/migrate` 를 돌려 [`db/mysql/*.sql`](../db/mysql/) 을 번호순으로 적용하고
+   `schema_migrations` 에 기록한다. 실패하면 배포가 멈추고 돌던 컨테이너는 그대로다.
 
-| | 어디에 | 형태 |
-|---|---|---|
-| 신규 (권장) | `API Keys` 탭의 **Secret keys** | `sb_secret_...` |
-| 레거시 | `Legacy API Keys` 탭의 **`service_role`** | `eyJ...` (JWT) |
-
-레거시 키는 **곧 지원 종료 예정**이므로 새로 시작한다면 `sb_secret_...` 쪽을 쓰는 게 좋다.
-환경변수 이름은 `SUPABASE_SERVICE_ROLE_KEY` 그대로 둔다 — "RLS 를 우회하는 서버 전용 키"라는 뜻으로 쓰고 있고, 두 세대 모두 그 역할이다.
-
-> **`anon` / `publishable` 키는 안 된다.** 전 테이블이 RLS 활성 + 정책 없음이라 그 키로는 아무것도 못 읽는다.
->
-> 반대로 secret / `service_role` 키는 **RLS 를 완전히 우회한다.** 클라이언트·저장소·로그·채팅 어디에도 남기면 안 된다.
+   > ⚠️ **적용된 파일은 고치지 않는다.** 바꿀 게 있으면 `0002_*.sql` 을 새로 만든다.
+   > 러너는 파일 이름으로 적용 여부를 가린다 — 고친 내용은 운영에 영영 안 들어간다
+   > (내용 해시가 달라지면 배포 로그에 경고는 뜬다).
 
 연결 확인:
 
 ```bash
-curl -s https://bot.example.com/health
-# {"status":"ok", "db":"supabase", ...}   ← disabled(no-op) 가 아니어야 한다
+curl -s https://bot.nolmoa.com/health/db
+# {"status":"ok","latencyMs":..,"tables":{...}}   ← 실패하면 hint 가 원인을 짚는다
 ```
+
+Supabase 에서 데이터를 옮기는 절차는 **[MIGRATION-MYSQL.md](MIGRATION-MYSQL.md)**.
 
 ---
 
@@ -313,9 +326,9 @@ ssh-copy-id -i ~/.ssh/travel_deploy.pub ubuntu@<서버IP>
 | `SSH_KEY` | `cat ~/.ssh/travel_deploy` **전체** (`-----BEGIN...` 포함) |
 | `SSH_KNOWN_HOSTS` | `ssh-keyscan -H <서버IP>` 결과 (선택, 권장) |
 | `SSH_PORT` | 22 가 아니면 (선택) |
+| `MYSQL_HOST` · `MYSQL_PORT` · `MYSQL_USER` · `MYSQL_PASSWORD` · `MYSQL_DATABASE` | [2절](#2-mysql-oci-heatwave-연결) 참고. 배포가 서버 `.env` 에 옮겨 적는다 |
 
-**여기가 GitHub Secrets 를 쓰는 유일한 곳이다.** 앱 시크릿(Supabase·애드픽)은
-서버의 `.env` 에 있고 GitHub 은 알 필요가 없다.
+앱 시크릿 중 **DB 만** GitHub Secrets 가 원본이다. 애드픽·OpenAI·카카오는 서버 `.env` 에 있다.
 
 ### 동작 확인
 
@@ -364,7 +377,7 @@ SKIP_TESTS=1 bash deploy/remote.sh
               ↓ 내부 네트워크
            app:8000 (Nest, 비루트 유저, healthcheck)
               ↓
-           Supabase (Seoul)
+           MySQL HeatWave (같은 VCN, 사설 IP)
 ```
 
 `app` 컨테이너는 `expose` 만 하고 호스트 포트를 열지 않는다. **Caddy 를 통해서만 들어온다.**
@@ -376,11 +389,12 @@ SKIP_TESTS=1 bash deploy/remote.sh
 
 - [ ] `chmod 600 .env`
 - [ ] `PUBLIC_BASE_URL` 이 실제 HTTPS 도메인인가 (localhost 아님)
-- [ ] `/health` 가 `"db":"supabase"` 인가 (`disabled(no-op)` 면 키가 안 먹은 것)
+- [ ] `/health` 가 `"db":"mysql"` 인가 (`disabled(no-op)` 면 `MYSQL_*` 가 안 먹은 것)
 - [ ] `KAKAO_SKILL_TOKEN` 설정 + 오픈빌더 스킬 헤더에 같은 값 → 스킬 URL 무단 호출 차단
 - [ ] 오픈빌더 스킬 URL 을 `https://{도메인}/api/v1/kakao/hotels/recommend` 로 등록
 - [ ] 카드 링크를 실제로 눌러 애드픽까지 이동되는지 확인
-- [ ] Supabase Table Editor 에서 `messages` / `recommendation_items` 에 행이 쌓이는지 확인
+- [ ] `messages` / `recommendation_items` 에 행이 쌓이는지 확인 (`SELECT COUNT(*) ...`)
+- [ ] 배포 로그에 `▸ 스키마 마이그레이션` 이 성공으로 찍혔는가
 
 ## 8. 안 될 때
 
@@ -393,5 +407,6 @@ SKIP_TESTS=1 bash deploy/remote.sh
 | Actions 에서 Permission denied (publickey) | `SSH_KEY` 에 개인 키 **전문**(BEGIN/END 줄 포함)을 넣었는지. 공개 키를 넣으면 안 된다 |
 | 카카오에서 타임아웃 | 응답 5초 제한. `recommendations.latency_ms` 확인 |
 | 카드는 뜨는데 링크가 안 열림 | `PUBLIC_BASE_URL` 이 localhost 로 남아 있음 |
-| `db: disabled(no-op)` | `SUPABASE_*` 미설정. 챗봇은 돌지만 아무것도 기록되지 않는다 |
+| `db: disabled(no-op)` | `MYSQL_HOST`/`MYSQL_USER` 미설정. 챗봇은 돌지만 아무것도 기록되지 않는다 |
+| 배포가 `마이그레이션 실패` 에서 멈춤 | DB 에 못 붙었거나 SQL 오류. 로그의 에러 코드를 본다 — `ECONNREFUSED`/`ETIMEDOUT` 이면 Security List 3306, `ER_ACCESS_DENIED` 면 계정. 돌던 컨테이너는 그대로라 서비스는 산다 |
 | 애드픽 링크가 원본 주소로 나감 | `ADPICK_API_KEY` 미설정 → 폴백. `affiliate_links.error` 확인 |

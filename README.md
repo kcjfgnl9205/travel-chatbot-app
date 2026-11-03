@@ -1,6 +1,6 @@
 # travel-chatbot-app
 
-카카오톡 **가자고 그룹챗봇** 스킬 서버. **NestJS + Supabase**.
+카카오톡 **가자고 그룹챗봇** 스킬 서버. **NestJS + MySQL (OCI HeatWave)**.
 범위: **호텔 · 항공권 · 관광지 3가지 (gpt-5-mini + 웹 검색)**
 
 **진입점이 하나다.** 오픈빌더에서 시나리오 블록·엔티티를 전부 지웠으므로 봇을 멘션한
@@ -19,7 +19,7 @@
 
 ```bash
 npm install                   # Node 24 (LTS)
-cp .env.example .env          # Supabase 없이도 그대로 뜬다
+cp .env.example .env          # DB 없이도 그대로 뜬다
 npm run start:dev             # http://localhost:8000
 ```
 
@@ -40,7 +40,7 @@ done
 첫 호출은 "찾고 있어요" 가 정상이다 — 검색이 7~30초라 백그라운드로 빠진다.
 같은 걸 한 번 더 물으면 카드가 나온다.
 
-`SUPABASE_*` 를 비워두면 **no-op 모드**로 동작한다. DB 적재만 건너뛰고 카카오 응답과 리다이렉트는 정상이라, 오픈빌더 연동을 먼저 확인할 때 쓴다.
+`MYSQL_HOST` 를 비워두면 **no-op 모드**로 동작한다. DB 적재만 건너뛰고 카카오 응답과 리다이렉트는 정상이라, 오픈빌더 연동을 먼저 확인할 때 쓴다.
 
 ```bash
 npm test           # 213개
@@ -248,7 +248,7 @@ listCard 는 5줄이 한계다. 그래서 **찾는 개수와 보여주는 개수
 | ------ | ---- | ---- |
 | POST | `/api/v1/kakao/router` | **유일한 스킬 진입점.** 폴백 블록이 부른다 |
 | GET | `/r/{clickId}` | 클릭 카운트 → **그 줄만 애드픽 변환** → 302 (DB 왕복 1회) |
-| GET | `/health` · `/health/db` | 앱 생존 · Supabase 연결 진단 |
+| GET | `/health` · `/health/db` | 앱 생존 · MySQL 연결 진단 |
 | POST | `/api/v1/debug/parse` | 발화 해석만 (`DEBUG_TOKEN`) |
 | POST | `/api/v1/debug/search` | **동기 전체 파이프라인** — 실제 말풍선 그대로 (`DEBUG_TOKEN`) |
 | GET | `/docs` | Swagger (운영에서도 켜져 있다) |
@@ -433,13 +433,14 @@ mapsUrl('오사카성', '오사카')
 | ----------------------------- | -------------------------- | ----------- |
 | 로컬 `.env` (gitignore)       | 내 PC 에서 개발할 때       | 개발용 값   |
 | **서버 `.env`** (`chmod 600`) | **운영 컨테이너 실행 중**  | 진짜 키     |
-| GitHub Secrets                | GitHub Actions 실행 중에만 | SSH 배포 키 |
+| GitHub Secrets                | GitHub Actions 실행 중에만 | SSH 배포 키 · **`MYSQL_*` 원본** |
 
 **GitHub Secrets 는 런타임 저장소가 아니다.** 서버에서 도는 컨테이너는 읽지 못한다.
+그래서 `MYSQL_*` 는 배포 잡이 [`deploy/write-env.sh`](deploy/write-env.sh) 로 서버 `.env` 에 옮겨 적는다 — 서버에서 손으로 고치면 다음 배포가 되돌린다.
 
 | 값                          | 위험도                                     |
 | --------------------------- | ------------------------------------------ |
-| `SUPABASE_SERVICE_ROLE_KEY` | **최상** — RLS 를 우회한다                 |
+| `MYSQL_PASSWORD`            | **최상** — 전 테이블을 읽고 쓴다           |
 | `ADPICK_API_KEY`            | 높음 — 남이 쓰면 내 계정으로 링크가 생성됨 |
 | `KAKAO_SKILL_TOKEN`         | 중간 — 없으면 스킬 URL 을 아무나 호출      |
 
@@ -447,26 +448,29 @@ mapsUrl('오사카성', '오사카')
 
 ---
 
-## Supabase 셋업
+## DB 셋업 (MySQL)
 
-1. 프로젝트 생성 — **리전 Seoul** 권장
-2. SQL Editor 에 [`0001_init.sql`](supabase/migrations/0001_init.sql) → [`0002_flight.sql`](supabase/migrations/0002_flight.sql) → [`0003_attraction.sql`](supabase/migrations/0003_attraction.sql) → [`0004_router.sql`](supabase/migrations/0004_router.sql) 순서로 붙여넣고 실행 (재실행 안전)
-3. `.env` 에 `SUPABASE_URL` 과 `SUPABASE_SERVICE_ROLE_KEY` 입력 → [자세히](docs/DEPLOY.md)
+1. OCI 콘솔에서 MySQL HeatWave DB 시스템 생성 — **앱 서버와 같은 VCN**, 서브넷 Security List 에 앱 서버 → 3306 허용
+2. 데이터베이스 생성: `CREATE DATABASE travel;` (테이블마다 콜레이션을 지정하므로 DB 기본값은 상관없다)
+3. `.env` 에 `MYSQL_HOST`(사설 IP)·`MYSQL_USER`·`MYSQL_PASSWORD`·`MYSQL_DATABASE` 입력 → [자세히](docs/DEPLOY.md)
+4. **스키마는 배포가 적용한다.** [`db/mysql/*.sql`](db/mysql/) 을 번호순으로 돌리고 `schema_migrations` 에 기록한다 ([`src/migrate.ts`](src/migrate.ts)). 손으로는 `node dist/migrate`
+
+> ⚠️ **적용된 파일은 고치지 않는다.** 바꿀 게 있으면 `0002_*.sql` 을 새로 만든다 — 러너는 파일 이름으로 적용 여부를 가린다.
+>
+> Supabase 시절 데이터를 옮기는 법은 [docs/MIGRATION-MYSQL.md](docs/MIGRATION-MYSQL.md). 옛 [`supabase/migrations/`](supabase/migrations/) 는 이전이 끝날 때까지 참고용으로 남겨둔다.
 
 시드 스크립트는 없다. **호텔·항공권·관광지 데이터는 전부 provider 가 런타임에 만든다.**
 
-### 테이블 (스키마 10개 · 코드가 쓰는 건 9개 — 세 도메인 공용)
+### 테이블 (10개 — 세 도메인 공용)
 
 | 그룹 | 테이블 |
 | --- | --- |
 | 지역 | `places` · `place_aliases` |
 | 결과·캐시 | `search_results` · `intent_cache` · `affiliate_links` |
 | 행동 로그 | `users` · `messages` · `recommendations` · `recommendation_items` |
+| 관광지 | `attractions` |
 
-위 9개는 **전부 코드가 실제로 읽고 쓴다.** 빈 껍데기는 하나뿐이다 —
-`search_cache`(0001)는 라우터 이전 구조의 잔재로, `search_results`(0004)가 대체했다.
-이제 읽지도 쓰지도 않지만 롤백을 위해 남겨뒀고, 그래서 **헬스체크도 찌르지 않는다**
-(누가 드롭해도 서버는 정상으로 보고한다).
+위 9개와 `attractions` 는 **전부 코드가 실제로 읽고 쓴다.** 헬스체크(`/health/db`)가 이 목록을 찌른다.
 
 흐름: 발화 1건 → `messages` 1행 → `search_results` 1행(20건, 여러 사람이 공유) →
 `recommendations` 1행(카드 1장) → `recommendation_items` N행(노출) → 클릭 시 `click_count` 증가
@@ -481,8 +485,8 @@ mapsUrl('오사카성', '오사카')
 **항공권·관광지도 같은 테이블을 쓴다.** `domain`/`kind` 컬럼이 셋을 가른다 — 도메인마다
 테이블을 복제하면 "이번 주 클릭 수" 같은 질문이 전부 union 이 되고, 클릭 추적 경로
 (`/r/{clickId}`)가 어느 테이블을 볼지부터 알아내야 한다. 컬럼 이름이 호텔 시절 그대로인
-것들(`recommendation_items.hotel_name` 등)의 의미는
-[`0002_flight.sql`](supabase/migrations/0002_flight.sql) 주석에 정리돼 있다.
+것들의 의미는 [`0002_flight.sql`](supabase/migrations/0002_flight.sql) 주석에 정리돼 있다
+(그 뒤 `hotel_name` 은 `item_name` 으로 바뀌었다).
 
 ERD와 컬럼별 설명은 **[docs/DB.md](docs/DB.md)**.
 
@@ -558,7 +562,7 @@ src/
 │   │   └── city-table.ts              도시 사전 237개 (+ 공항 코드)
 │   ├── search/                        도메인을 모르는 오케스트레이션
 │   │   ├── search.service.ts          캐시 조회 · 선점 · 백그라운드 검색 · 페이지 · 콜백
-│   │   ├── search-store.service.ts    저장소 2단(메모리 → Supabase) + single-flight
+│   │   ├── search-store.service.ts    저장소 2단(메모리 → MySQL) + single-flight
 │   │   └── search.types.ts            SearchDomain 계약 (도메인이 구현한다)
 │   ├── hotel/ flight/ attraction/     도메인 — "어떻게 찾고 어떻게 한 줄로 그리는가"
 │   │   ├── *.service.ts               search() + rows() 두 가지만
@@ -570,12 +574,14 @@ src/
 │   ├── debug/debug.controller.ts      /api/v1/debug/parse · /search (DEBUG_TOKEN)
 │   ├── redirect/redirect.controller.ts  /r/{clickId}
 │   ├── health/health.controller.ts    /health, /health/db
-│   └── database/                      Supabase (@Global)
-│       ├── supabase.service.ts        없으면 no-op
+│   └── database/                      MySQL (@Global)
+│       ├── mysql.service.ts           커넥션 풀. 접속 정보가 없으면 no-op
+│       ├── rows.types.ts              테이블 행 타입
 │       ├── memory-store.service.ts    no-op 모드 리다이렉트 폴백
 │       └── repositories/              실패해도 예외를 올리지 않음
 ├── app.module.ts
-└── main.ts
+├── main.ts
+└── migrate.ts                         db/mysql/*.sql 적용 (배포가 기동 전에 부른다)
 ```
 
 ### 설계 규칙 4가지
@@ -589,11 +595,11 @@ src/
 
 ## 배포
 
-`main` 에 push 하면 **테스트 → SSH → 서버 재빌드 → 헬스체크** 가 자동으로 돈다.
+`main` 에 push 하면 **테스트 → SSH → 이미지 받기 → 스키마 마이그레이션 → 교체 → 헬스체크** 가 자동으로 돈다.
 전체 절차·트러블슈팅은 [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ```
-인터넷 → :443 Caddy (TLS 자동) → app:8000 (Nest, 비루트) → Supabase
+인터넷 → :443 Caddy (TLS 자동) → app:8000 (Nest, 비루트) → MySQL HeatWave (VCN 내부)
 ```
 
 ---

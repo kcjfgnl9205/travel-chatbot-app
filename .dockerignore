@@ -38,10 +38,10 @@ coverage
 docs
 travelmate-spec.md
 
-# ⚠️ supabase/migrations 는 빼지 않는다. **테스트가 읽는다** —
+# ⚠️ db/mysql 은 빼지 않는다. **테스트가 읽고, 마이그레이션 러너가 이미지 안에서 쓴다** —
 
-# rls.spec.ts(모든 테이블에 RLS 가 켜졌나)와 item-detail-columns.spec.ts(코드가
+# mysql-schema.spec.ts 가 SQL 파일을 직접 대조하고, 배포 때 dist/migrate.js 가 이
 
-# 쓰는 컬럼이 실제로 있나)가 SQL 파일을 직접 대조한다. 빼면 로컬 `npm test` 는
+# 파일들을 적용한다. 빼면 로컬 `npm test` 는 통과하는데 도커 빌드만 깨진다.
 
-# 통과하는데 도커 빌드만 깨진다 — .env.example 로 한 번, 여기서 또 한 번 겪었다.
+# 옛 supabase/migrations 는 이미지에 안 들어간다 (Dockerfile 이 COPY 하지 않는다).

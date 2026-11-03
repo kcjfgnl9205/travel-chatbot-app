@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 
 import { SearchKind, SearchMeta, SearchRow, TripType } from '../../search/search.types';
-import { SupabaseService } from '../supabase.service';
+import { MysqlService } from '../mysql.service';
+import { SearchResultRow } from '../rows.types';
 import { BaseRepository } from './base.repository';
 
 /**
@@ -9,12 +10,12 @@ import { BaseRepository } from './base.repository';
  *
  * 캐시가 빈 상태에서 세 명이 동시에 "오사카 호텔" 을 치면 AI 가 세 번 돈다.
  * 행을 pending 으로 **먼저 꽂은 쪽만** 검색을 수행하게 하면 Redis 락 없이
- * Postgres 만으로 한 번으로 묶인다.
+ * DB 만으로 한 번으로 묶인다.
  *
- *   insert ... on conflict (cache_key) do nothing returning cache_key
+ *   insert ... on duplicate key update cache_key = cache_key
  *
- * PostgREST 에는 그 구문이 없지만 `upsert(..., { ignoreDuplicates: true })` 가
- * 정확히 같은 SQL 로 번역된다 — 그래서 **돌려받은 행이 있으면 내가 선점한 것**이다.
+ * 새로 들어가면 affectedRows 1, 이미 있으면 0 — **1 이면 내가 선점한 것**이다.
+ * (mysql.service.ts 가 FOUND_ROWS 를 끈 이유가 이것이다. 켜져 있으면 둘 다 1 이 된다.)
  */
 export interface ClaimInput {
   cacheKey: string;
@@ -30,8 +31,8 @@ export interface ClaimInput {
 export class SearchResultsRepository extends BaseRepository {
   protected readonly tableName = 'search_results';
 
-  constructor(supabase: SupabaseService) {
-    super(supabase);
+  constructor(db: MysqlService) {
+    super(db);
   }
 
   /**
@@ -45,21 +46,18 @@ export class SearchResultsRepository extends BaseRepository {
    *    오므로 보관 제한이 없다. 지금 이 함수를 부르는 건 호텔·항공권뿐이다.
    */
   async purgeExpired(kind: string): Promise<number | null> {
-    const rows = await this.run(
-      (t) =>
-        t
-          .delete()
-          .eq('kind', kind)
-          .lt('expires_at', new Date().toISOString())
-          .select('cache_key'),
+    const result = await this.execute(
+      'DELETE FROM search_results WHERE kind = ? AND expires_at < UTC_TIMESTAMP(3)',
+      [kind],
       'purge expired',
     );
-    return rows ? rows.length : null;
+    return result ? result.affectedRows : null;
   }
 
   async get(cacheKey: string): Promise<SearchRow | null> {
-    const row = await this.runOne(
-      (t) => t.select(COLUMNS).eq('cache_key', cacheKey).limit(1),
+    const row = await this.selectOne<SearchResultRow>(
+      `SELECT ${COLUMNS} FROM search_results WHERE cache_key = ? LIMIT 1`,
+      [cacheKey],
       'select search result',
     );
     return row ? toRow(row) : null;
@@ -69,33 +67,30 @@ export class SearchResultsRepository extends BaseRepository {
    * 새 행을 pending 으로 꽂는다. **돌려받으면 내가 검색할 차례다.**
    *
    * @returns true 선점 성공 · false 남이 먼저 꽂았다 · **null 은 DB 를 못 믿는다**
-   *          (테이블이 없거나 Supabase 가 흔들림). 셋을 구분해야 하는 이유는
+   *          (테이블이 없거나 DB 가 흔들림). 셋을 구분해야 하는 이유는
    *          null 을 false 로 뭉개면 **아무도 검색을 못 하게 되기** 때문이다 —
    *          0004 마이그레이션을 안 돌린 서버가 "먼저 찾고 있어요" 만 반복한다.
    */
   async claim(input: ClaimInput): Promise<boolean | null> {
-    const rows = await this.run(
-      (t) =>
-        t
-          .upsert(
-            {
-              cache_key: input.cacheKey,
-              kind: input.kind,
-              place_id: input.placeId,
-              from_place_id: input.fromPlaceId,
-              to_place_id: input.toPlaceId,
-              trip_type: input.tripType,
-              status: 'pending',
-              meta: input.meta,
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: 'cache_key', ignoreDuplicates: true },
-          )
-          .select('cache_key'),
-      'claim search result',
+    const { sql, params } = this.insertSql(
+      [
+        {
+          cache_key: input.cacheKey,
+          kind: input.kind,
+          place_id: input.placeId,
+          from_place_id: input.fromPlaceId,
+          to_place_id: input.toPlaceId,
+          trip_type: input.tripType,
+          status: 'pending',
+          meta: input.meta,
+          updated_at: new Date(),
+        },
+      ],
+      'ignore',
     );
-    // run() 은 실패하면 null, 충돌로 아무것도 안 꽂혔으면 빈 배열을 준다. 둘은 다르다.
-    return rows === null ? null : rows.length > 0;
+    const result = await this.execute(sql, params, 'claim search result');
+    // execute() 는 실패하면 null, 충돌로 아무것도 안 꽂혔으면 affectedRows 0 을 준다. 둘은 다르다.
+    return result === null ? null : result.affectedRows > 0;
   }
 
   /**
@@ -106,16 +101,14 @@ export class SearchResultsRepository extends BaseRepository {
    */
   async reclaim(cacheKey: string, seenUpdatedAt: string | null): Promise<boolean | null> {
     if (!seenUpdatedAt) return false;
-    const rows = await this.run(
-      (t) =>
-        t
-          .update({ status: 'pending', error: null, updated_at: new Date().toISOString() })
-          .eq('cache_key', cacheKey)
-          .eq('updated_at', seenUpdatedAt)
-          .select('cache_key'),
+    const result = await this.execute(
+      `UPDATE search_results
+          SET status = 'pending', error = NULL, updated_at = ?
+        WHERE cache_key = ? AND updated_at = ?`,
+      [new Date(), cacheKey, new Date(seenUpdatedAt)],
       'reclaim search result',
     );
-    return rows === null ? null : rows.length > 0;
+    return result === null ? null : result.affectedRows > 0;
   }
 
   async complete(
@@ -125,21 +118,19 @@ export class SearchResultsRepository extends BaseRepository {
     meta: SearchMeta,
   ): Promise<void> {
     const now = new Date();
-    await this.run(
-      (t) =>
-        t
-          .update({
-            status: 'ready',
-            items,
-            item_count: items.length,
-            meta,
-            error: null,
-            fetched_at: now.toISOString(),
-            expires_at: new Date(now.getTime() + ttlMinutes * 60_000).toISOString(),
-            updated_at: now.toISOString(),
-          })
-          .eq('cache_key', cacheKey)
-          .select('cache_key'),
+    const set = this.setSql({
+      status: 'ready',
+      items,
+      item_count: items.length,
+      meta,
+      error: null,
+      fetched_at: now,
+      expires_at: new Date(now.getTime() + ttlMinutes * 60_000),
+      updated_at: now,
+    });
+    await this.execute(
+      `UPDATE search_results SET ${set.sql} WHERE cache_key = ?`,
+      [...set.params, cacheKey],
       'complete search result',
     );
   }
@@ -150,17 +141,11 @@ export class SearchResultsRepository extends BaseRepository {
    */
   async fail(cacheKey: string, error: string, ttlMinutes: number): Promise<void> {
     const now = new Date();
-    await this.run(
-      (t) =>
-        t
-          .update({
-            status: 'failed',
-            error: error.slice(0, 500),
-            expires_at: new Date(now.getTime() + ttlMinutes * 60_000).toISOString(),
-            updated_at: now.toISOString(),
-          })
-          .eq('cache_key', cacheKey)
-          .select('cache_key'),
+    await this.execute(
+      `UPDATE search_results
+          SET status = 'failed', error = ?, expires_at = ?, updated_at = ?
+        WHERE cache_key = ?`,
+      [error.slice(0, 500), new Date(now.getTime() + ttlMinutes * 60_000), now, cacheKey],
       'fail search result',
     );
   }
@@ -169,13 +154,13 @@ export class SearchResultsRepository extends BaseRepository {
 const COLUMNS =
   'cache_key, kind, status, items, item_count, meta, error, fetched_at, expires_at, updated_at';
 
-function toRow(row: Record<string, any>): SearchRow {
+function toRow(row: SearchResultRow): SearchRow {
   return {
     cacheKey: String(row.cache_key),
-    kind: row.kind as SearchKind,
-    status: (row.status ?? 'pending') as SearchRow['status'],
+    kind: row.kind,
+    status: (row.status ?? 'pending'),
     items: Array.isArray(row.items) ? row.items : [],
-    meta: (row.meta ?? {}) as SearchMeta,
+    meta: (row.meta ?? {}) as unknown as SearchMeta,
     error: row.error ?? null,
     fetchedAt: millis(row.fetched_at),
     expiresAt: millis(row.expires_at),

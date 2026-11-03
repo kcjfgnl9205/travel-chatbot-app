@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
-import { SupabaseService } from '../supabase.service';
+import { MysqlService } from '../mysql.service';
+import { AttractionRow } from '../rows.types';
 import { BaseRepository } from './base.repository';
 
 /**
@@ -13,16 +14,24 @@ import { BaseRepository } from './base.repository';
  * ⚠️ **읽기는 요청 경로에서 돈다.** 쿼리 하나라 카카오 5초 예산 안에서 충분하다 —
  *    그게 구글·모델을 걷어낸 가장 큰 실익이다(더 이상 "찾고 있어요" 가 필요 없다).
  */
+/** register_attraction_click 이 돌려주는 칸. `/a/{id}` 가 지도 검색어를 만든다. */
+export interface ClickedAttraction {
+  attraction_name: string;
+  city_name: string;
+  country_code: string | null;
+  clicks: number;
+}
+
 @Injectable()
 export class AttractionsRepository extends BaseRepository {
   protected readonly tableName = 'attractions';
 
   /** 관리 화면·카드가 함께 쓰는 컬럼. 여기 없는 값은 카드에 못 찍힌다. */
   private static readonly COLUMNS =
-    'id, city_id, name, name_en, area, image_url, image_source, rank, source';
+    'id, city_id, name, name_en, area, image_url, image_source, `rank`, source';
 
-  constructor(supabase: SupabaseService) {
-    super(supabase);
+  constructor(db: MysqlService) {
+    super(db);
   }
 
   // ------------------------------------------------------------------ 읽기
@@ -36,20 +45,22 @@ export class AttractionsRepository extends BaseRepository {
   async listByCity(
     cityId: number,
     source?: 'manual' | 'ai',
-  ): Promise<Record<string, any>[] | null> {
-    return this.run(
-      (t) => {
-        const q = t.select(AttractionsRepository.COLUMNS).eq('city_id', cityId);
-        // 검수용 필터. 모델이 넣은 것만 훑어보는 용도라 조회 경로에서는 안 쓴다.
-        return (source ? q.eq('source', source) : q).order('rank').order('name');
-      },
+  ): Promise<AttractionRow[] | null> {
+    // 검수용 필터. 모델이 넣은 것만 훑어보는 용도라 조회 경로에서는 안 쓴다.
+    const bySource = source ? ' AND source = ?' : '';
+    return this.select<AttractionRow>(
+      `SELECT ${AttractionsRepository.COLUMNS} FROM attractions
+        WHERE city_id = ?${bySource}
+        ORDER BY \`rank\`, name`,
+      source ? [cityId, source] : [cityId],
       'list attractions',
     );
   }
 
-  async findById(id: number): Promise<Record<string, any> | null> {
-    return this.runOne(
-      (t) => t.select(AttractionsRepository.COLUMNS).eq('id', id),
+  async findById(id: number): Promise<AttractionRow | null> {
+    return this.selectOne<AttractionRow>(
+      `SELECT ${AttractionsRepository.COLUMNS} FROM attractions WHERE id = ?`,
+      [id],
       'find attraction',
     );
   }
@@ -63,17 +74,15 @@ export class AttractionsRepository extends BaseRepository {
   async clickStats(
     cityId: number | null,
     limit: number,
-  ): Promise<Record<string, any>[] | null> {
-    return this.run(
-      (t) => {
-        const q = t
-          .select('id, city_id, name, area, impression_count, click_count, last_clicked_at')
-          .gt('impression_count', 0);
-        return (cityId === null ? q : q.eq('city_id', cityId))
-          .order('click_count', { ascending: false })
-          .order('impression_count', { ascending: false })
-          .limit(limit);
-      },
+  ): Promise<AttractionRow[] | null> {
+    const byCity = cityId === null ? '' : ' AND city_id = ?';
+    return this.select<AttractionRow>(
+      `SELECT id, city_id, name, area, impression_count, click_count, last_clicked_at
+         FROM attractions
+        WHERE impression_count > 0${byCity}
+        ORDER BY click_count DESC, impression_count DESC
+        LIMIT ?`,
+      cityId === null ? [limit] : [cityId, limit],
       'attraction click stats',
     );
   }
@@ -90,10 +99,10 @@ export class AttractionsRepository extends BaseRepository {
    */
   async registerImpressions(ids: number[]): Promise<void> {
     if (!ids.length) return;
-    await this.rpc(
-      'register_attraction_impressions',
-      { p_ids: ids },
-      'register_attraction_impressions',
+    await this.execute(
+      'UPDATE attractions SET impression_count = impression_count + 1 WHERE id IN (?)',
+      [ids],
+      'register attraction impressions',
     );
   }
 
@@ -103,13 +112,31 @@ export class AttractionsRepository extends BaseRepository {
    * ⚠️ URL 자체를 돌려주지 않는다 — 구글맵 주소 조립은 `common/maps-url.ts` 한 곳에
    *    둔다. 없는 id 면 null.
    */
-  async registerClick(id: number): Promise<Record<string, any> | null> {
-    const rows = await this.rpc(
-      'register_attraction_click',
-      { p_id: id },
-      'register_attraction_click',
-    );
-    return rows && rows.length ? rows[0] : null;
+  async registerClick(id: number): Promise<ClickedAttraction | null> {
+    return this.transaction('register_attraction_click', async (tx) => {
+      const bumped = await tx.execute(
+        `UPDATE attractions
+            SET click_count      = click_count + 1,
+                first_clicked_at = COALESCE(first_clicked_at, UTC_TIMESTAMP(3)),
+                last_clicked_at  = UTC_TIMESTAMP(3)
+          WHERE id = ?`,
+        [id],
+      );
+      if (!bumped.affectedRows) return null;
+      // 도시 이름에 부모(세부 지역이면 도시, 도시면 없음)를 붙여 지도 검색어를 또렷하게 한다.
+      const rows = await tx.select<ClickedAttraction>(
+        `SELECT a.name AS attraction_name,
+                TRIM(CONCAT(p.canonical_name, COALESCE(CONCAT(' ', pp.canonical_name), ''))) AS city_name,
+                COALESCE(p.country_code, pp.country_code) AS country_code,
+                a.click_count AS clicks
+           FROM attractions a
+           JOIN places p ON p.id = a.city_id
+           LEFT JOIN places pp ON pp.id = p.parent_id AND pp.id <> p.id
+          WHERE a.id = ?`,
+        [id],
+      );
+      return rows[0] ?? null;
+    });
   }
 
   // ------------------------------------------------------------------ 쓰기
@@ -124,22 +151,20 @@ export class AttractionsRepository extends BaseRepository {
     area: string | null;
     imageUrl: string | null;
     rank: number;
-  }): Promise<Record<string, any> | null> {
-    return this.runOne(
-      (t) =>
-        t
-          .insert({
-            city_id: input.cityId,
-            name: input.name,
-            // 카드에는 안 쓴다. 사진을 찾을 때만 쓰는 값이다.
-            name_en: input.nameEn,
-            area: input.area,
-            image_url: input.imageUrl,
-            rank: input.rank,
-          })
-          .select(AttractionsRepository.COLUMNS),
-      'create attraction',
-    );
+  }): Promise<AttractionRow | null> {
+    const { sql, params } = this.insertSql([
+      {
+        city_id: input.cityId,
+        name: input.name,
+        // 카드에는 안 쓴다. 사진을 찾을 때만 쓰는 값이다.
+        name_en: input.nameEn,
+        area: input.area,
+        image_url: input.imageUrl,
+        rank: input.rank,
+      },
+    ]);
+    const result = await this.execute(sql, params, 'create attraction');
+    return result ? this.findById(result.insertId) : null;
   }
 
   /**
@@ -151,26 +176,27 @@ export class AttractionsRepository extends BaseRepository {
   async update(
     id: number,
     patch: Record<string, unknown>,
-  ): Promise<Record<string, any> | null> {
-    return this.runOne(
-      (t) =>
-        t
-          .update({ ...patch, updated_at: new Date().toISOString() })
-          .eq('id', id)
-          .select(AttractionsRepository.COLUMNS),
+  ): Promise<AttractionRow | null> {
+    const set = this.setSql({ ...patch, updated_at: new Date() });
+    const result = await this.execute(
+      `UPDATE attractions SET ${set.sql} WHERE id = ?`,
+      [...set.params, id],
       'update attraction',
     );
+    return result && result.affectedRows ? this.findById(id) : null;
   }
 
   /** 지운다. 지워진 행을 돌려준다 — 없으면 빈 배열이라 404 를 가릴 수 있다. */
-  async remove(id: number): Promise<Record<string, any>[] | null> {
-    return this.run((t) => t.delete().eq('id', id).select('id'), 'delete attraction');
+  async remove(id: number): Promise<{ id: number }[] | null> {
+    const result = await this.execute('DELETE FROM attractions WHERE id = ?', [id], 'delete attraction');
+    if (!result) return null;
+    return result.affectedRows ? [{ id }] : [];
   }
 
   /**
    * 모델이 채운 목록을 한 번에 넣는다 (`source='ai'`).
    *
-   * ⚠️ **`ignoreDuplicates` 로 넣는다.** 유니크 인덱스(city_id, name)에 걸리는 행이
+   * ⚠️ **중복은 건너뛰며 넣는다.** 유니크 인덱스(city_id, name)에 걸리는 행이
    *    하나라도 있으면 plain insert 는 **배열 전체가 실패한다.** 사람이 두 곳쯤
    *    미리 넣어둔 도시에서 모델이 같은 이름을 내면 나머지 열여덟 곳까지 같이
    *    날아가는데, 그건 "겹치는 것만 빼고 넣기" 보다 명백히 나쁘다.
@@ -195,14 +221,10 @@ export class AttractionsRepository extends BaseRepository {
       source: 'ai',
     }));
 
-    const saved = await this.run(
-      (t) =>
-        t
-          .upsert(rows, { onConflict: 'city_id,name', ignoreDuplicates: true })
-          .select('id'),
-      'insert ai attractions',
-    );
-    return saved?.length ?? 0;
+    const { sql, params } = this.insertSql(rows, 'ignore');
+    const saved = await this.execute(sql, params, 'insert ai attractions');
+    // 중복으로 건너뛴 행은 0 으로 세어진다 (FOUND_ROWS 를 끈 덕분).
+    return saved?.affectedRows ?? 0;
   }
 
   /**
@@ -212,14 +234,15 @@ export class AttractionsRepository extends BaseRepository {
    *    비어 들어가서 행이 망가진다. 순서만 고치는 게 이 함수의 전부다.
    */
   async reorder(ids: number[]): Promise<number> {
-    const now = new Date().toISOString();
+    const now = new Date();
     let moved = 0;
     for (const [rank, id] of ids.entries()) {
-      const row = await this.runOne(
-        (t) => t.update({ rank, updated_at: now }).eq('id', id).select('id'),
+      const result = await this.execute(
+        'UPDATE attractions SET `rank` = ?, updated_at = ? WHERE id = ?',
+        [rank, now, id],
         'reorder attraction',
       );
-      if (row) moved += 1;
+      if (result?.affectedRows) moved += 1;
     }
     return moved;
   }

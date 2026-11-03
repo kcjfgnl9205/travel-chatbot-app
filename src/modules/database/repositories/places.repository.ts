@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 
 import { Place, PlaceDraft, PlaceKind } from '../../places/places.types';
-import { SupabaseService } from '../supabase.service';
+import { MysqlService } from '../mysql.service';
+import { PlaceRow } from '../rows.types';
 import { BaseRepository } from './base.repository';
 
 /**
@@ -15,13 +16,14 @@ import { BaseRepository } from './base.repository';
 export class PlacesRepository extends BaseRepository {
   protected readonly tableName = 'places';
 
-  constructor(supabase: SupabaseService) {
-    super(supabase);
+  constructor(db: MysqlService) {
+    super(db);
   }
 
   async findById(id: number): Promise<Place | null> {
-    const row = await this.runOne(
-      (t) => t.select(COLUMNS).eq('id', id).limit(1),
+    const row = await this.selectOne<PlaceRow>(
+      `SELECT ${COLUMNS} FROM places WHERE id = ? LIMIT 1`,
+      [id],
       'select place',
     );
     return row ? toPlace(row) : null;
@@ -34,14 +36,12 @@ export class PlacesRepository extends BaseRepository {
    * 뒤섞이고, 카드 맨 위에 엉뚱한 도시가 온다.
    */
   async childrenOf(parentId: number, kind: PlaceKind): Promise<Place[]> {
-    const rows = await this.run(
-      (t) =>
-        t
-          .select(COLUMNS)
-          .eq('parent_id', parentId)
-          .eq('kind', kind)
-          .order('rank', { ascending: true, nullsFirst: false })
-          .order('id'),
+    // MySQL 은 오름차순에서 NULL 을 앞에 둔다. Postgres 의 nulls last 와 맞추려고 먼저 가른다.
+    const rows = await this.select<PlaceRow>(
+      `SELECT ${COLUMNS} FROM places
+        WHERE parent_id = ? AND kind = ?
+        ORDER BY \`rank\` IS NULL, \`rank\`, id`,
+      [parentId, kind],
       'select child places',
     );
     return (rows ?? []).map(toPlace);
@@ -59,13 +59,9 @@ export class PlacesRepository extends BaseRepository {
     rank: number,
     blurb: string | null,
   ): Promise<void> {
-    await this.run(
-      (t) =>
-        t
-          .update({ parent_id: parentId, rank, blurb })
-          .eq('id', placeId)
-          .is('parent_id', null)
-          .select('id'),
+    await this.execute(
+      'UPDATE places SET parent_id = ?, `rank` = ?, blurb = ? WHERE id = ? AND parent_id IS NULL',
+      [parentId, rank, blurb, placeId],
       'attach city to country',
     );
   }
@@ -78,49 +74,45 @@ export class PlacesRepository extends BaseRepository {
    * 없는 줄이 나갔다.
    */
   async updateCityMeta(placeId: number, rank: number, blurb: string | null): Promise<void> {
-    await this.run(
-      (t) => t.update({ rank, blurb }).eq('id', placeId).select('id'),
+    await this.execute(
+      'UPDATE places SET `rank` = ?, blurb = ? WHERE id = ?',
+      [rank, blurb, placeId],
       'update city meta',
     );
   }
 
-  /** (slug, kind) 가 같으면 같은 지역으로 본다. 있으면 그 행을, 없으면 새 행을 준다. */
   /** 실제로 DB 에 들어간 도시 수. 씨앗이 정말 심겼는지 보는 데 쓴다. */
   async countCities(): Promise<number | null> {
-    const client = this.table();
-    if (!client) return null;
-    try {
-      const { count, error } = await client
-        .select('id', { count: 'exact', head: true })
-        .eq('kind', 'city');
-      if (error) {
-        this.logger.warn(`supabase count failed on places: ${error.message}`);
-        return null;
-      }
-      return count ?? 0;
-    } catch (err) {
-      this.logger.warn(`supabase count threw on places: ${err}`);
-      return null;
-    }
+    const row = await this.selectOne<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM places WHERE kind = 'city'",
+      [],
+      'count cities',
+    );
+    return row ? Number(row.n) : null;
   }
 
+  /** (slug, kind) 가 같으면 같은 지역으로 본다. 있으면 그 행을, 없으면 새 행을 준다. */
   async upsert(draft: PlaceDraft): Promise<Place | null> {
-    const row = await this.runOne(
-      (t) =>
-        t
-          .upsert(
-            {
-              canonical_name: draft.canonicalName,
-              slug: draft.slug,
-              country_code: draft.countryCode,
-              kind: draft.kind,
-              iata: draft.iata,
-              parent_id: draft.parentId,
-            },
-            { onConflict: 'slug,kind' },
-          )
-          .select(COLUMNS),
-      'upsert place',
+    const { sql, params } = this.insertSql(
+      [
+        {
+          canonical_name: draft.canonicalName,
+          slug: draft.slug,
+          country_code: draft.countryCode,
+          kind: draft.kind,
+          iata: draft.iata,
+          parent_id: draft.parentId,
+        },
+      ],
+      { update: ['canonical_name', 'country_code', 'iata', 'parent_id'] },
+    );
+    if (!(await this.execute(sql, params, 'upsert place'))) return null;
+
+    // RETURNING 이 없어서 다시 읽는다. (slug, kind) 유니크라 한 행이다.
+    const row = await this.selectOne<PlaceRow>(
+      `SELECT ${COLUMNS} FROM places WHERE slug = ? AND kind = ? LIMIT 1`,
+      [draft.slug, draft.kind],
+      'select upserted place',
     );
     return row ? toPlace(row) : null;
   }
@@ -131,13 +123,14 @@ export class PlacesRepository extends BaseRepository {
 export class PlaceAliasesRepository extends BaseRepository {
   protected readonly tableName = 'place_aliases';
 
-  constructor(supabase: SupabaseService) {
-    super(supabase);
+  constructor(db: MysqlService) {
+    super(db);
   }
 
   async placeIdOf(alias: string): Promise<number | null> {
-    const row = await this.runOne(
-      (t) => t.select('place_id').eq('alias', alias).limit(1),
+    const row = await this.selectOne<{ place_id: number }>(
+      'SELECT place_id FROM place_aliases WHERE alias = ? LIMIT 1',
+      [alias],
       'select place alias',
     );
     const id = Number(row?.place_id);
@@ -146,25 +139,20 @@ export class PlaceAliasesRepository extends BaseRepository {
 
   /** 이미 있으면 그대로 둔다 — 먼저 등록된 쪽이 정답이다. */
   async link(alias: string, placeId: number): Promise<void> {
-    await this.run(
-      (t) =>
-        t
-          .upsert({ alias, place_id: placeId }, { onConflict: 'alias', ignoreDuplicates: true })
-          .select('alias'),
-      'insert place alias',
-    );
+    const { sql, params } = this.insertSql([{ alias, place_id: placeId }], 'ignore');
+    await this.execute(sql, params, 'insert place alias');
   }
 }
 
-const COLUMNS = 'id, canonical_name, slug, country_code, kind, iata, parent_id, rank, blurb';
+const COLUMNS = 'id, canonical_name, slug, country_code, kind, iata, parent_id, `rank`, blurb';
 
-function toPlace(row: Record<string, any>): Place {
+function toPlace(row: PlaceRow): Place {
   return {
     id: Number(row.id),
     canonicalName: String(row.canonical_name ?? ''),
     slug: String(row.slug ?? ''),
     countryCode: row.country_code ?? null,
-    kind: (row.kind ?? 'city') as PlaceKind,
+    kind: (row.kind ?? 'city'),
     iata: row.iata ?? null,
     parentId: row.parent_id == null ? null : Number(row.parent_id),
     rank: row.rank == null ? null : Number(row.rank),

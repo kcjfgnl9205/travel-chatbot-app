@@ -28,11 +28,10 @@ COPY test ./test
 #    실값 .env 는 절대 복사하지 않는다. 시크릿은 런타임에 env_file 로만 들어온다.
 COPY .env.example ./
 COPY README.md ./
-# ⚠️ **테스트가 이 파일들도 읽는다.** rls.spec.ts 는 "새 테이블에 RLS 가 켜졌나" 를,
-#    item-detail-columns.spec.ts 는 "코드가 쓰는 컬럼이 마이그레이션에 있나" 를
-#    SQL 파일과 직접 대조한다. 둘 다 타입 검사도 린트도 못 잡는 종류의 사고라
-#    테스트로 막는 것이고, 그러려면 이미지 안에 파일이 있어야 한다.
-COPY supabase/migrations ./supabase/migrations
+# ⚠️ **테스트가 이 파일들도 읽는다.** mysql-schema.spec.ts 가 "코드가 쓰는 테이블이
+#    스키마에 있나" 와 "마이그레이션 러너가 파일을 제대로 쪼개나" 를 SQL 파일과 직접
+#    대조한다. 그러려면 이미지 안에 파일이 있어야 한다.
+COPY db/mysql ./db/mysql
 # ⚠️ **이 파일도 테스트가 읽는다.** nginx-fallback.spec.ts 가 "앱이 죽었을 때 nginx 가
 #    돌려줄 말풍선" 이 유효한 카카오 응답인지 검사한다. 평소 안 타는 경로라 깨져도
 #    아무도 모르는 종류의 사고라서 테스트로 묶었고, 그러려면 이미지 안에 있어야 한다.
@@ -70,6 +69,8 @@ RUN useradd --system --uid 10001 appuser
 
 COPY --from=deps --chown=appuser:appuser /app/node_modules ./node_modules
 COPY --from=build --chown=appuser:appuser /build/dist ./dist
+# 마이그레이션 러너(dist/migrate.js)가 읽는다. deploy/remote.sh 가 기동 전에 돌린다.
+COPY --chown=appuser:appuser db/mysql ./db/mysql
 
 USER appuser
 

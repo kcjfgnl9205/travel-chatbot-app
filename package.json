@@ -8,6 +8,8 @@
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main",
+    "db:migrate": "node --env-file-if-exists=.env -r ts-node/register src/migrate.ts",
+    "db:copy-from-supabase": "node --env-file-if-exists=.env -r ts-node/register scripts/copy-from-supabase.ts",
     "lint": "eslint \"{src,test}/**/*.ts\" --max-warnings 0",
     "test": "jest",
     "test:watch": "jest --watch"
@@ -18,7 +20,7 @@
     "@nestjs/core": "^11.0.0",
     "@nestjs/platform-express": "^11.0.0",
     "@nestjs/swagger": "^11.4.6",
-    "@supabase/supabase-js": "^2.45.0",
+    "mysql2": "^3.24.6",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"
   },

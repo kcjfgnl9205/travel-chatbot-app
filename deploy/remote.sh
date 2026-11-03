@@ -62,13 +62,26 @@ if [ -n "${IMAGE_TAG:-}" ]; then
     # 서버에서는 빌드하지 않는다. 여기서 굽던 빌드가 10분을 넘긴 적이 있다.
     export IMAGE_TAG
     docker compose pull app
-    docker compose up -d --no-build --remove-orphans
 else
-    echo "▸ 빌드 & 기동 (테스트 ${SKIP_TESTS:+생략}${SKIP_TESTS:-포함})"
+    echo "▸ 빌드 (테스트 ${SKIP_TESTS:+생략}${SKIP_TESTS:-포함})"
     # 손으로 돌릴 때의 길이다. 빌드 안에서 테스트가 같이 돌아 깨진 커밋을 막는다.
     # 느린 서버라 수 분이 걸린다. 급하면 SKIP_TESTS=1.
-    docker compose up -d --build --remove-orphans
+    docker compose build app
 fi
+
+# ⚠️ **새 컨테이너를 띄우기 전에** 스키마부터 맞춘다. 새 코드가 새 컬럼을 찾는데
+#    스키마가 옛날이면 그 기능만 조용히 고장 난다(Supabase 시절 실제로 그랬다).
+#    새 이미지로 일회용 컨테이너를 띄워 러너만 돌린다 — 실패하면 여기서 멈추고
+#    **돌던 컨테이너는 손대지 않은 채 그대로 산다.**
+echo "▸ 스키마 마이그레이션"
+# 러너가 없는 이미지(MySQL 이전 버전으로 되돌릴 때)는 건너뛴다 — 안 그러면 되돌리기가 여기서 막힌다.
+if ! docker compose run --rm --no-deps -T app sh -c 'test ! -f dist/migrate.js || node dist/migrate'; then
+    echo "  마이그레이션 실패 — 배포를 멈춘다. 돌던 컨테이너는 그대로다."
+    exit 1
+fi
+
+echo "▸ 기동"
+docker compose up -d --no-build --remove-orphans
 
 # 도메인·DNS 와 무관하게 컨테이너 안에서 직접 확인한다.
 wait_healthy() {
@@ -114,7 +127,7 @@ if ! wait_healthy 30; then
 fi
 
 # DB 는 붙었는지만 알려주고 실패해도 배포를 되돌리지는 않는다.
-# Supabase 가 잠깐 흔들렸다고 배포가 실패로 뜨면 안 된다.
+# DB 가 잠깐 흔들렸다고 배포가 실패로 뜨면 안 된다.
 docker compose exec -T app node -e "
 fetch('http://127.0.0.1:8000/health/db')
   .then(async (r) => {
