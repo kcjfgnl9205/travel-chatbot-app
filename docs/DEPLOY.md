@@ -49,7 +49,7 @@ KAKAO_SKILL_TOKEN=아무거나_긴_랜덤값
 
 ## 2. Supabase 연결
 
-1. [supabase.com](https://supabase.com) 프로젝트 생성 — **서버와 같은 리전으로.** 현재 서버는 `ap-tokyo-1` 이다. 요청당 왕복이 약 7회라 거리가 그대로 응답시간이 된다 (실측 왕복 1회 ≈ 50ms, [LOADTEST.md](LOADTEST.md) 참고).
+1. [supabase.com](https://supabase.com) 프로젝트 생성 — **서버와 같은 리전으로.** 현재 서버는 `ap-chuncheon-1`(춘천), Supabase 는 `ap-northeast-2`(서울)다. 요청당 왕복이 약 7회라 거리가 그대로 응답시간이 된다 (실측 왕복 1회 ≈ 50ms, [LOADTEST.md](LOADTEST.md) 참고).
 2. SQL Editor 에 [`supabase/migrations/`](../supabase/migrations/) 의 파일을 **번호순으로** 붙여넣고 실행 (`0001_init.sql` 부터). 전부 재실행해도 안전하다
    > ⚠️ **운영 중인 DB 에도 새 번호는 올려야 한다.** 안 올리면 그 기능만 조용히 예전 동작으로 돈다 — 예를 들어 [`0015`](../supabase/migrations/0015_click_time_affiliate.sql) 가 빠지면 클릭 시점 제휴 변환이 통째로 건너뛰어지고 수수료가 안 붙는다 (링크는 멀쩡히 열린다).
 3. 대시보드에서 두 값 복사
@@ -89,7 +89,7 @@ curl -s https://bot.example.com/health
 ## 3. 오라클 서버 준비
 
 현재 쓰는 것은 **`VM.Standard.A1.Flex` — Ampere A1 (ARM64), OCPU 1 · RAM 6GB,
-`ap-tokyo-1`, Ubuntu 24.04** 다. 이미지는 arm64 로 정상 빌드된다(확인함).
+`ap-chuncheon-1`(춘천), Ubuntu 24.04** 다. 이미지는 arm64 로 정상 빌드된다(확인함).
 
 > ⚠️ **OCPU 1 은 vCPU 1 이 아니다.** Ampere 는 하이퍼스레딩이 없어 OCPU 1 =
 > **물리 코어 1개**다. 그래서 작아 보여도 `/health` 기준 500 req/s 를 낸다 —

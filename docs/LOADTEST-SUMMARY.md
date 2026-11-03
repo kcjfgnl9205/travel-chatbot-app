@@ -1,7 +1,7 @@
 # 부하 시험 결과 요약 (기획용)
 
 > 2026-11-03 측정 · 대상: 운영 중인 가자고 챗봇 서버
-> (Oracle Cloud `VM.Standard.A1.Flex` · OCPU 1 · RAM 6GB · 도쿄 리전)
+> (Oracle Cloud `VM.Standard.A1.Flex` · OCPU 1 · RAM 6GB · 도쿄 리전 — 이후 춘천 리전으로 이전)
 > 기술 상세는 [LOADTEST.md](LOADTEST.md)
 
 ---

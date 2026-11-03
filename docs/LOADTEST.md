@@ -2,7 +2,7 @@
 
 > 대상: `https://bot.nolmoa.com` (Cloudflare → nginx → `127.0.0.1:8000`)
 > 서버: **Oracle Cloud `VM.Standard.A1.Flex`** — OCPU 1 · RAM 6GB · ARM64(Ampere) ·
-> `ap-tokyo-1` · Ubuntu 24.04
+> `ap-tokyo-1` · Ubuntu 24.04 (측정 당시 — 이후 `ap-chuncheon-1` 춘천으로 이전)
 > DB: Supabase · AI: OpenAI · 하네스: [`loadtest/`](../loadtest/) ([돌리는 법](../loadtest/README.md))
 
 **한 줄 결론: 동시 20명까지 안전하고 34명 근처에서 무너진다. 처리량 천장은 8.5 req/s 이고,
@@ -204,5 +204,6 @@ docker compose logs -f app | grep -E '예산|ms='   # 예산 초과 로그와 �
   있다. 플랜·컴퓨트 등급과 묶어서 봐야 한다
 - **캐시 미스(AI) 경로는 재지 않았다.** 20~30초짜리 백그라운드 작업이라 동시성
   측정 대상이 아니고, 요청 수만큼 돈이 나간다
-- **Supabase 리전을 확인하지 않았다.** 서버가 `ap-tokyo-1` 이므로, Supabase 가 서울이면
-  왕복 50ms 중 상당 부분이 그 거리다
+- **측정 당시 서버(도쿄)와 Supabase(서울, `ap-northeast-2`)가 다른 나라에 있었다.**
+  왕복 50ms 중 상당 부분이 그 거리였을 수 있다. 서버를 `ap-chuncheon-1`(춘천)로
+  옮겼으므로 다시 재야 한다
