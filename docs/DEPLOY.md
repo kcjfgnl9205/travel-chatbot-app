@@ -49,7 +49,7 @@ KAKAO_SKILL_TOKEN=아무거나_긴_랜덤값
 
 ## 2. Supabase 연결
 
-1. [supabase.com](https://supabase.com) 프로젝트 생성 — **리전은 Seoul(ap-northeast-2)** 로. 오라클 서버와 가까울수록 요청당 왕복 7회가 싸진다.
+1. [supabase.com](https://supabase.com) 프로젝트 생성 — **서버와 같은 리전으로.** 현재 서버는 `ap-tokyo-1` 이다. 요청당 왕복이 약 7회라 거리가 그대로 응답시간이 된다 (실측 왕복 1회 ≈ 50ms, [LOADTEST.md](LOADTEST.md) 참고).
 2. SQL Editor 에 [`supabase/migrations/`](../supabase/migrations/) 의 파일을 **번호순으로** 붙여넣고 실행 (`0001_init.sql` 부터). 전부 재실행해도 안전하다
    > ⚠️ **운영 중인 DB 에도 새 번호는 올려야 한다.** 안 올리면 그 기능만 조용히 예전 동작으로 돈다 — 예를 들어 [`0015`](../supabase/migrations/0015_click_time_affiliate.sql) 가 빠지면 클릭 시점 제휴 변환이 통째로 건너뛰어지고 수수료가 안 붙는다 (링크는 멀쩡히 열린다).
 3. 대시보드에서 두 값 복사
@@ -88,8 +88,12 @@ curl -s https://bot.example.com/health
 
 ## 3. 오라클 서버 준비
 
-Always Free 기준 **Ampere A1 (ARM64)** 을 쓰게 된다. 이미지는 arm64 로 정상 빌드된다(확인함).
-리전은 **춘천 또는 서울** — 리다이렉트 응답 속도가 곧 이탈률이다.
+현재 쓰는 것은 **`VM.Standard.A1.Flex` — Ampere A1 (ARM64), OCPU 1 · RAM 6GB,
+`ap-tokyo-1`, Ubuntu 24.04** 다. 이미지는 arm64 로 정상 빌드된다(확인함).
+
+> ⚠️ **OCPU 1 은 vCPU 1 이 아니다.** Ampere 는 하이퍼스레딩이 없어 OCPU 1 =
+> **물리 코어 1개**다. 그래서 작아 보여도 `/health` 기준 500 req/s 를 낸다 —
+> [부하 시험](LOADTEST.md) 참고. 챗봇 응답 한계는 서버가 아니라 DB 왕복이 정한다.
 
 ### Docker 설치 (Ubuntu 22.04/24.04)
 
@@ -225,15 +229,15 @@ GitHub Actions                          서버 (/opt/gajago)
 
 ### 왜 이미지를 CI 에서 굽나
 
-예전(Oracle Always Free, ARM64)에는 서버에서 구웠다. 러너가 x86 이라 크로스 빌드가
-몇 배 느렸기 때문이다. **10/10 에 NCP 서버로 옮긴 뒤로는 반대가 됐다** — 서버에서 2~3분이던
-빌드가 10분을 넘겨 `Run Command Timeout` 으로 끊겼다(echo 한 줄에 16초). 지금은 러너가
-굽고 서버는 받아서 갈아끼우기만 한다.
+**느린 서버에서 굽지 않기 위해서다.** 서버에서 굽던 빌드가 10분을 넘겨
+`Run Command Timeout` 으로 끊긴 적이 있다(echo 한 줄에 16초). 지금은 러너가 굽고
+서버는 받아서 갈아끼우기만 한다.
 
 - 이미지는 **커밋 SHA 태그만** 붙는다(`latest` 없음). 서버는 지금 것과 직전 것 하나를 남긴다.
 - 서버 로그인은 **그 잡의 `GITHUB_TOKEN`** 으로 하고 끝나면 로그아웃한다. 서버에 PAT 를 둘 필요가 없다.
-- ⚠️ **서버 CPU 와 이미지 플랫폼이 맞아야 한다.** 기본은 `linux/amd64`. 서버가 ARM 이면
-  저장소 Settings → Variables 에 `DEPLOY_PLATFORM=linux/arm64` 를 넣는다.
+- ⚠️ **서버 CPU 와 이미지 플랫폼이 맞아야 한다.** 현재 서버는 Ampere ARM64 이므로
+  기본값이 `linux/arm64` 다. x86 서버로 옮기면 저장소 Settings → Variables 에
+  `DEPLOY_PLATFORM=linux/amd64` 를 넣는다. 안 맞으면 `exec format error` 로 안 뜬다.
 
 되돌리기:
 

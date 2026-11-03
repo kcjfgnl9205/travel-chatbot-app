@@ -1,4 +1,4 @@
-name: Deploy to NCP Server
+name: Deploy to Oracle Cloud Server
 
 # main → 운영 스택 (~/travel-chatbot-app, app:8000, nginx 가 bot.nolmoa.com 으로 프록시)
 #
@@ -38,9 +38,9 @@ jobs:
 
   # 이미지는 **여기서** 굽는다. 서버는 받아서 갈아끼우기만 한다.
   #
-  # ⚠️ 10/10 에 Oracle VM 에서 NCP 서버로 옮긴 뒤, 서버에서 굽던 빌드가 2~3분에서
-  #    10분 넘게로 늘어 `Run Command Timeout` 으로 끊겼다(echo 한 줄에 16초). 서버가
-  #    느린 건 고칠 수 없지만 서버에서 빌드하지 않을 수는 있다.
+  # ⚠️ 서버에서 굽던 빌드가 10분을 넘겨 `Run Command Timeout` 으로 끊긴 적이 있다
+  #    (echo 한 줄에 16초). 서버가 느린 건 고칠 수 없지만 서버에서 빌드하지 않을
+  #    수는 있다.
   #
   # test 와 **동시에** 돈다. 이미지가 먼저 올라가도 deploy 가 둘 다 기다리므로
   # 테스트가 깨진 커밋은 배포되지 않는다. 태그가 커밋 SHA 뿐이라(latest 없음)
@@ -65,10 +65,11 @@ jobs:
         with:
           context: .
           push: true
-          # ⚠️ **서버 CPU 와 맞아야 한다.** 러너는 x86 이고, 다르면 컨테이너가
-          #    `exec format error` 로 안 뜬다. NCP 서버가 ARM 이면 저장소 변수
-          #    DEPLOY_PLATFORM=linux/arm64 로 바꾼다(QEMU 라 몇 배 느려진다).
-          platforms: ${{ vars.DEPLOY_PLATFORM || 'linux/arm64' }} # ← 'linux/amd64' 에서 변경
+          # ⚠️ **서버 CPU 와 맞아야 한다.** 다르면 컨테이너가 `exec format error` 로
+          #    안 뜬다. 현재 서버는 Oracle Ampere A1 (ARM64) 이라 기본이 arm64 다.
+          #    러너는 x86 이므로 QEMU 로 굽는다 — 그만큼 느리다. x86 서버로 옮기면
+          #    저장소 변수 DEPLOY_PLATFORM=linux/amd64 로 되돌린다.
+          platforms: ${{ vars.DEPLOY_PLATFORM || 'linux/arm64' }}
           tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
           # test 잡이 같은 검사를 동시에 돌린다. 여기서 또 돌릴 이유가 없다.
           build-args: SKIP_TESTS=1

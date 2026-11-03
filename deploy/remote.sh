@@ -59,7 +59,7 @@ previous_image="$(docker compose ps -q app 2>/dev/null | head -1 \
 
 if [ -n "${IMAGE_TAG:-}" ]; then
     echo "▸ 이미지 받기 & 교체 (${IMAGE_TAG})"
-    # 서버에서는 빌드하지 않는다. NCP 로 옮긴 뒤 여기서 굽던 빌드가 10분을 넘겼다.
+    # 서버에서는 빌드하지 않는다. 여기서 굽던 빌드가 10분을 넘긴 적이 있다.
     export IMAGE_TAG
     docker compose pull app
     docker compose up -d --no-build --remove-orphans

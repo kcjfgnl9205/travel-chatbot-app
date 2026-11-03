@@ -1,6 +1,6 @@
 # 부하 시험
 
-> 서버: Oracle Cloud `mi1-g3` (vCPU 1 · RAM 1GB) · DB: Supabase · AI: OpenAI
+> 서버: Oracle Cloud `VM.Standard.A1.Flex` (OCPU 1 · RAM 6GB · ARM64 · 도쿄) · DB: Supabase · AI: OpenAI
 > 대상: `https://bot.nolmoa.com` (Cloudflare → nginx → `127.0.0.1:8000`)
 
 ## 먼저 알아야 할 것 — 여기서 "못 버틴다" 는 500 이 아니다
@@ -74,8 +74,9 @@ STEPS="1 5 10 20 40 80" SCENARIO=cached ./loadtest/run.sh
 ```
 
 - **p95 가 3500ms 를 넘는 첫 단계가 답이다.** 그 위부터 사용자는 카드 대신 도움말을 본다
-- `req/s` 가 VU 를 올려도 안 늘면 → 포화. 1 vCPU 가 이벤트루프를 다 쓴 것
-- `health.js` 의 p95 는 멀쩡한데 라우터만 무너지면 → 범인은 Supabase 왕복
+- `req/s` 가 VU 를 올려도 안 늘면 → 포화
+- `health.js` 의 p95 는 멀쩡한데 라우터만 무너지면 → 범인은 DB 왕복이다.
+  **실제로 그랬다** — 서버를 5배로 키웠는데 라우터 천장은 안 움직였다 ([결과](../docs/LOADTEST.md#3-병목은-서버가-아니다--서버를-5배로-키워-증명했다))
 - `앱다운` 이 0 이 아니면 → 컨테이너가 죽었거나 OOM. `docker stats` 를 같이 볼 것
 
 ## 서버 쪽에서 같이 볼 것
