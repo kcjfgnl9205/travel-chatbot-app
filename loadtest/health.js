@@ -2,7 +2,7 @@
  * /health 만 때린다. **DB 도 AI 도 안 붙는 순수 앱 용량.**
  *
  * 라우터가 느릴 때 "앱이 느린가, 의존성이 느린가" 를 가르는 기준선이다.
- * 여기서 p95 가 멀쩡한데 라우터만 무너지면 범인은 Supabase/OpenAI 쪽이고,
+ * 여기서 p95 가 멀쩡한데 라우터만 무너지면 범인은 DB/OpenAI 쪽이고,
  * 여기서부터 무너지면 1 vCPU 가 이벤트루프를 못 돌리고 있는 것이다.
  */
 import http from 'k6/http';
@@ -18,7 +18,9 @@ export default function () {
   const res = http.get(`${BASE}/health`, { timeout: '10s', tags: { endpoint: 'health' } });
   check(res, {
     'HTTP 200': (r) => r.status === 200,
-    'db 연결 유지': (r) => (r.body || '').includes('"db":"supabase"'),
+    // ⚠️ DB 이름을 박아두지 않는다. Supabase → MySQL 로 한 번 갈아타면서 이 체크가
+    //    조용히 거짓이 됐다. 묻는 것은 "어떤 DB 인가" 가 아니라 "붙어 있는가" 다.
+    'db 연결 유지': (r) => !/"db":"disabled/.test(r.body || ''),
   });
 }
 
