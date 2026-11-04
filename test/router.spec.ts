@@ -14,6 +14,7 @@ import {
   post,
   textOf,
 } from './helpers';
+import { OpenAiHttpError } from '../src/modules/openai/openai.service';
 
 /**
  * 라우터 통합 테스트.
@@ -634,6 +635,29 @@ describe('POST /api/v1/kakao/router', () => {
 
     expect(res.status).toBe(201);
     expect(res.body.version).toBe('2.0');
+  });
+
+  /**
+   * ⚠️ **키가 거부된 것과 검색이 터진 것은 할 말이 다르다.** 전자는 고치기 전엔 영영
+   *    안 되므로 "잠시 뒤 다시" 는 거짓말이고, 사용자는 그 사이 같은 질문만 반복한다.
+   *    2026-11-04 에 실제로 그랬다 (.env 의 키가 꼬리 한 글자 붙어 저장됨 → 401).
+   */
+  it('자격증명이 거부되면 "잠시 뒤 다시" 라고 하지 않는다', async () => {
+    ctx.provider.reply = () => {
+      throw new OpenAiHttpError(401, '{"error":{"code":"invalid_api_key"}}');
+    };
+
+    const receiver = await callbackReceiver();
+    try {
+      await post(ctx.app, kakaoPayload('나고야 호텔 추천해줘', { callbackUrl: receiver.url }));
+
+      const text = textOf(await receiver.received);
+      expect(text).toContain('안 되고 있어요');
+      // "잠시 뒤 다시 시도해 주세요" — 키를 고치기 전엔 영영 안 되는 안내다.
+      expect(text).not.toContain('잠시 뒤');
+    } finally {
+      await receiver.close();
+    }
   });
 
   it('검색을 할 수 없는 상태면 기다리라고 하지 않는다', async () => {

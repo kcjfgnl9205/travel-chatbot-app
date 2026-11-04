@@ -213,6 +213,6 @@ AI 검색은 **7~75초**가 걸리는데 카카오는 **5초 안에** 응답을 
 
 1. Supabase SQL Editor 에서 `0001 → 0002 → 0003 → 0004` 실행 (재실행 안전)
 2. 서버 `.env` 확인 후 `docker compose up -d --force-recreate app`
-3. `curl https://bot.nolmoa.com/health` → `openai` 가 `gpt-5-mini` 인지
+3. `curl https://bot.nolmoa.com/health` → `openai` 가 `gpt-5.6-luna` 인지
 4. 오픈빌더: 스킬 1개 등록 → 폴백 블록 연결 → **[콜백 사용] 켜기** → **배포**
 5. 단톡방에서 6장 체크리스트

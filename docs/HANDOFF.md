@@ -19,7 +19,7 @@
 curl -s https://bot.nolmoa.com/health
 # {"status":"ok","env":"production","db":"supabase",
 #  "providers":{"hotel":"openai","flight":"openai","attraction":"openai"},
-#  "openai":"gpt-5-mini","adpick":"api"}
+#  "openai":"gpt-5.6-luna","adpick":"api"}
 
 curl -s https://bot.nolmoa.com/health/db
 # 9개 테이블 전부 true  ← 0004_router.sql 실행 완료
@@ -29,7 +29,7 @@ curl -s https://bot.nolmoa.com/health/db
 |---|---|
 | 라우터 코드 | ✅ 배포됨 (`/api/v1/kakao/router` 401, 옛 `hotels/recommend` 404) |
 | Supabase 0004 | ✅ 실행 완료 |
-| OPENAI_API_KEY | ✅ 살아 있음, 모델 gpt-5-mini |
+| OPENAI_API_KEY | ✅ 살아 있음, 모델 gpt-5.6-luna |
 | 폴백 블록 [콜백 사용] | ⚠️ v1.1 배포로 **ON** 이어야 한다. 2026-09-12 테스트에서는 꺼진 문구가 나왔다 (2-③) |
 | 대표 명령어 | `호텔`·`항공권`·`여행지` 있음 — 서버가 `fromCommand` 로 모델 없이 처리 |
 | 검색 소요 시간 | ⚠️ 27~75초. 콜백 수명(5분) 안이지만 **사용자가 그만큼 기다린다** |

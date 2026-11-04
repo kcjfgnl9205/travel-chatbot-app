@@ -23,7 +23,7 @@
 |---|---|---|---|
 | ① 대표 명령어 | `/호텔 오사카` · `호텔 오사카` (두 단어) | **0회** | 사전에 없는 지명도 그대로 통과 |
 | ② 키워드 + 도시 사전 | 호텔 키워드 + 237개 도시표에서 지명 | **0회** | "오사카 호텔 추천해줘" |
-| ③ 모델 | 위 둘로 안 되면 gpt-5-mini | 1회 | "도톤보리 근처 묵을 데 있어?" |
+| ③ 모델 | 위 둘로 안 되면 모델(`OPENAI_PARSE_MODEL`) | 1회 | "도톤보리 근처 묵을 데 있어?" |
 
 ②가 성립하려면 셋 다 맞아야 한다 — 키워드로 의도가 분명하고, 사전에서 도시가 **하나만** 잡히고, `에서`·`출발` 이 없어야 한다. "서울에서 오사카 호텔"은 지명이 둘이라 어느 쪽이 목적지인지 사전으로는 못 가리므로 모델로 넘긴다.
 
@@ -69,7 +69,7 @@
   │
   │  ── 5초 예산 밖 (백그라운드) ──────────────────────────
   │
-  ├─ provider 검색             gpt-5-mini 2단 + 웹 검색 (7~30초)
+  ├─ provider 검색             gpt-5.6-luna 2단 + 웹 검색 (7~30초)
   ├─ 중복 제거                 sourceUrl 기준
   ├─ 썸네일 확보               예약 페이지에서 og:image 긁기
   ├─ search_results 에 20건 저장 (TTL 24시간)
@@ -205,7 +205,7 @@ link.web     /r/{clickId}  ← 애드픽이 아니라 우리 리다이렉트
 
 ## 5. 결과는 어떻게 만들어지나
 
-[`OpenAiHotelProvider`](../src/modules/hotel/providers/openai.provider.ts) — gpt-5-mini + 웹 검색 **2단 호출**. 뼈대는 세 도메인이 [`TwoStageSearch`](../src/modules/openai/two-stage.ts) 로 공유한다.
+[`OpenAiHotelProvider`](../src/modules/hotel/providers/openai.provider.ts) — gpt-5.6-luna + 웹 검색 **2단 호출**. 뼈대는 세 도메인이 [`TwoStageSearch`](../src/modules/openai/two-stage.ts) 로 공유한다.
 
 ```
 1차  web_search 로 후보 30곳 수집          (구조화 JSON)

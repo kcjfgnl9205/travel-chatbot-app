@@ -135,9 +135,35 @@ export function parseJsonLoose<T>(text: string): T | null {
   return null;
 }
 
+/**
+ * 자격증명이 거부된 뒤 다시 찔러보기까지 기다리는 시간.
+ *
+ * **영영 막지 않는 이유**: 키를 고친 뒤 컨테이너 재시작을 강요하지 않기 위해서다.
+ * **즉시 풀지 않는 이유**: 401 은 다시 시도해도 같은 답이라, 그동안의 호출은 돈과
+ * 콜백 예산만 태운다 (웹 검색이 붙으면 한 번에 25초다).
+ */
+const CREDENTIAL_COOLDOWN_MS = 5 * 60 * 1000;
+
+/** `/health` 가 읽는 값. 키가 **채워졌나**가 아니라 **먹히나**를 말한다. */
+export type OpenAiStatus = 'ok' | 'no-key' | 'rejected';
+
+/**
+ * 자격증명 거부인가 (401·403).
+ *
+ * 다른 실패와 갈라야 하는 이유는 **사용자에게 할 말이 다르기 때문**이다. 모델 오류나
+ * 타임아웃은 "잠시 뒤 다시" 가 맞지만, 키가 틀린 것은 고치기 전에는 몇 번을 물어도
+ * 같은 결과다 — 기다리라고 하면 그 사이 같은 질문만 반복된다.
+ */
+export const isCredentialError = (err: unknown): boolean =>
+  err instanceof OpenAiHttpError && (err.status === 401 || err.status === 403);
+
 @Injectable()
 export class OpenAiService {
   private readonly logger = new Logger(OpenAiService.name);
+
+  /** 자격증명이 거부된 시각과 코드. 한 번이라도 성공하면 지운다. */
+  private credentialRejectedAt: number | null = null;
+  private credentialHttpStatus = 0;
 
   /**
    * 웹 검색 툴 이름. 계정/모델에 따라 `web_search` 대신 `web_search_preview` 만
@@ -147,8 +173,36 @@ export class OpenAiService {
 
   constructor(@Inject(CONFIG) private readonly config: AppConfig) {}
 
-  get enabled(): boolean {
+  /** 키·주소·모델이 **채워져 있나.** 그 값이 먹히는지는 모른다. */
+  get configured(): boolean {
     return openaiEnabled(this.config);
+  }
+
+  /**
+   * 지금 부를 수 있나. 호출부(TwoStageSearch.enabled → HotelService.ready)가 이걸 보고
+   * **헛된 검색을 시작하지 않는다.**
+   */
+  get enabled(): boolean {
+    return this.configured && !this.credentialRejected;
+  }
+
+  /** 자격증명이 거부된 상태인가. 쿨다운이 지나면 스스로 풀린다. */
+  get credentialRejected(): boolean {
+    if (this.credentialRejectedAt === null) return false;
+    if (Date.now() - this.credentialRejectedAt < CREDENTIAL_COOLDOWN_MS) return true;
+    // 쿨다운이 끝났다. 진짜 판정은 다음 호출이 내린다.
+    this.credentialRejectedAt = null;
+    return false;
+  }
+
+  /** `/health` 용. 거부 상태면 HTTP 코드까지 알려준다 (401 키 · 403 권한). */
+  get status(): OpenAiStatus {
+    if (!this.configured) return 'no-key';
+    return this.credentialRejected ? 'rejected' : 'ok';
+  }
+
+  get credentialHttpCode(): number {
+    return this.credentialRejected ? this.credentialHttpStatus : 0;
   }
 
   get webSearchToolSpec(): Record<string, unknown> {
@@ -156,7 +210,10 @@ export class OpenAiService {
   }
 
   async respond(req: ResponsesRequest): Promise<ResponsesResult> {
-    if (!this.enabled) throw new Error('OPENAI_API_KEY 가 설정되지 않았습니다');
+    if (!this.configured) throw new Error('OPENAI_API_KEY 가 설정되지 않았습니다');
+    if (this.credentialRejected) {
+      throw new OpenAiHttpError(this.credentialHttpStatus, '자격증명이 거부된 상태다(쿨다운 중)');
+    }
 
     const started = Date.now();
     const timeoutMs = req.timeoutMs ?? this.config.openaiTimeoutMs;
@@ -173,6 +230,9 @@ export class OpenAiService {
         timeoutMs,
       );
     }
+
+    // 여기까지 왔으면 자격증명은 먹힌다. 거부 기록이 남아 있으면 지운다.
+    this.credentialRejectedAt = null;
 
     const raw = (body ?? {}) as Record<string, unknown>;
     const status = typeof raw.status === 'string' ? raw.status : 'unknown';
@@ -225,7 +285,10 @@ export class OpenAiService {
         },
       );
     } catch (err) {
-      if (err instanceof OpenAiHttpError) throw err;
+      if (err instanceof OpenAiHttpError) {
+        this.noteCredentialError(err);
+        throw err;
+      }
       // 어느 호출이 늦었는지 알아야 해서 'openai' 를 붙인다 — 이 메시지는 검색이
       // 빈손으로 끝난 이유를 추적할 때 로그에서 그대로 찾는 문자열이다.
       if (err instanceof FetchTimeoutError) throw new Error(`openai timeout after ${timeoutMs}ms`);
@@ -237,6 +300,29 @@ export class OpenAiService {
     if (this.webSearchTool !== 'web_search') return false;
     if (!req.tools?.some((t) => t.type === 'web_search')) return false;
     return err instanceof OpenAiHttpError && err.status === 400 && /web_search/.test(err.detail);
+  }
+
+  /**
+   * 401·403 을 **상태로 남긴다.**
+   *
+   * 2026-11-04 에 `.env` 의 키가 꼬리가 붙은 채 저장돼 모든 호출이 401 이었는데,
+   * `/health` 는 계속 `ok` 를 답했다 — 값이 비었는지만 봤기 때문이다. 그동안 사용자는
+   * "잠시 뒤 다시 시도해 주세요" 를 받았고, 그건 고치기 전엔 영영 안 되는 안내였다.
+   * 원인을 짚는 데 한참 걸렸다. 그 두 가지를 여기서 끊는다.
+   */
+  private noteCredentialError(err: OpenAiHttpError): void {
+    if (!isCredentialError(err)) return;
+    const first = this.credentialRejectedAt === null;
+    this.credentialRejectedAt = Date.now();
+    this.credentialHttpStatus = err.status;
+    if (first) {
+      this.logger.error(
+        `OpenAI 자격증명 거부 (HTTP ${err.status}). ` +
+          `${Math.round(CREDENTIAL_COOLDOWN_MS / 60000)}분간 호출을 멈추고 ` +
+          '/health 의 openai 를 rejected 로 바꾼다. ' +
+          'OPENAI_API_KEY 와 OPENAI_PROJECT/ORGANIZATION 을 확인하라.',
+      );
+    }
   }
 
   /** 키가 로그에 남으면 안 된다. 헤더로만 보내지만 에코되는 경우를 대비한다. */

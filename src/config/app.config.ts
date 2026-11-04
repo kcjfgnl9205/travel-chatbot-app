@@ -162,10 +162,20 @@ export function loadConfig(): AppConfig {
     // sk-proj- 키는 프로젝트가 키에 박혀 있으므로 비워두면 된다.
     openaiProject: str('OPENAI_PROJECT'),
     openaiOrganization: str('OPENAI_ORGANIZATION'),
-    openaiModel: str('OPENAI_MODEL', 'gpt-5-mini'),
+    // ⚠️ **gpt-5-mini · gpt-5-nano 는 2026-12-11 에 내려간다.** 공식 후속은 각각
+    //    gpt-5.6-terra · gpt-5.6-luna 다.
+    //
+    // 검색에도 terra 가 아니라 luna 를 기본값으로 둔 것은 실측 때문이다 (오사카 호텔,
+    // 2026-11-04). gpt-5-mini 는 "예약 링크는 네 곳 중 하나" 를 못 지켜 **후보 30개가
+    // 전부 걸러졌고**(usable=0 → 카드 0줄), luna 는 32개 중 32개가 통과했다.
+    // terra 보다 입력 10배·출력 10배 싸다.
+    openaiModel: str('OPENAI_MODEL', 'gpt-5.6-luna'),
     // 웹 검색이 붙은 호출은 느리다. 5초 예산은 캐시가 지키고, 여긴 넉넉히 준다.
     openaiTimeoutMs: Math.round(num('OPENAI_TIMEOUT_SECONDS', 60) * 1000),
-    // gpt-5 계열은 reasoning.effort 를 받는다: minimal | low | medium | high.
+    // GPT-5.6 계열의 reasoning.effort: none | low | medium | high | xhigh | max (기본 medium).
+    // ⚠️ **gpt-5 계열의 `minimal` 은 5.6 에 없는 값이다.** 모델 이름만 바꾸고 이 값을
+    //    두면 매 호출이 400 으로 떨어지는데, 발화 해석은 사전이 흔한 문장을 0ms 로
+    //    처리해서 **평범한 질문은 멀쩡해 보인다** — 모르는 도시에서만 되묻기가 된다.
     // 올릴수록 결과가 좋아지지만 콜백 1분 예산을 잡아먹는다.
     openaiSearchEffort: str('OPENAI_SEARCH_EFFORT', 'low'),
     openaiRankEffort: str('OPENAI_RANK_EFFORT', 'low'),
@@ -176,8 +186,8 @@ export function loadConfig(): AppConfig {
     //
     // 검색용 모델과 분리한 이유: 검색은 품질이 중요하고 콜백 예산(1분)을 쓰지만,
     // 파싱은 "도시 이름 하나 뽑기"라 작은 모델로 충분하고 **속도가 곧 품질**이다.
-    openaiParseModel: str('OPENAI_PARSE_MODEL', 'gpt-5-nano'),
-    openaiParseEffort: str('OPENAI_PARSE_EFFORT', 'minimal'),
+    openaiParseModel: str('OPENAI_PARSE_MODEL', 'gpt-5.6-luna'),
+    openaiParseEffort: str('OPENAI_PARSE_EFFORT', 'none'),
     // 2.5초는 너무 빡빡했다 — 실제 gpt-5 계열은 이 정도로는 못 끝낸다.
     // 넘기면 되묻기로 떨어지므로, 5초 예산이 허락하는 만큼은 기다려준다.
     openaiParseTimeoutMs: Math.round(num('OPENAI_PARSE_TIMEOUT_SECONDS', 4) * 1000),
