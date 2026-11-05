@@ -252,12 +252,18 @@ export class RouterController {
 
     // 2-a. "다른 도시" — 목록에 없는 도시를 가려는 사람의 출구.
     //    카카오에는 입력창을 미리 채우는 버튼이 없으므로, 한 번 되묻고 다음 발화를 받는다.
+    //
+    //    ⚠️ **도메인 말 없이 "다른 도시" 만 쳐도 받는다.** 나라 되묻기 카드가 「다른 도시를
+    //       찾고 있나요?」 라고 묻는데, 그 말 그대로 답하면 아래 2-b 가 "다른 도시" 를
+    //       **지명으로 등록해 검색했다.** 되묻던 중이면 그 도메인을 이어받는다.
     if (isAnotherPlaceRequest(req.utterance)) {
-      const kind = intentFromKeywords(req.utterance);
-      if (kind !== 'unknown') {
+      const said = intentFromKeywords(req.utterance);
+      const waiting = this.pending.take(req.userKey);
+      const kind = said !== 'unknown' ? said : waiting?.kind;
+      if (kind) {
         // 어느 나라를 고르다 왔는지 이어받는다 — "베트남 어디로 가세요?" 가
         // "어느 도시 호텔을 찾으세요?" 보다 맥락이 산다.
-        const country = this.pending.take(req.userKey)?.country ?? null;
+        const country = waiting?.country ?? null;
         this.pending.remember(req.userKey, { kind, country });
         return cards.askPlaceNameOnly(kind, country, req.botName);
       }

@@ -7,6 +7,7 @@
  */
 
 import * as t from './templates';
+import { RouteProblem } from '../flight/airports';
 import { TripDateProblem, TripParams, resolveTrip } from '../flight/search-url';
 import { CityChoice } from '../places/places.types';
 import { SearchKind, SearchMeta } from '../search/search.types';
@@ -512,6 +513,34 @@ export function searchStartedText(meta: SearchMeta, botName: string | null): t.J
  *    검색이 실패한 경우가 대부분이라, 그렇게 말하면 사용자는 자기가 틀린 줄 알고
  *    같은 질문을 다르게 쓰며 헤맨다. 원인이 다르면 문구도 달라야 한다.
  */
+/**
+ * 항공권 링크를 만들 수 없는 노선 ([airports.ts](../flight/airports.ts) routeProblem).
+ *
+ * ⚠️ "잠시 뒤 다시 물어봐 주세요" 라고 하지 않는다. 다시 물어도 같은 답이다 —
+ *    무엇을 바꿔 말하면 되는지를 적는다.
+ */
+export function flightRouteText(problem: RouteProblem, botName: string | null): t.Json {
+  let text: string;
+  if (problem.kind === 'same') {
+    text = problem.originAssumed
+      ? `${problem.name} 출발 기준이라 출발지와 도착지가 같아요.\n` +
+        `「부산에서 ${problem.name} 항공권」처럼 출발지를 같이 알려주세요.`
+      : `출발지와 도착지가 같아요 (${problem.name}).\n` +
+        `「부산에서 ${problem.name} 항공권」처럼 다시 알려주세요.`;
+  } else if (problem.kind === 'no-origin-airport') {
+    text = problem.isCountry
+      ? `출발지가 나라(${problem.name})라서 공항을 정할 수 없어요.\n` +
+        `「서울에서 ${problem.dest} 항공권」처럼 출발 도시를 알려주세요.`
+      : `${problem.name}에는 공항이 없어 출발지로 쓸 수 없어요.\n` +
+        `가까운 공항 도시를 출발지로 알려주세요. 예) 「서울에서 ${problem.dest} 항공권」`;
+  } else {
+    text =
+      `${problem.name}에는 공항이 없어 항공권 링크를 만들 수 없어요.\n` +
+      `가까운 공항이 있는 도시 이름으로 다시 물어봐 주세요.`;
+  }
+  return t.simpleTextWithMention(text, botName);
+}
+
 export function emptyText(meta: SearchMeta, botName: string | null): t.Json {
   // ⚠️ **빈 힌트를 템플릿에 끼워 넣지 마라.** 예전에는 `주세요. ${hint}` 였는데,
   //    힌트가 빈 문자열이면 문장 끝에 공백이 남았다.

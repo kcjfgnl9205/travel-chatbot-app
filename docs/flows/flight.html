@@ -113,8 +113,8 @@ flowchart LR
   Q2 -- "지명 없음 · 나라만" --> R2["② 되묻기"]
   Q2 -- 예 --> Q3{"날짜가 말이 되나?"}
   Q3 -- "지난 날짜 · 귀국이 먼저" --> R3["③ 날짜 다시 고르기"]
-  Q3 -- 예 --> Q4{"도착 도시에<br/>공항이 있나?"}
-  Q4 -- 없음 --> R4["④ 정리하지 못했어요"]
+  Q3 -- 예 --> Q4{"출발·도착에 공항이 있고<br/>서로 다른 도시인가?"}
+  Q4 -- 아니오 --> R4["④ 노선을 다시 묻기"]
   Q4 -- 있음 --> R1["① 예약 사이트 링크 카드"]
   R2 -. 도시를 고르면 .-> Q3
   R3 -. 날짜를 고르면 .-> R1
@@ -128,7 +128,7 @@ flowchart LR
   <article class="result ok">
     <div class="left">
       <div class="head"><span class="num">①</span><h3>예약 사이트 링크 카드</h3><span class="chip ok">원하는 답</span></div>
-      <div><div class="label">이럴 때</div><div class="says"><span>오사카 항공권 찾아줘</span><span>부산에서 오사카 가는 비행기</span><span>다낭 편도 항공권 12월 3일 2명</span><span>제주 비행기 다음주 금요일</span><small>AI 검색 없이 바로 나갑니다. 항공편이나 가격을 보여주는 게 아니라, 날짜·인원을 넣은 예약 사이트 검색 화면으로 보내는 카드입니다.</small></div></div><div><div class="label">출발지를 말하지 않으면</div><div class="says"><span>오사카 항공권</span><small>서울(인천) 출발로 보고, 카드 아래에 그렇다고 적습니다. 국내선이면 김포로 바뀝니다.</small></div></div>
+      <div><div class="label">이럴 때</div><div class="says"><span>오사카 항공권 찾아줘</span><span>부산에서 오사카 가는 비행기</span><span>다낭 편도 항공권 12월 3일 2명</span><span>제주 비행기 다음주 금요일</span><span>부산 오사카 왕복</span><small>AI 검색 없이 바로 나갑니다. 항공편이나 가격을 보여주는 게 아니라, 날짜·인원을 넣은 예약 사이트 검색 화면으로 보내는 카드입니다.</small></div></div><div><div class="label">출발지를 말하지 않으면</div><div class="says"><span>오사카 항공권</span><small>서울(인천) 출발로 보고, 카드 아래에 그렇다고 적습니다. 국내선이면 김포로 바뀝니다.</small></div></div>
       <p class="next"><b>다음:</b> 줄을 누르면 그 사이트의 검색 결과가 열립니다. 트립닷컴·마이리얼트립은 그때 제휴 링크로 바뀌고, 스카이스캐너는 그대로 갑니다. 날짜를 안 말하면 내일 출발 · 7일 뒤 귀국 · 1명.</p>
     </div>
     <div class="chat"><div class="ava">가</div><div class="stack"><div class="card"><div class="card-h">서울→오사카 항공권</div><div class="row"><div><b>트립닷컴에서 보기</b><small>그 자리에서 예약·결제까지</small></div></div><div class="row"><div><b>스카이스캐너에서 보기</b><small>여러 예약처 가격을 한 번에 비교</small></div></div><div class="row"><div><b>마이리얼트립에서 보기</b><small>한국어 고객센터 · 원화 결제</small></div></div><div class="btns"><span>공유하기</span></div></div><div class="bubble">링크는 11월 6일 출발 · 11월 13일 귀국 · 1인으로 검색돼요.
@@ -156,17 +156,19 @@ flowchart LR
   </article>
   <article class="result fail">
     <div class="left">
-      <div class="head"><span class="num">④</span><h3>정리하지 못했어요</h3><span class="chip fail">공항 없는 곳</span></div>
-      <div><div class="label">이럴 때</div><div class="says"><span>강릉 항공권</span><span>유후인 항공권</span><span>하롱베이 항공권</span><small>도착 도시에 공항 코드가 없어 링크를 만들 수 없을 때입니다. 「다시 물어봐 주세요」라고 하지만 다시 물어도 같은 답입니다.</small></div></div>
-      <p class="next"><b>다음:</b> 가까운 공항 도시(예: 유후인 → 후쿠오카)로 다시 물어야 합니다. 봇이 그걸 알려주지는 않습니다.</p>
+      <div class="head"><span class="num">④</span><h3>노선을 다시 묻기</h3><span class="chip ask">링크를 못 만드는 노선</span></div>
+      <div><div class="label">도착지에 공항이 없을 때</div><div class="says"><span>강릉 항공권</span><span>유후인 항공권</span><span>하롱베이 항공권</span><small>「유후인에는 공항이 없어 항공권 링크를 만들 수 없어요. 가까운 공항이 있는 도시 이름으로 다시 물어봐 주세요.」</small></div></div>
+      <div><div class="label">출발지에 공항이 없을 때</div><div class="says"><span>강릉에서 제주 항공권</span><span>대전에서 오사카 비행기</span><small>「강릉에는 공항이 없어 출발지로 쓸 수 없어요. 가까운 공항 도시를 출발지로 알려주세요.」 출발지가 나라면(「일본에서 서울 항공권」) 「출발지가 나라(일본)라서 공항을 정할 수 없어요」.</small></div></div>
+      <div><div class="label">출발지와 도착지가 같을 때</div><div class="says"><span>서울 항공권</span><small>출발지를 안 말하면 서울로 보므로, 서울행은 출발지를 같이 말해야 합니다.</small></div></div>
+      <p class="next"><b>다음:</b> 안내대로 「부산에서 서울 항공권」처럼 고쳐 말하면 ①이 나갑니다.</p>
     </div>
-    <div class="chat"><div class="ava">가</div><div class="stack"><div class="bubble">서울→강릉 항공권 정보를 지금은 정리하지 못했어요 🙏
-잠시 뒤 다시 물어봐 주세요.</div></div></div>
+    <div class="chat"><div class="ava">가</div><div class="stack"><div class="bubble">서울 출발 기준이라 출발지와 도착지가 같아요.
+「부산에서 서울 항공권」처럼 출발지를 같이 알려주세요.</div></div></div>
   </article>
   <article class="result fail">
     <div class="left">
       <div class="head"><span class="num">⑤</span><h3>도움말</h3><span class="chip fail">못 알아들음</span></div>
-      <div><div class="label">이럴 때</div><div class="says"><span>안녕</span><span>부산 오사카 왕복</span><span>오사카 편도</span><small>「왕복」「편도」는 항공 단어인데 첫 관문(여행 단어 목록)에 없어서, 이 단어만 있으면 여기로 옵니다.</small></div></div>
+      <div><div class="label">이럴 때</div><div class="says"><span>안녕</span><span>오늘 날씨 어때</span><small>여행 단어가 없거나 무엇을 찾는지 정하지 못한 경우입니다.</small></div></div>
       <p class="next"><b>다음:</b> [도움말] 버튼으로 예시 문장을 보여줍니다.</p>
     </div>
     <div class="chat"><div class="ava">가</div><div class="stack"><div class="card"><div class="tc"><b>🤔 어떤 여행을 찾으시나요?</b>요청하신 내용을 정확히 이해하지 못했어요.
@@ -176,7 +178,7 @@ flowchart LR
 
 <section class="watch">
   <h2>알아두면 좋은 동작</h2>
-  <ul><li><b>항공권은 「찾고 있어요」와 「검색 안 됨」이 없습니다.</b> AI 를 부르지 않고 링크만 만들어서 늘 바로 답합니다. 의도 해석에 모델이 필요한 문장만 3.5초를 넘겨 「아직 정리 중이에요 🔍」가 날 수 있습니다.</li><li><b>「서울 항공권」은 「서울→서울 항공권」 카드가 나갑니다.</b> 출발지와 도착지가 같은지 막는 곳이 없습니다.</li><li><b>공항 없는 출발지는 말없이 서울로 바뀝니다.</b> 「강릉에서 제주 항공권」은 머리글이 「강릉→제주」인데 링크는 김포→제주로 열립니다.</li><li><b>도시를 두 개 말하면 앞이 출발지입니다.</b> 「오사카 도쿄 항공권」 → 오사카→도쿄. 「에서」를 붙이면 그쪽이 출발지가 됩니다.</li><li><b>만료된 링크를 누르면 「챗봇에서 호텔을 다시 추천받아 주세요」가 뜹니다.</b> 항공권 링크인데도 문구가 호텔입니다.</li></ul>
+  <ul><li><b>항공권은 「찾고 있어요」와 「검색 안 됨」이 없습니다.</b> AI 를 부르지 않고 링크만 만들어서 늘 바로 답합니다. 의도 해석에 모델이 필요한 문장만 3.5초를 넘겨 「아직 정리 중이에요 🔍」가 날 수 있습니다.</li><li><b>도시를 두 개 말하면 앞이 출발지입니다.</b> 「오사카 도쿄 항공권」 → 오사카→도쿄. 「에서」를 붙이면 그쪽이 출발지가 됩니다.</li><li><b>만료된 링크를 누르면</b> 「링크가 만료되었어요 · 챗봇에서 다시 추천받아 주세요.」 페이지가 뜹니다.</li></ul>
 </section>
 
 <footer>말풍선 문구는 코드 그대로이고, 호텔·도시 이름과 날짜는 예시입니다. 실행 화면이 아니라 코드 기준입니다. </footer>

@@ -76,3 +76,39 @@ function airportOf(
   if (place?.slug === 'incheon') return INCHEON;
   return domestic ? GIMPO : INCHEON;
 }
+
+/**
+ * 링크를 만들 수 없는 노선. **조용히 고치지 않고 사용자에게 되묻는다.**
+ *
+ * 예전에는 셋 다 말없이 넘어갔다:
+ *   · "서울 항공권"          → 서울(기본 출발지)→서울 카드가 나갔다
+ *   · "강릉에서 제주 항공권" → 머리글은 강릉→제주인데 링크는 김포→제주로 열렸다
+ *   · "유후인 항공권"        → "잠시 뒤 다시 물어봐 주세요" — 다시 물어도 같았다
+ */
+export type RouteProblem =
+  | { kind: 'same'; name: string; originAssumed: boolean }
+  | { kind: 'no-origin-airport'; name: string; isCountry: boolean; dest: string }
+  | { kind: 'no-dest-airport'; name: string; from: string };
+
+export function routeProblem(
+  from: Place | null,
+  dest: Place,
+  originAssumed: boolean,
+  fallbackName: string,
+): RouteProblem | null {
+  const fromName = from?.canonicalName ?? fallbackName;
+  if (from && from.id === dest.id) {
+    return { kind: 'same', name: dest.canonicalName, originAssumed };
+  }
+  // 말한 출발지에만 건다. 기본 출발지(서울)는 설정이 공항 코드를 들고 있다.
+  if (from && !originAssumed && !from.iata) {
+    return {
+      kind: 'no-origin-airport',
+      name: from.canonicalName,
+      isCountry: from.kind === 'country',
+      dest: dest.canonicalName,
+    };
+  }
+  if (!dest.iata) return { kind: 'no-dest-airport', name: dest.canonicalName, from: fromName };
+  return null;
+}

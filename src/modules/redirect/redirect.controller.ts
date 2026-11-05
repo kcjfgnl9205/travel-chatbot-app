@@ -46,7 +46,7 @@ const EXPIRED_HTML = `<!doctype html>
 <title>링크를 찾을 수 없어요</title></head>
 <body style="font-family:-apple-system,sans-serif;padding:48px 24px;text-align:center">
 <h2>링크가 만료되었어요</h2>
-<p>챗봇에서 호텔을 다시 추천받아 주세요.</p>
+<p>챗봇에서 다시 추천받아 주세요.</p>
 </body></html>`;
 
 /** 관광지 쪽 문구. 지워진 곳이라 "만료" 가 아니다 — 다시 물어도 그 줄은 없다. */

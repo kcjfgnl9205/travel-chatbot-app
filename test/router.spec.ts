@@ -246,6 +246,42 @@ describe('POST /api/v1/kakao/router', () => {
     expect(shareButtonOf(last.body)).toBeDefined();
   });
 
+  /**
+   * ⚠️ **1차 필터가 도메인 단어를 다 품어야 한다.** 호텔·항공 단어로는 알면서 그 앞의
+   *    필터에서 걸러 도움말을 줬다 — "오사카 료칸 추천", "부산 오사카 왕복" 이 그랬다.
+   */
+  it.each([
+    ['오사카 료칸 추천해줘', '호텔'],
+    ['오사카 호스텔 추천', '호텔'],
+    ['부산 오사카 왕복', '항공권'],
+    ['오사카 편도 알아봐줘', '항공권'],
+  ])('"%s" 는 도움말이 아니라 %s 로 간다', async (utterance, label) => {
+    const body = await askUntilCard(ctx.app, utterance);
+
+    expect(listCardOf(body).header.title).toContain(label);
+  });
+
+  // ---------------------------------------------------------- 나라 → "다른 도시"
+  /**
+   * 나라 되묻기 카드가 「다른 도시를 찾고 있나요?」 라고 묻는다. 그 말 그대로 답하면
+   * "다른 도시" 를 **지명으로 등록해 검색했다.** 되묻던 도메인을 이어받아야 한다.
+   */
+  it('나라 되묻기 뒤에 "다른 도시" 만 쳐도 도시 이름을 되묻는다 — 지명으로 검색하지 않는다', async () => {
+    await post(ctx.app, kakaoPayload('베트남 호텔 추천해줘'));
+
+    const res = await post(ctx.app, kakaoPayload('다른 도시'));
+
+    expect(textOf(res.body)).toContain('베트남 어디로 가세요?');
+    expect(ctx.provider.calls).toHaveLength(0);
+  });
+
+  it('되묻던 중이 아니면 "다른 도시" 는 여전히 도움말이다', async () => {
+    // 되묻기 상태는 사람마다 따로다. 앞 테스트가 남긴 상태와 섞이지 않게 다른 사람으로 묻는다.
+    const res = await post(ctx.app, kakaoPayload('다른 도시', { userKey: 'nobody-waiting' }));
+
+    expect(notUnderstoodCardOf(res.body)).toBeDefined();
+  });
+
   // ---------------------------------------------------------- 항공권
   it('항공권도 listCard 다 — 그룹챗봇은 itemCard 를 못 그린다', async () => {
     const body = await askUntilCard(ctx.app, '오사카 항공권 찾아줘');
@@ -408,6 +444,32 @@ describe('POST /api/v1/kakao/router', () => {
   });
 
   // ---------------------------------------------------------- 관광지
+  // ---------------------------------------------------------- 항공권 — 만들 수 없는 노선
+  /**
+   * ⚠️ **조용히 고치지 않는다.** 예전에는 "서울 항공권" 에 서울→서울 카드가,
+   *    "강릉에서 제주" 에 머리글은 강릉인데 링크는 김포로 열리는 카드가 나갔다.
+   */
+  it('출발지와 도착지가 같으면 링크 대신 출발지를 묻는다 — "서울 항공권"', async () => {
+    const res = await post(ctx.app, kakaoPayload('서울 항공권 찾아줘'));
+
+    expect(textOf(res.body)).toContain('서울 출발 기준이라 출발지와 도착지가 같아요');
+    expect(textOf(res.body)).toContain('「부산에서 서울 항공권」');
+  });
+
+  it('공항 없는 출발지는 서울로 바꾸지 않고 다시 묻는다 — "강릉에서 제주"', async () => {
+    const res = await post(ctx.app, kakaoPayload('강릉에서 제주 항공권 찾아줘'));
+
+    expect(textOf(res.body)).toContain('강릉에는 공항이 없어 출발지로 쓸 수 없어요');
+    expect(JSON.stringify(res.body)).not.toContain('listCard');
+  });
+
+  it('공항 없는 도착지는 "다시 물어봐 주세요" 가 아니라 무엇을 바꿀지 알려준다', async () => {
+    const res = await post(ctx.app, kakaoPayload('유후인 항공권 찾아줘'));
+
+    expect(textOf(res.body)).toContain('유후인에는 공항이 없어 항공권 링크를 만들 수 없어요');
+    expect(textOf(res.body)).not.toContain('잠시 뒤');
+  });
+
   it('관광지는 지도 링크로 간다', async () => {
     const body = await askUntilCard(ctx.app, '오사카 관광지 추천해줘');
 

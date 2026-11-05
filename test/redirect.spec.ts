@@ -130,6 +130,8 @@ describe('클릭 리다이렉트', () => {
 
     expect(sent.status).toBe(404);
     expect(sent.html).toContain('만료');
+    // 호텔·항공권 링크가 같은 페이지를 쓴다. 한쪽 이름을 박으면 다른 쪽에서 딴소리가 된다.
+    expect(sent.html).not.toContain('호텔');
     expect(sent.redirect).toBeUndefined();
   });
 

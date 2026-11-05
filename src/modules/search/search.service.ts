@@ -5,6 +5,7 @@ import { fetchWithTimeout } from '../../common/fetch';
 import { AppConfig, CONFIG } from '../../config/app.config';
 import { AttractionService } from '../attraction/attraction.service';
 import { MessagesRepository } from '../database/repositories/messages.repository';
+import { routeProblem } from '../flight/airports';
 import { FlightService } from '../flight/flight.service';
 import { parseTripParams, withoutUsed } from '../flight/trip-params';
 import { HotelService } from '../hotel/hotel.service';
@@ -123,6 +124,16 @@ export class SearchService {
         `date problem kind=${asked.problem.kind} utterance=${JSON.stringify(req.utterance)}`,
       );
       return cards.fixDatesCard(meta, asked, req.botName);
+    }
+
+    // 링크를 만들 수 없는 노선도 여기서 끊는다 — 같은 도시끼리, 공항 없는 출발지·도착지.
+    // 날짜와 마찬가지로 조용히 고치면 사용자는 말한 적 없는 노선의 링크를 받는다.
+    if (kind === 'flight') {
+      const problem = routeProblem(from, place, !parsed.from, this.config.flightDefaultOriginName);
+      if (problem) {
+        this.logger.log(`route problem kind=${problem.kind} utterance=${JSON.stringify(req.utterance)}`);
+        return cards.flightRouteText(problem, req.botName);
+      }
     }
 
     // ⚠️ **즉시 답할 수 있으면 캐시도 선점도 거치지 않는다** (관광지).
