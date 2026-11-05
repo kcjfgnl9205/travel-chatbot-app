@@ -3,6 +3,7 @@ import { Global, Module } from '@nestjs/common';
 import { MemoryStoreService } from './memory-store.service';
 import { AffiliateLinksRepository } from './repositories/affiliate-links.repository';
 import { AttractionsRepository } from './repositories/attractions.repository';
+import { MaintenanceRepository } from './repositories/maintenance.repository';
 import { MessagesRepository } from './repositories/messages.repository';
 import {
   RecommendationItemsRepository,
@@ -30,6 +31,7 @@ const PROVIDERS = [
   PlaceAliasesRepository,
   SearchResultsRepository,
   IntentCacheRepository,
+  MaintenanceRepository,
 ];
 
 /**

@@ -8,6 +8,7 @@
 # ⚠️ **운영 서버를 때린다.** 아래 두 조건에서 다음 단계로 올라가지 않고 멈춘다:
 #      · nginx 폴백("점검 중") 이 한 번이라도 나오면 — 앱이 죽었다는 뜻
 #      · 예산에서 잘린 응답이 ABORT_HELP(기본 25%) 를 넘으면 — 이미 한계를 지났다
+#      · HTTP 실패가 ABORT_FAIL(기본 5%) 를 넘으면 — 요청이 앱에 닿지도 못하고 있다
 #    실사용자가 같은 서버를 쓰고 있으므로, 한계를 '확인' 하면 더 밀지 않는다.
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -19,11 +20,17 @@ STEPS="${STEPS:-1 2 5 10 20 40}"
 DURATION="${DURATION:-30s}"
 BUDGET_MS="${BUDGET_MS:-3500}"
 ABORT_HELP="${ABORT_HELP:-25}"     # 예산잘림 % 상한
+# ⚠️ **이 조건이 없어서 2026-11-04 에 그냥 지나쳤다.** 동시 400 에서 HTTP 실패가
+#    15.6% 였는데 중단 조건이 app_down 과 예산잘림뿐이라 500 까지 올라갔고 거기서
+#    76.8% 가 됐다. 앞단(Cloudflare↔nginx TLS)이 무너지는 건 둘 중 어느 쪽에도
+#    안 잡힌다 — 앱은 멀쩡하고 예산도 안 넘기 때문이다.
+ABORT_FAIL="${ABORT_FAIL:-5}"      # HTTP 실패 % 상한
 COOL="${COOL:-15}"                 # 단계 사이 회복 대기(초)
 OUT="${OUT:-$(mktemp -d)}"
 
 echo "▸ 대상   $BASE"
 echo "▸ 단계   $STEPS VU · 각 $DURATION · scenario=$SCENARIO"
+echo "▸ 중단   예산잘림>${ABORT_HELP}% · HTTP실패>${ABORT_FAIL}% · 앱다운 1회"
 echo "▸ 예산   ${BUDGET_MS}ms (카카오 5초 중 앱이 스스로 끊는 지점)"
 echo "▸ 결과   $OUT"
 echo
@@ -55,6 +62,11 @@ for vus in $STEPS; do
   fi
   if (( $(echo "$help > $ABORT_HELP" | bc -l) )); then
     echo "  ⛔ 예산잘림 ${help}% > ${ABORT_HELP}% — 한계를 지났다. 여기서 멈춘다."
+    break
+  fi
+  if (( $(echo "$fail > $ABORT_FAIL" | bc -l) )); then
+    echo "  ⛔ HTTP 실패 ${fail}% > ${ABORT_FAIL}% — 요청이 앱에 닿지 못하고 있다."
+    echo "     (Cloudflare 525/502 라면 범인은 앱이 아니라 nginx·TLS 쪽이다)"
     break
   fi
   echo "  ${COOL}초 회복 대기"

@@ -1,7 +1,7 @@
 # travel-chatbot-app
 
 카카오톡 **가자고 그룹챗봇** 스킬 서버. **NestJS + MySQL (OCI HeatWave)**.
-범위: **호텔 · 항공권 · 관광지 3가지 (gpt-5-mini + 웹 검색)**
+범위: **호텔 · 항공권 · 관광지 3가지 (gpt-5.6-luna + 웹 검색)**
 
 **진입점이 하나다.** 오픈빌더에서 시나리오 블록·엔티티를 전부 지웠으므로 봇을 멘션한
 모든 발화가 폴백으로 떨어지고, 폴백 블록이 `POST /api/v1/kakao/router` 하나를 부른다.
@@ -51,7 +51,7 @@ npx tsc --noEmit
 
 ## 무엇을 어떻게 찾는가
 
-고정 데이터가 아니라 **gpt-5-mini 가 웹을 검색해서** 찾는다. 지역 화이트리스트는 없다 —
+고정 데이터가 아니라 **gpt-5.6-luna 가 웹을 검색해서** 찾는다. 지역 화이트리스트는 없다 —
 "방콕", "이스탄불", "도톤보리", 뭐든 물어보면 검색한다.
 
 블록이 없으므로 **무엇을 묻는지부터 서버가 정한다.**
@@ -73,7 +73,7 @@ npx tsc --noEmit
     ↓
 의도·지역 해석 ─ 캐시/키워드+사전 ─→ (모델 호출 없음)
     │
-   미스 → gpt-5-nano (툴 없음, minimal, 4초 컷)
+   미스 → gpt-5.6-luna (툴 없음, effort none, 4초 컷)
     ↓   { intent: hotel, place: 오사카, ignored: [4명, 9월 22~24일] }
 지역 정규화 → place_id (사전 → place_aliases → 모델 → 원문 등록)
     ↓
@@ -84,8 +84,8 @@ search_results 조회 ─ 히트 ─→ listCard 5줄 + 고지 즉시 응답 (~5
 useCallback 응답 (~100ms)  "오사카 호텔을 찾고 있어요 🔍"
     ↓  ← 여기서 카카오와의 5초 예산은 끝난다
 [백그라운드]
-  gpt-5-mini + web_search  →  후보 30곳 수집    (구조화 출력)
-  gpt-5-mini               →  가격·위치·평점 비교 → 상위 20곳 (구조화 출력)
+  gpt-5.6-luna + web_search →  후보 30곳 수집    (구조화 출력)
+  gpt-5.6-luna              →  가격·위치·평점 비교 → 상위 20곳 (구조화 출력)
   clickId 발급 · DB 적재 (애드픽 변환은 여기서 안 한다 — 클릭 시점이다, 0015)
   search_results 에 20건 저장 (5건씩 4페이지로 낸다)
     ↓
@@ -515,7 +515,7 @@ ERD와 컬럼별 설명은 **[docs/DB.md](docs/DB.md)**.
 |---|---|---|---|
 | 1 | 프로세스 메모리 · `place_aliases` | 0ms · 0원 | 전에 누군가 물어본 지역 |
 | 2 | 도시 사전 [`city-table.ts`](src/modules/places/city-table.ts) | 0ms · 0원 | 237개 도시 + 별칭(동경·Cebu·싱가폴) + 공항 코드 |
-| 3 | 모델 (gpt-5-nano) | ~1초 · 유료 | 사전에 없는 곳(도톤보리·해운대·시부야), 오타 |
+| 3 | 모델 (OPENAI_PARSE_MODEL) | ~1초 · 유료 | 사전에 없는 곳(도톤보리·해운대·시부야), 오타 |
 | 4 | 원문 그대로 등록 | 0원 | 모델까지 실패했을 때. **되묻지 않는다** |
 
 4번이 규칙이다. **지역을 검증하지 않는다** — "그런 도시 없어요" 로 막지 않고 일단
@@ -567,7 +567,7 @@ src/
 │   ├── hotel/ flight/ attraction/     도메인 — "어떻게 찾고 어떻게 한 줄로 그리는가"
 │   │   ├── *.service.ts               search() + rows() 두 가지만
 │   │   ├── *.types.ts                 항목 타입·카드 문구·PROVIDER 토큰
-│   │   └── providers/openai.provider.ts   gpt-5-mini 2단 호출
+│   │   └── providers/openai.provider.ts   gpt-5.6-luna 2단 호출
 │   ├── openai/openai.service.ts       Responses API 클라이언트
 │   ├── adpick/adpick.service.ts       커미션 링크 생성 (키 마스킹·동시성 제한)
 │   ├── affiliate/affiliate.service.ts 캐시 우선 링크 해석

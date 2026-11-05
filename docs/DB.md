@@ -547,3 +547,86 @@ select domain, position,
        count(*) filter (where click_count > 0) as 클릭된줄
 from recommendation_items group by 1, 2 order by 1, 2;
 ```
+
+---
+
+## 11. 전부 비우고 다시 시작하기
+
+`POST /api/v1/admin/reset`
+([maintenance.controller.ts](../src/modules/maintenance/maintenance.controller.ts))
+
+테이블 10개가 성격이 둘로 갈린다. **쌓인 것**은 비우고 **만든 것**은 남긴다 —
+다시 만드는 비용이 전혀 다르기 때문이다.
+
+| | 테이블 | 비우면 |
+|---|---|---|
+| **비운다** | `recommendation_items` | 이미 나간 카드의 `/r/{click_id}` 가 "링크가 만료되었어요" 로 간다 |
+| | `recommendations` · `messages` · `users` | 과거 CTR·발화 지표가 사라진다. 동작에는 영향 없다 |
+| | `affiliate_links` | 애드픽 변환 캐시. 다시 쌓는 데 **분당 60회 제한**이 걸린다 |
+| | `search_results` | 검색 캐시(호텔 24h·항공 6h·관광 1h). 첫 질문들이 한 번 느려진다 |
+| | `intent_cache` | 발화 해석 캐시(7일). 같은 문장을 한 번 더 모델에 묻는다 |
+| **남긴다** | `places` · `place_aliases` | 지역 마스터. 비워도 `POST /api/v1/catalog/seed` 로 10초대에 돌아온다 |
+| | `attractions` | **이 서비스에서 유일하게 사람 손이 들어간 데이터.** 아래 참고 |
+| | `schema_migrations` | 지우면 다음 배포가 0001 부터 다시 돈다 |
+
+```bash
+# 1. 무엇이 얼마나 지워지는지 먼저 본다 (지우지 않는다)
+curl https://bot.nolmoa.com/api/v1/admin/reset -H "X-Debug-Token: $DEBUG_TOKEN"
+
+# 2. 응답의 database 값을 confirm 에 그대로 적어야 지워진다
+curl -X POST https://bot.nolmoa.com/api/v1/admin/reset \
+  -H "X-Debug-Token: $DEBUG_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"confirm":"travel"}'
+```
+
+### ⚠️ `attractions` 를 이 API 로 비울 수 없게 만들었다
+
+도시 116곳 × 최대 20곳을 일회성 작업으로 채운 결과물이고
+([attraction-seed](attraction-seed/README.md)), 그 위에 운영이 손으로 고친
+`image_url`·`rank` 가 얹혀 있다. `source='ai'` 행은 런타임 백필이 다시 채우지만
+`source='manual'` 행과 손으로 고친 값은 **안 돌아온다.**
+
+게다가 `TRUNCATE` 로 비우면 `auto_increment` 가 1 로 돌아가, 이미 단톡방에 나간
+관광지 카드의 `/a/{id}` 가 **엉뚱한 곳으로 열린다** (`attractions.id` 를 그대로
+쓴다 — [redirect.controller.ts](../src/modules/redirect/redirect.controller.ts) 의 `a/:id`).
+"없어진 관광지예요" 보다 나쁘다.
+
+정말 비워야 한다면 백업부터 뜬다. **`city_id` 가 아니라 `slug` 로 뜬다** —
+`places` 를 다시 심으면 id 가 밀린다.
+
+```sql
+select p.slug, a.name, a.name_en, a.area, a.image_url, a.image_source, a.`rank`, a.source
+  from attractions a join places p on p.id = a.city_id
+ order by p.slug, a.`rank`;
+```
+
+그다음 `delete from attractions` 로 지우고(`truncate` 가 아니다),
+`alter table attractions auto_increment = <지금 최대 id + 여유>` 로 번호를 띄워
+옛 카드가 새 행을 가리키지 않게 한다.
+
+### DB 만 비우면 안 된다
+
+프로세스 안에 DB 를 거울처럼 들고 있는 캐시가 넷이고, API 가 **DB 를 비운 뒤에**
+같이 비운다 (순서를 뒤집으면 비우는 동안 들어온 요청이 곧 사라질 행을 다시 캐시한다).
+
+그중 하나는 안 비우면 **기록이 통째로 빈다** —
+[UsersRepository](../src/modules/database/repositories/users.repository.ts) 가
+`kakao_user_key → users 행` 을 들고 있어서, `users` 를 비운 뒤에도 사라진 `user_id` 를
+계속 돌려준다. 그 값으로 `messages` 를 넣으면 FK 위반이고, 레포지토리는 예외 대신
+null 을 돌려주므로 **아무도 모르게** 로그만 안 쌓인다.
+
+⚠️ **캐시는 요청을 받은 프로세스 것만 비운다.** 지금은 컨테이너 하나라 문제가 없지만,
+앱을 여러 벌 띄우는 날에는 비운 뒤 재시작이 함께 필요하다.
+
+### 왜 `TRUNCATE` 인데 FK 검사를 끄는가
+
+MySQL 은 **다른 테이블이 참조하는** 테이블을 `TRUNCATE` 하지 못한다 — 참조하는 쪽이
+이미 비어 있어도 마찬가지라, 자식부터 지워도 풀리지 않는다. 그래서 커넥션 하나에
+고정해 `foreign_key_checks` 를 끄고 돈다.
+
+⚠️ **끈 채로 풀에 돌려보내면 그 커넥션을 집는 모든 요청이 FK 검사 없이 돈다.**
+그래서 되돌리기는 `finally` 에 있고, 되돌리기에 실패한 커넥션은 재사용하지 않고 버린다.
+
+`TRUNCATE` 는 DDL 이라 문장마다 암묵적 커밋이 일어난다 — 되돌릴 수 없다. 중간에
+실패하면 **어디까지 비웠는지**를 500 본문에 담아 올리고, 같은 요청을 다시 보내면
+이어서 비운다.

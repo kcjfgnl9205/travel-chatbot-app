@@ -6,6 +6,7 @@ import { DatabaseModule } from './modules/database/database.module';
 import { DebugModule } from './modules/debug/debug.module';
 import { HealthModule } from './modules/health/health.module';
 import { KakaoModule } from './modules/kakao/kakao.module';
+import { MaintenanceModule } from './modules/maintenance/maintenance.module';
 import { RedirectModule } from './modules/redirect/redirect.module';
 
 /**
@@ -21,6 +22,7 @@ import { RedirectModule } from './modules/redirect/redirect.module';
     KakaoModule,
     DebugModule,
     CatalogModule,
+    MaintenanceModule,
     RedirectModule,
     HealthModule,
   ],

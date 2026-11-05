@@ -2,12 +2,13 @@ import { Controller, Get, Inject, Logger, Res } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 
-import { AppConfig, CONFIG, adpickApiEnabled, dbEnabled, openaiEnabled } from '../../config/app.config';
+import { AppConfig, CONFIG, adpickApiEnabled, dbEnabled } from '../../config/app.config';
 import { AttractionService } from '../attraction/attraction.service';
 import { FlightService } from '../flight/flight.service';
 import { HotelService } from '../hotel/hotel.service';
 import { EXPECTED_TABLES, SCHEMA_FILE } from '../../config/database.config';
 import { MysqlService } from '../database/mysql.service';
+import { OpenAiService } from '../openai/openai.service';
 
 /**
  * 헬스체크. 두 개로 나눈 이유:
@@ -32,6 +33,7 @@ export class HealthController {
     private readonly hotels: HotelService,
     private readonly flights: FlightService,
     private readonly attractions: AttractionService,
+    private readonly openai: OpenAiService,
   ) {}
 
   /** 앱 생존 확인. DB 는 건드리지 않는다. */
@@ -53,9 +55,30 @@ export class HealthController {
         flight: this.flights.providerName,
         attraction: this.attractions.providerName,
       },
-      openai: openaiEnabled(this.config) ? this.config.openaiModel : 'disabled(no key)',
+      openai: this.openaiField(),
       adpick: adpickApiEnabled(this.config) ? 'api' : 'fallback(no key)',
     };
+  }
+
+  /**
+   * openai 칸. **키가 "채워졌나" 가 아니라 "먹히나" 를 답한다.**
+   *
+   * 2026-11-04 에 `.env` 의 키가 꼬리 한 글자가 붙은 채 저장돼 모든 검색이 401 이었는데,
+   * 이 칸은 값이 비었는지만 보고 계속 모델명을 찍었다 — 운영에는 아무 신호가 없었고
+   * 사용자만 "잠시 뒤 다시" 를 받았다.
+   *
+   * ⚠️ **그래도 status 는 ok 로 둔다.** 여기는 liveness 이고 compose 가 30초마다
+   *    두드린다. 키가 틀렸다고 컨테이너를 재시작해봐야 키는 그대로다.
+   */
+  private openaiField(): string {
+    switch (this.openai.status) {
+      case 'no-key':
+        return 'disabled(no key)';
+      case 'rejected':
+        return `rejected(HTTP ${this.openai.credentialHttpCode}) ${this.config.openaiModel} — OPENAI_API_KEY·PROJECT 확인`;
+      default:
+        return this.config.openaiModel;
+    }
   }
 
   /** MySQL 에 실제로 붙는지, 테이블이 다 있는지 확인한다. */

@@ -1,6 +1,6 @@
 # 부하 시험
 
-> 서버: Oracle Cloud `VM.Standard.A1.Flex` (OCPU 1 · RAM 6GB · ARM64 · 도쿄) · DB: Supabase · AI: OpenAI
+> 서버: Oracle Cloud `VM.Standard.A1.Flex` (OCPU 1 · RAM 6GB · ARM64 · 춘천) · DB: OCI MySQL HeatWave · AI: OpenAI
 > 대상: `https://bot.nolmoa.com` (Cloudflare → nginx → `127.0.0.1:8000`)
 
 ## 먼저 알아야 할 것 — 여기서 "못 버틴다" 는 500 이 아니다
@@ -54,7 +54,13 @@ STEPS="1 5 10 20 40 80" SCENARIO=cached ./loadtest/run.sh
 ```
 
 `run.sh` 는 **자동으로 멈춘다**: nginx 폴백이 한 번이라도 나오거나, 예산잘림이
-25%(`ABORT_HELP`)를 넘으면 다음 단계로 올라가지 않는다. 운영 서버이기 때문이다.
+25%(`ABORT_HELP`) 또는 HTTP 실패가 5%(`ABORT_FAIL`)를 넘으면 다음 단계로 올라가지
+않는다. 운영 서버이기 때문이다.
+
+⚠️ **`ABORT_FAIL` 은 뒤늦게 붙였다.** 중단 조건이 `app_down` 과 예산잘림뿐이던 때,
+동시 400 에서 HTTP 실패 15.6% 가 났는데도 그냥 500 으로 올라가 76.8% 가 됐다.
+**앞단(nginx·TLS)이 무너지는 건 그 둘 중 어느 쪽에도 안 잡힌다** — 앱은 멀쩡하고
+예산도 안 넘기 때문이다.
 
 ### 시나리오
 
@@ -76,7 +82,10 @@ STEPS="1 5 10 20 40 80" SCENARIO=cached ./loadtest/run.sh
 - **p95 가 3500ms 를 넘는 첫 단계가 답이다.** 그 위부터 사용자는 카드 대신 도움말을 본다
 - `req/s` 가 VU 를 올려도 안 늘면 → 포화
 - `health.js` 의 p95 는 멀쩡한데 라우터만 무너지면 → 범인은 DB 왕복이다.
-  **실제로 그랬다** — 서버를 5배로 키웠는데 라우터 천장은 안 움직였다 ([결과](../docs/LOADTEST.md#3-병목은-서버가-아니다--서버를-5배로-키워-증명했다))
+  **실제로 그랬다** — 서버를 5배로 키웠는데 라우터 천장은 안 움직였다. 범인은 DB 였다
+  ([결과](../docs/LOADTEST.md#3-병목이-세-번-옮겨갔다))
+- `HTTP실패` 가 오르면 → **앱이 아니라 앞단이다.** 요청이 닿지도 못하고 있다.
+  `/var/log/nginx/error.log` 와 `worker_connections` 를 볼 것
 - `앱다운` 이 0 이 아니면 → 컨테이너가 죽었거나 OOM. `docker stats` 를 같이 볼 것
 
 ## 서버 쪽에서 같이 볼 것

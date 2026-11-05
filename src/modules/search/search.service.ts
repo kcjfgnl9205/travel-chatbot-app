@@ -11,6 +11,7 @@ import { parseTripParams, withoutUsed } from '../flight/trip-params';
 import { HotelService } from '../hotel/hotel.service';
 import { ParsedIntent } from '../intent/intent.types';
 import * as cards from '../kakao/cards';
+import { isCredentialError } from '../openai/openai.service';
 import * as t from '../kakao/templates';
 import {
   CursorMemory,
@@ -339,7 +340,15 @@ export class SearchService {
     } catch (err) {
       this.logger.error(`background search failed key=${cacheKey} err=${err}`);
       await this.store.fail(cacheKey, String(err), this.config.failedTtlMinutes, meta);
-      await pushOnce(cards.failedText(meta, req.botName));
+      // ⚠️ **자격증명이 거부된 것이면 "잠시 뒤 다시" 는 거짓말이다.** 키를 고치기 전에는
+      //    몇 번을 물어도 같은 결과고, 사용자는 그 사이 같은 질문만 반복한다.
+      //    다음 요청부터는 ready 가 false 라 여기까지 오지도 않는다 — 이 한 번은
+      //    이미 기다린 사람의 몫이라 여기서 가른다.
+      await pushOnce(
+        isCredentialError(err)
+          ? cards.unavailableText(meta, req.botName)
+          : cards.failedText(meta, req.botName),
+      );
     } finally {
       // 검색이 이겼으면 타이머가 남는다. 안 치우면 그만큼 프로세스가 안 죽는다.
       clearTimeout(timer);

@@ -7,19 +7,24 @@ Oracle Cloud 는 Railway 같은 PaaS 가 아니라 **그냥 리눅스 서버**�
 
 ## 1. 시크릿을 어디에 둘 것인가
 
-결론: **컨테이너는 서버의 `.env` 파일만 읽는다.** 다만 DB 접속 정보(`MYSQL_*`)는
-**GitHub Secrets 가 원본**이고, 배포할 때 Actions 가 서버 `.env` 에 옮겨 적는다.
+결론: **컨테이너는 서버의 `.env` 파일만 읽는다.** 다만 DB 접속 정보(`MYSQL_*`)와
+`OPENAI_API_KEY` 는 **GitHub Secrets 가 원본**이고, 배포할 때 Actions 가 서버 `.env` 에 옮겨 적는다.
 
 | | 언제 읽히나 | 이 프로젝트에서 |
 |---|---|---|
 | 내 PC 의 `.env` | 로컬에서 `npm run start:dev` 할 때 | 개발용 값 |
 | **서버의 `.env`** | **컨테이너가 실행 중일 때** | **운영 키 ← 컨테이너는 여기만 본다** |
-| **GitHub Secrets** | GitHub Actions 워크플로 실행 중에만 | SSH 키 + **`MYSQL_*` 의 원본** |
+| **GitHub Secrets** | GitHub Actions 워크플로 실행 중에만 | SSH 키 + **`MYSQL_*` · `OPENAI_API_KEY` 의 원본** |
 
 **GitHub Secrets 는 런타임 저장소가 아니다.** 오라클 서버에서 도는 컨테이너는 GitHub Secrets 를 직접 읽지 못한다.
-그래서 배포 잡이 [`deploy/write-env.sh`](../deploy/write-env.sh) 로 `MYSQL_*` 를 서버 `.env` 에 덮어쓴다 —
-**서버에서 `.env` 의 `MYSQL_*` 를 손으로 고쳐도 다음 배포가 시크릿 값으로 되돌린다.** 바꾸려면 시크릿을 바꾼다.
-시크릿이 비어 있으면 서버 값을 그대로 둔다. 나머지(OpenAI·애드픽·카카오)는 지금도 서버 `.env` 가 원본이다.
+그래서 배포 잡이 [`deploy/write-env.sh`](../deploy/write-env.sh) 로 그 값들을 서버 `.env` 에 덮어쓴다 —
+**서버에서 손으로 고쳐도 다음 배포가 시크릿 값으로 되돌린다.** 바꾸려면 시크릿을 바꾼다.
+시크릿이 비어 있으면 서버 값을 그대로 둔다. 나머지(애드픽·카카오)는 지금도 서버 `.env` 가 원본이다.
+
+> ⚠️ **`OPENAI_API_KEY` 가 목록에 있는 이유.** 2026-11-04 에 서버 `.env` 를 손으로 고치다
+> 키 끝에 글자 하나가 붙어 모든 검색이 401 이 됐다. 원본이 그 파일뿐이라 되돌릴 데가
+> 없었고, OpenAI 키는 발급 때 한 번만 보여주므로 **새로 발급해야 했다.** 시크릿에
+> 넣어두면 배포 한 번으로 돌아온다.
 
 ### 서버에서
 
@@ -327,8 +332,9 @@ ssh-copy-id -i ~/.ssh/travel_deploy.pub ubuntu@<서버IP>
 | `SSH_KNOWN_HOSTS` | `ssh-keyscan -H <서버IP>` 결과 (선택, 권장) |
 | `SSH_PORT` | 22 가 아니면 (선택) |
 | `MYSQL_HOST` · `MYSQL_PORT` · `MYSQL_USER` · `MYSQL_PASSWORD` · `MYSQL_DATABASE` | [2절](#2-mysql-oci-heatwave-연결) 참고. 배포가 서버 `.env` 에 옮겨 적는다 |
+| `OPENAI_API_KEY` | platform.openai.com 의 키. **복사 버튼으로** 가져온다 — 화면에서 긁으면 잘린다 |
 
-앱 시크릿 중 **DB 만** GitHub Secrets 가 원본이다. 애드픽·OpenAI·카카오는 서버 `.env` 에 있다.
+앱 시크릿 중 **DB 와 OpenAI 키만** GitHub Secrets 가 원본이다. 애드픽·카카오는 서버 `.env` 에 있다.
 
 ### 동작 확인
 
