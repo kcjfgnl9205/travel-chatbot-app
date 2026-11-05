@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>관광지 응답 한눈에 · 가자고</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gothic+A1:wght@400;700;800&family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap">
+<style>
+/* 레이아웃: 질문 세 개짜리 흐름도 한 장 → 결과 다섯 가지를 한 줄씩(이럴 때 · 이렇게 보여요 · 다음) */
+:root {
+  --bg: #f3f5f7; --surface: #ffffff; --ink: #1b2430; --muted: #5d6877; --line: #d9dee5;
+  --chat: #b9cbdb; --bubble: #ffffff; --you: #fee500; --you-ink: #191600; --thumb: #dfe6ee;
+  --ok: #1f7a4d; --ok-bg: #e2f3ea; --ask: #2f5d8a; --ask-bg: #e3edf7;
+  --wait: #8a5a00; --wait-bg: #fbf0d7; --fail: #a33a2b; --fail-bg: #f8e4e0;
+  --f-display: "Gothic A1", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --f-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12161b; --surface: #1a2027; --ink: #e6ebf1; --muted: #9aa6b4; --line: #2c343e;
+    --chat: #2a3440; --bubble: #e9edf2; --you: #f2d900; --you-ink: #191600; --thumb: #c9d3de;
+    --ok: #7fd3a6; --ok-bg: #173226; --ask: #9cc3ea; --ask-bg: #172839;
+    --wait: #f0c56a; --wait-bg: #33280f; --fail: #f19a8b; --fail-bg: #3a1d18;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12161b; --surface: #1a2027; --ink: #e6ebf1; --muted: #9aa6b4; --line: #2c343e;
+  --chat: #2a3440; --bubble: #e9edf2; --you: #f2d900; --you-ink: #191600; --thumb: #c9d3de;
+  --ok: #7fd3a6; --ok-bg: #173226; --ask: #9cc3ea; --ask-bg: #172839;
+  --wait: #f0c56a; --wait-bg: #33280f; --fail: #f19a8b; --fail-bg: #3a1d18;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.6; }
+.wrap { max-width: 1040px; margin: 0 auto; padding-inline: 20px; padding-block: 40px 64px; display: flex; flex-direction: column; gap: 44px; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(28px, 4vw, 38px); font-weight: 800; }
+h2 { font-size: 21px; font-weight: 800; }
+p { margin: 0; }
+.eyebrow { font-size: 12px; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
+.lede { max-width: 64ch; color: var(--muted); margin-top: 8px; }
+
+.flow { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; overflow-x: auto; }
+.flow pre.mermaid { margin: 0; background: transparent; }
+
+.results { display: flex; flex-direction: column; gap: 18px; }
+.result { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 330px); gap: 20px; border-left-width: 6px; }
+.result.ok { border-left-color: var(--ok); } .result.ask { border-left-color: var(--ask); }
+.result.wait { border-left-color: var(--wait); } .result.fail { border-left-color: var(--fail); }
+@media (max-width: 720px) { .result { grid-template-columns: minmax(0, 1fr); } }
+.left { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.num { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; font-family: var(--f-display); font-weight: 800; background: var(--ink); color: var(--bg); flex: none; }
+.chip { font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px; }
+.chip.ok { color: var(--ok); background: var(--ok-bg); } .chip.ask { color: var(--ask); background: var(--ask-bg); }
+.chip.wait { color: var(--wait); background: var(--wait-bg); } .chip.fail { color: var(--fail); background: var(--fail-bg); }
+.label { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: 0.04em; }
+.says { display: flex; flex-wrap: wrap; gap: 6px; }
+.says span { background: var(--you); color: var(--you-ink); font-size: 13.5px; padding: 3px 10px; border-radius: 10px; }
+.says small { width: 100%; color: var(--muted); font-size: 13px; }
+.next { font-size: 14px; color: var(--muted); }
+.next b { color: var(--ink); font-weight: 600; }
+
+.chat { background: var(--chat); border-radius: 12px; padding: 12px; display: flex; gap: 8px; align-items: flex-start; font-size: 13px; line-height: 1.5; color: #1b1f24; align-self: start; }
+.ava { flex: none; width: 30px; height: 30px; border-radius: 11px; background: #fff3a6; display: grid; place-items: center; font-weight: 800; font-family: var(--f-display); color: #4a3d00; font-size: 12px; }
+.stack { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1; }
+.bubble { background: var(--bubble); border-radius: 4px 12px 12px 12px; padding: 8px 11px; white-space: pre-line; }
+.card { background: var(--bubble); border-radius: 10px; overflow: hidden; }
+.card-h { padding: 8px 12px; font-weight: 700; border-bottom: 1px solid #e6e9ed; }
+.row { display: flex; gap: 9px; align-items: center; padding: 6px 12px; }
+.row + .row { border-top: 1px solid #f0f2f4; }
+.th { flex: none; width: 34px; height: 34px; border-radius: 6px; background: var(--thumb); }
+.row b { display: block; font-weight: 600; } .row small { color: #6b7684; font-size: 11.5px; }
+.btns { display: flex; border-top: 1px solid #e6e9ed; }
+.btns span { flex: 1; text-align: center; padding: 7px 4px; font-weight: 600; color: #2b3640; }
+.btns span + span { border-left: 1px solid #e6e9ed; }
+.tc { padding: 9px 12px; white-space: pre-line; } .tc b { display: block; }
+footer { font-size: 13px; color: var(--muted); }
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; }
+img { max-width: 100%; }
+.topnav { margin-bottom: 18px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.topnav a { font-size: 13px; font-weight: 600; color: var(--muted); text-decoration: none; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); }
+.topnav a:hover, .topnav a:focus-visible { color: var(--ink); border-color: var(--muted); }
+.topnav a[aria-current="page"] { color: var(--bg); background: var(--ink); border-color: var(--ink); }
+.topnav .home { margin-right: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <nav class="topnav" aria-label="페이지"><a class="home" href="index.html">목차</a><a href="attraction.html" aria-current="page">관광지</a><a href="hotel.html">호텔</a><a href="flight.html">항공권</a></nav>
+  <div class="eyebrow">가자고 그룹챗봇 · 관광지</div>
+  <h1>관광지 응답 한눈에</h1>
+  <p class="lede">관광지를 물으면 봇은 질문 세 개로 답을 정합니다. 결과는 다섯 가지뿐입니다. </p>
+</header>
+
+<section>
+  <div class="flow">
+<pre class="mermaid">
+flowchart LR
+  S(["관광지 질문"]) --> Q1{"여행 얘기인가?"}
+  Q1 -- 아니오 --> R4["④ 도움말"]
+  Q1 -- 예 --> Q2{"어느 도시인지<br/>알 수 있나?"}
+  Q2 -- "지명 없음 · 나라만" --> R2["② 되묻기"]
+  Q2 -- 예 --> Q3{"그 도시 관광지가<br/>저장돼 있나?"}
+  Q3 -- 예 --> R1["① 목록 카드"]
+  Q3 -- 아니오 --> R3["③ 찾고 있어요"]
+  R2 -. 도시를 고르면 .-> Q3
+  R3 -. 30초 뒤 다시 물으면 .-> R1
+</pre>
+  </div>
+  <p class="lede">⑤ 검색 안 됨은 발화와 상관없이 서버의 DB 가 꺼졌을 때만 나옵니다.</p>
+</section>
+
+<section class="results">
+  <h2>결과 다섯 가지</h2>
+
+  <article class="result ok">
+    <div class="left">
+      <div class="head"><span class="num">①</span><h3>목록 카드</h3><span class="chip ok">원하는 답</span></div>
+      <div><div class="label">이럴 때</div>
+        <div class="says"><span>오사카 관광지 추천해줘</span><span>도쿄 가볼만한 곳</span><span>오사가 관광지</span>
+          <small>오타는 모델이 고쳐서 이리로 옵니다. 날짜·인원을 붙이면 카드 아래 「…은 반영되지 않았어요」가 붙습니다.</small></div></div>
+      <p class="next"><b>다음:</b> [더 보기]로 5곳씩 최대 20곳. 줄을 누르면 지도가 열립니다.</p>
+    </div>
+    <div class="chat"><div class="ava">가</div><div class="stack">
+      <div class="card"><div class="card-h">오사카 관광지 5곳</div>
+        <div class="row"><div class="th"></div><div><b>오사카성</b><small>주오구</small></div></div>
+        <div class="row"><div class="th"></div><div><b>도톤보리</b><small>주오구</small></div></div>
+        <div class="row"><div class="th"></div><div><b>…</b><small>3곳 더</small></div></div>
+        <div class="btns"><span>더 보기</span><span>공유하기</span></div></div>
+    </div></div>
+  </article>
+
+  <article class="result ask">
+    <div class="left">
+      <div class="head"><span class="num">②</span><h3>되묻기</h3><span class="chip ask">어디인지 확인</span></div>
+      <div><div class="label">지명이 없을 때</div>
+        <div class="says"><span>관광지 추천해줘</span><span>가볼 만한 곳 알려줘</span></div></div>
+      <div><div class="label">나라만 말했을 때</div>
+        <div class="says"><span>일본 관광지</span><span>국내 관광지</span>
+          <small>이때는 인기 도시 4곳을 골라 보여주고, 누르면 바로 ①로 갑니다.</small></div></div>
+      <p class="next"><b>다음:</b> 5분 안에 「@가자고 방콕」처럼 지명만 답해도 이어집니다.</p>
+    </div>
+    <div class="chat"><div class="ava">가</div><div class="stack">
+      <div class="bubble">어느 지역 관광지를 찾으세요?
+아래 버튼을 누르고 「오사카 관광지 추천해줘」처럼 보내주세요.</div>
+      <div class="card"><div class="card-h">일본 어느 도시의 관광지를 찾을까요?</div>
+        <div class="row"><div><b>도쿄</b><small>신주쿠 · 시부야</small></div></div>
+        <div class="row"><div><b>오사카</b><small>난바 · 우메다</small></div></div>
+        <div class="row"><div><b>…</b><small>2곳 더</small></div></div></div>
+    </div></div>
+  </article>
+
+  <article class="result wait">
+    <div class="left">
+      <div class="head"><span class="num">③</span><h3>찾고 있어요</h3><span class="chip wait">잠시 기다림</span></div>
+      <div><div class="label">이럴 때</div>
+        <div class="says"><span>치앙마이 관광지</span><span>도톤보리 관광지</span><span>뿌뿌랜드 관광지</span>
+          <small>처음 묻는 도시, 도시 안의 세부 지역, 세상에 없는 지명 모두 여기로 옵니다. 3.5초 안에 못 끝낸 경우(「오사카에서 가볼만한 곳」)도 비슷한 말풍선이 나갑니다.</small></div></div>
+      <p class="next"><b>다음:</b> 뒤에서 AI 가 찾아 저장합니다. 다시 물으면 ①. 못 찾으면 「…관광지 정보를 지금은 정리하지 못했어요 🙏」.</p>
+    </div>
+    <div class="chat"><div class="ava">가</div><div class="stack">
+      <div class="bubble">치앙마이 관광지를 찾고 있어요 🔍
+30초쯤 뒤에 다시 물어봐 주세요!</div>
+    </div></div>
+  </article>
+
+  <article class="result fail">
+    <div class="left">
+      <div class="head"><span class="num">④</span><h3>도움말</h3><span class="chip fail">못 알아들음</span></div>
+      <div><div class="label">이럴 때</div>
+        <div class="says"><span>점심 뭐 먹지</span><span>여행 가고 싶다</span><span>더 보기</span>
+          <small>여행 단어가 없거나 무엇을 찾는지 정하지 못한 경우입니다. 「더 보기」를 버튼 대신 직접 치면 여기로 옵니다.</small></div></div>
+      <p class="next"><b>다음:</b> [도움말] 버튼으로 예시 문장을 보여줍니다.</p>
+    </div>
+    <div class="chat"><div class="ava">가</div><div class="stack">
+      <div class="card"><div class="tc"><b>🤔 어떤 여행을 찾으시나요?</b>요청하신 내용을 정확히 이해하지 못했어요.
+아래 예시를 참고해 다시 말씀해 주세요!</div><div class="btns"><span>도움말</span></div></div>
+    </div></div>
+  </article>
+
+  <article class="result fail">
+    <div class="left">
+      <div class="head"><span class="num">⑤</span><h3>검색 안 됨</h3><span class="chip fail">서버 문제</span></div>
+      <div><div class="label">이럴 때</div>
+        <div class="says"><small>사용자 발화와 상관없이 DB 가 꺼져 있을 때만 나옵니다.</small></div></div>
+      <p class="next"><b>다음:</b> DB 가 살아나면 평소대로 돌아갑니다.</p>
+    </div>
+    <div class="chat"><div class="ava">가</div><div class="stack">
+      <div class="bubble">지금은 오사카 관광지 검색이 안 되고 있어요 🙏
+고쳐두는 대로 다시 알려드릴게요.</div>
+    </div></div>
+  </article>
+</section>
+
+<footer>말풍선 문구는 코드 그대로이고, 관광지·도시 이름은 예시입니다. 실행 화면이 아니라 코드 기준입니다.</footer>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+  // 흐름도는 mermaid 가 그린다. 어두운 화면이면 어두운 테마로.
+  var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'neutral', securityLevel: 'strict',
+    flowchart: { useMaxWidth: false, nodeSpacing: 40, rankSpacing: 50 }, themeVariables: { fontSize: '15px' },
+    fontFamily: '"IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif' });
+</script>
+</body>
+</html>

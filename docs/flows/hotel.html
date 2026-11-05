@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>호텔 응답 한눈에 · 가자고</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gothic+A1:wght@400;700;800&family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap">
+<style>
+/* 레이아웃: 질문 세 개짜리 흐름도 한 장 → 결과 다섯 가지를 한 줄씩(이럴 때 · 이렇게 보여요 · 다음) */
+:root {
+  --bg: #f3f5f7; --surface: #ffffff; --ink: #1b2430; --muted: #5d6877; --line: #d9dee5;
+  --chat: #b9cbdb; --bubble: #ffffff; --you: #fee500; --you-ink: #191600; --thumb: #dfe6ee;
+  --ok: #1f7a4d; --ok-bg: #e2f3ea; --ask: #2f5d8a; --ask-bg: #e3edf7;
+  --wait: #8a5a00; --wait-bg: #fbf0d7; --fail: #a33a2b; --fail-bg: #f8e4e0;
+  --f-display: "Gothic A1", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --f-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12161b; --surface: #1a2027; --ink: #e6ebf1; --muted: #9aa6b4; --line: #2c343e;
+    --chat: #2a3440; --bubble: #e9edf2; --you: #f2d900; --you-ink: #191600; --thumb: #c9d3de;
+    --ok: #7fd3a6; --ok-bg: #173226; --ask: #9cc3ea; --ask-bg: #172839;
+    --wait: #f0c56a; --wait-bg: #33280f; --fail: #f19a8b; --fail-bg: #3a1d18;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12161b; --surface: #1a2027; --ink: #e6ebf1; --muted: #9aa6b4; --line: #2c343e;
+  --chat: #2a3440; --bubble: #e9edf2; --you: #f2d900; --you-ink: #191600; --thumb: #c9d3de;
+  --ok: #7fd3a6; --ok-bg: #173226; --ask: #9cc3ea; --ask-bg: #172839;
+  --wait: #f0c56a; --wait-bg: #33280f; --fail: #f19a8b; --fail-bg: #3a1d18;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.6; }
+.wrap { max-width: 1040px; margin: 0 auto; padding-inline: 20px; padding-block: 40px 64px; display: flex; flex-direction: column; gap: 44px; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(28px, 4vw, 38px); font-weight: 800; }
+h2 { font-size: 21px; font-weight: 800; }
+p { margin: 0; }
+.eyebrow { font-size: 12px; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
+.lede { max-width: 64ch; color: var(--muted); margin-top: 8px; }
+
+.flow { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; overflow-x: auto; }
+.flow pre.mermaid { margin: 0; background: transparent; }
+
+.results { display: flex; flex-direction: column; gap: 18px; }
+.result { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 330px); gap: 20px; border-left-width: 6px; }
+.result.ok { border-left-color: var(--ok); } .result.ask { border-left-color: var(--ask); }
+.result.wait { border-left-color: var(--wait); } .result.fail { border-left-color: var(--fail); }
+@media (max-width: 720px) { .result { grid-template-columns: minmax(0, 1fr); } }
+.left { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.num { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; font-family: var(--f-display); font-weight: 800; background: var(--ink); color: var(--bg); flex: none; }
+.chip { font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px; }
+.chip.ok { color: var(--ok); background: var(--ok-bg); } .chip.ask { color: var(--ask); background: var(--ask-bg); }
+.chip.wait { color: var(--wait); background: var(--wait-bg); } .chip.fail { color: var(--fail); background: var(--fail-bg); }
+.label { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: 0.04em; }
+.says { display: flex; flex-wrap: wrap; gap: 6px; }
+.says span { background: var(--you); color: var(--you-ink); font-size: 13.5px; padding: 3px 10px; border-radius: 10px; }
+.says small { width: 100%; color: var(--muted); font-size: 13px; }
+.next { font-size: 14px; color: var(--muted); }
+.next b { color: var(--ink); font-weight: 600; }
+
+.chat { background: var(--chat); border-radius: 12px; padding: 12px; display: flex; gap: 8px; align-items: flex-start; font-size: 13px; line-height: 1.5; color: #1b1f24; align-self: start; }
+.ava { flex: none; width: 30px; height: 30px; border-radius: 11px; background: #fff3a6; display: grid; place-items: center; font-weight: 800; font-family: var(--f-display); color: #4a3d00; font-size: 12px; }
+.stack { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1; }
+.bubble { background: var(--bubble); border-radius: 4px 12px 12px 12px; padding: 8px 11px; white-space: pre-line; }
+.card { background: var(--bubble); border-radius: 10px; overflow: hidden; }
+.card-h { padding: 8px 12px; font-weight: 700; border-bottom: 1px solid #e6e9ed; }
+.row { display: flex; gap: 9px; align-items: center; padding: 6px 12px; }
+.row + .row { border-top: 1px solid #f0f2f4; }
+.th { flex: none; width: 34px; height: 34px; border-radius: 6px; background: var(--thumb); }
+.row b { display: block; font-weight: 600; } .row small { color: #6b7684; font-size: 11.5px; }
+.btns { display: flex; border-top: 1px solid #e6e9ed; }
+.btns span { flex: 1; text-align: center; padding: 7px 4px; font-weight: 600; color: #2b3640; }
+.btns span + span { border-left: 1px solid #e6e9ed; }
+.tc { padding: 9px 12px; white-space: pre-line; } .tc b { display: block; }
+footer { font-size: 13px; color: var(--muted); }
+
+.watch { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+.watch ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 14px; }
+.watch li b { color: var(--ink); font-weight: 600; }
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; }
+img { max-width: 100%; }
+.topnav { margin-bottom: 18px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.topnav a { font-size: 13px; font-weight: 600; color: var(--muted); text-decoration: none; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); }
+.topnav a:hover, .topnav a:focus-visible { color: var(--ink); border-color: var(--muted); }
+.topnav a[aria-current="page"] { color: var(--bg); background: var(--ink); border-color: var(--ink); }
+.topnav .home { margin-right: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <nav class="topnav" aria-label="페이지"><a class="home" href="index.html">목차</a><a href="attraction.html">관광지</a><a href="hotel.html" aria-current="page">호텔</a><a href="flight.html">항공권</a></nav>
+  <div class="eyebrow">가자고 그룹챗봇 · 호텔</div>
+  <h1>호텔 응답 한눈에</h1>
+  <p class="lede">호텔을 물으면 봇은 질문 세 개로 답을 정합니다. 관광지와 달리 미리 저장된 목록이 없어서, 처음 묻는 도시는 AI 가 웹에서 찾는 동안 기다려야 합니다.</p>
+</header>
+
+<section>
+  <div class="flow">
+<pre class="mermaid">
+flowchart LR
+  S(["호텔 질문"]) --> Q1{"여행 얘기인가?"}
+  Q1 -- 아니오 --> R4["④ 도움말"]
+  Q1 -- 예 --> Q2{"어느 도시인지<br/>알 수 있나?"}
+  Q2 -- "지명 없음 · 나라만" --> R2["② 되묻기"]
+  Q2 -- 예 --> Q3{"24시간 안에<br/>찾아둔 결과가 있나?"}
+  Q3 -- 예 --> R1["① 호텔 목록 카드"]
+  Q3 -- 아니오 --> R3["③ 찾고 있어요"]
+  R2 -. 도시를 고르면 .-> Q3
+  R3 -. "AI 가 찾으면" .-> R1
+  R3 -. "못 찾거나 실패하면" .-> R6["⑥ 검색 링크 카드"]
+</pre>
+  </div>
+  <p class="lede">⑤ 검색 안 됨은 발화와 상관없이 OpenAI 키가 없을 때만 나옵니다.</p>
+</section>
+
+<section class="results">
+  <h2>결과 6가지</h2>
+  <article class="result ok">
+    <div class="left">
+      <div class="head"><span class="num">①</span><h3>호텔 목록 카드</h3><span class="chip ok">원하는 답</span></div>
+      <div><div class="label">이럴 때</div><div class="says"><span>오사카 호텔 추천해줘</span><span>다낭 숙소</span><span>도쿄 신주쿠 호텔</span><small>24시간 안에 누군가 같은 도시를 물어 결과가 저장돼 있을 때입니다.</small></div></div><div><div class="label">조건을 붙이면</div><div class="says"><span>오사카 호텔 4명 9월 22~24일</span><small>날짜·인원은 목록에 반영되지 않고, 카드 아래에 그렇다고 적습니다.</small></div></div>
+      <p class="next"><b>다음:</b> [더 보기]로 5곳씩 최대 20곳. 줄을 누르면 예약 사이트(트립닷컴·마이리얼트립·클룩·호텔스닷컴)로 가고, 그때 제휴 링크로 바뀝니다.</p>
+    </div>
+    <div class="chat"><div class="ava">가</div><div class="stack"><div class="card"><div class="card-h">오사카 호텔 5곳</div><div class="row"><div class="th"></div><div><b>호텔 그란비아 오사카</b><small>1박 182,000원~ · 평점 9.0 · 우메다</small></div></div><div class="row"><div class="th"></div><div><b>크로스 호텔 오사카</b><small>1박 154,000원~ · 평점 8.8 · 난바</small></div></div><div class="row"><div class="th"></div><div><b>…</b><small>3곳 더</small></div></div><div class="btns"><span>더 보기</span><span>공유하기</span></div></div><div class="bubble">날짜·인원(4명, 9월 22~24일)은 반영되지 않았어요.
+본 검색 결과에는 제휴 업체가 포함되어 있습니다.</div></div></div>
+  </article>
+  <article class="result ask">
+    <div class="left">
+      <div class="head"><span class="num">②</span><h3>되묻기</h3><span class="chip ask">어디인지 확인</span></div>
+      <div><div class="label">지명이 없을 때</div><div class="says"><span>호텔 추천해줘</span><span>숙소 어디가 좋아?</span></div></div><div><div class="label">나라만 말했을 때</div><div class="says"><span>일본 호텔 추천해줘</span><span>베트남 숙소 알려줘</span><small>인기 도시 4곳을 골라 보여주고, 누르면 그 도시 호텔로 갑니다.</small></div></div>
+      <p class="next"><b>다음:</b> 5분 안에 「@가자고 다낭」처럼 지명만 답해도 이어집니다.</p>
+    </div>
+    <div class="chat"><div class="ava">가</div><div class="stack"><div class="bubble">어느 지역 호텔을 찾으세요?
+아래 버튼을 누르고 「오사카 호텔 추천해줘」처럼 보내주세요.</div><div class="card"><div class="card-h">일본 어느 도시의 호텔을 찾을까요?</div><div class="row"><div><b>도쿄</b><small>신주쿠 · 시부야</small></div></div><div class="row"><div><b>오사카</b><small>난바 · 우메다</small></div></div><div class="row"><div><b>…</b><small>2곳 더</small></div></div></div></div></div>
+  </article>
+  <article class="result wait">
+    <div class="left">
+      <div class="head"><span class="num">③</span><h3>찾고 있어요</h3><span class="chip wait">잠시 기다림</span></div>
+      <div><div class="label">이럴 때</div><div class="says"><span>치앙마이 호텔 추천</span><span>유후인 온천 숙소</span><span>오사카 호텔 (하루 지난 뒤)</span><small>호텔은 미리 저장된 목록이 없어서, 처음 묻는 도시는 항상 여기를 거칩니다. AI 가 웹에서 찾는 데 보통 7~30초가 걸립니다.</small></div></div><div><div class="label">같은 걸 동시에 물으면</div><div class="says"><span>오사카 호텔</span><small>「오사카 호텔을 먼저 찾고 있어요 🔍」가 나가고, 검색은 한 번만 돕니다.</small></div></div>
+      <p class="next"><b>다음:</b> 찾으면 다시 물을 때 ①. 콜백이 켜져 있으면 다 찾은 뒤 카드가 자동으로 옵니다. 못 찾으면 ⑥.</p>
+    </div>
+    <div class="chat"><div class="ava">가</div><div class="stack"><div class="bubble">오사카 호텔을 찾고 있어요 🔍
+30초쯤 뒤에 다시 물어봐 주세요!</div></div></div>
+  </article>
+  <article class="result fail">
+    <div class="left">
+      <div class="head"><span class="num">④</span><h3>도움말</h3><span class="chip fail">못 알아들음</span></div>
+      <div><div class="label">이럴 때</div><div class="says"><span>안녕</span><span>오늘 날씨 어때</span><span>오사카 료칸 추천</span><small>「료칸」「호스텔」은 호텔 단어인데 첫 관문(여행 단어 목록)에 없어서 여기로 옵니다.</small></div></div>
+      <p class="next"><b>다음:</b> [도움말] 버튼으로 예시 문장을 보여줍니다.</p>
+    </div>
+    <div class="chat"><div class="ava">가</div><div class="stack"><div class="card"><div class="tc"><b>🤔 어떤 여행을 찾으시나요?</b>요청하신 내용을 정확히 이해하지 못했어요.
+아래 예시를 참고해 다시 말씀해 주세요!</div><div class="btns"><span>도움말</span></div></div></div></div>
+  </article>
+  <article class="result fail">
+    <div class="left">
+      <div class="head"><span class="num">⑤</span><h3>검색 안 됨</h3><span class="chip fail">서버 문제</span></div>
+      <div><div class="label">이럴 때</div><div class="says"><small>OpenAI 키가 없는데 저장된 결과도 없을 때입니다. 사용자 발화와는 상관없습니다.</small></div></div>
+      <p class="next"><b>다음:</b> 키가 돌아오면 평소대로 돌아갑니다. 저장돼 있던 도시는 그동안에도 ①이 나갑니다.</p>
+    </div>
+    <div class="chat"><div class="ava">가</div><div class="stack"><div class="bubble">지금은 오사카 호텔 검색이 안 되고 있어요 🙏
+고쳐두는 대로 다시 알려드릴게요.</div></div></div>
+  </article>
+  <article class="result wait">
+    <div class="left">
+      <div class="head"><span class="num">⑥</span><h3>검색 링크 카드</h3><span class="chip wait">호텔만 있음</span></div>
+      <div><div class="label">이럴 때</div><div class="says"><span>오사카 호텔 4명 9월 22~24일</span><small>AI 가 호텔을 하나도 못 찾았거나, 실패 직후(1~3분 안) 다시 물었을 때입니다. 「불러오지 못했어요」로 끝내지 않고 예약 사이트 검색 결과를 바로 열어 줍니다.</small></div></div>
+      <p class="next"><b>다음:</b> 이 카드는 ①과 달리 날짜·인원을 링크에 넣습니다. 말하지 않으면 내일 체크인 · 1박 · 2명.</p>
+    </div>
+    <div class="chat"><div class="ava">가</div><div class="stack"><div class="card"><div class="card-h">오사카 호텔 검색 결과 바로가기</div><div class="row"><div><b>호텔스닷컴에서 오사카 호텔 보기</b><small>9월 22일~9월 24일 · 4명</small></div></div><div class="row"><div><b>마이리얼트립에서 오사카 호텔 보기</b><small>9월 22일~9월 24일 · 4명</small></div></div><div class="btns"><span>공유하기</span></div></div><div class="bubble">지금은 추천 목록을 정리하지 못해 검색 결과를 바로 열어드려요.
+본 검색 결과에는 제휴 업체가 포함되어 있습니다.</div></div></div>
+  </article>
+</section>
+
+<section class="watch">
+  <h2>알아두면 좋은 동작</h2>
+  <ul><li><b>날짜·인원은 ① 목록에 반영되지 않습니다.</b> 같은 도시는 같은 20곳이 나가고, 반영 안 된 조건을 카드 아래 적습니다. ⑥ 링크 카드에서만 반영됩니다.</li><li><b>「료칸」「호스텔」만으로 물으면 도움말이 나옵니다.</b> 호텔 단어로는 알지만 첫 관문에서 걸러집니다.</li><li><b>「2박」은 예산으로 분류됩니다.</b> 「오사카 호텔 2박」 → 「예산(2박)은 반영되지 않았어요.」</li><li><b>검색에 실패해도 예전 목록이 있으면 그대로 보여줍니다.</b> 「예전 정보예요」 같은 표시는 없습니다.</li><li><b>세부 지역은 그 지역으로 따로 찾습니다.</b> 「도쿄 신주쿠 호텔」은 신주쿠 목록이 따로 생기고, 처음엔 ③을 거칩니다.</li></ul>
+</section>
+
+<footer>말풍선 문구는 코드 그대로이고, 호텔·도시 이름과 날짜는 예시입니다. 실행 화면이 아니라 코드 기준입니다. </footer>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+  // 흐름도는 mermaid 가 그린다. 어두운 화면이면 어두운 테마로.
+  var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'neutral', securityLevel: 'strict',
+    flowchart: { useMaxWidth: false, nodeSpacing: 40, rankSpacing: 50 }, themeVariables: { fontSize: '15px' },
+    fontFamily: '"IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif' });
+</script>
+</body>
+</html>

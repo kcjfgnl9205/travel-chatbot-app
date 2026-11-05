@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>항공권 응답 한눈에 · 가자고</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gothic+A1:wght@400;700;800&family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap">
+<style>
+/* 레이아웃: 질문 세 개짜리 흐름도 한 장 → 결과 다섯 가지를 한 줄씩(이럴 때 · 이렇게 보여요 · 다음) */
+:root {
+  --bg: #f3f5f7; --surface: #ffffff; --ink: #1b2430; --muted: #5d6877; --line: #d9dee5;
+  --chat: #b9cbdb; --bubble: #ffffff; --you: #fee500; --you-ink: #191600; --thumb: #dfe6ee;
+  --ok: #1f7a4d; --ok-bg: #e2f3ea; --ask: #2f5d8a; --ask-bg: #e3edf7;
+  --wait: #8a5a00; --wait-bg: #fbf0d7; --fail: #a33a2b; --fail-bg: #f8e4e0;
+  --f-display: "Gothic A1", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --f-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12161b; --surface: #1a2027; --ink: #e6ebf1; --muted: #9aa6b4; --line: #2c343e;
+    --chat: #2a3440; --bubble: #e9edf2; --you: #f2d900; --you-ink: #191600; --thumb: #c9d3de;
+    --ok: #7fd3a6; --ok-bg: #173226; --ask: #9cc3ea; --ask-bg: #172839;
+    --wait: #f0c56a; --wait-bg: #33280f; --fail: #f19a8b; --fail-bg: #3a1d18;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12161b; --surface: #1a2027; --ink: #e6ebf1; --muted: #9aa6b4; --line: #2c343e;
+  --chat: #2a3440; --bubble: #e9edf2; --you: #f2d900; --you-ink: #191600; --thumb: #c9d3de;
+  --ok: #7fd3a6; --ok-bg: #173226; --ask: #9cc3ea; --ask-bg: #172839;
+  --wait: #f0c56a; --wait-bg: #33280f; --fail: #f19a8b; --fail-bg: #3a1d18;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.6; }
+.wrap { max-width: 1040px; margin: 0 auto; padding-inline: 20px; padding-block: 40px 64px; display: flex; flex-direction: column; gap: 44px; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(28px, 4vw, 38px); font-weight: 800; }
+h2 { font-size: 21px; font-weight: 800; }
+p { margin: 0; }
+.eyebrow { font-size: 12px; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
+.lede { max-width: 64ch; color: var(--muted); margin-top: 8px; }
+
+.flow { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; overflow-x: auto; }
+.flow pre.mermaid { margin: 0; background: transparent; }
+
+.results { display: flex; flex-direction: column; gap: 18px; }
+.result { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 330px); gap: 20px; border-left-width: 6px; }
+.result.ok { border-left-color: var(--ok); } .result.ask { border-left-color: var(--ask); }
+.result.wait { border-left-color: var(--wait); } .result.fail { border-left-color: var(--fail); }
+@media (max-width: 720px) { .result { grid-template-columns: minmax(0, 1fr); } }
+.left { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.num { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; font-family: var(--f-display); font-weight: 800; background: var(--ink); color: var(--bg); flex: none; }
+.chip { font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px; }
+.chip.ok { color: var(--ok); background: var(--ok-bg); } .chip.ask { color: var(--ask); background: var(--ask-bg); }
+.chip.wait { color: var(--wait); background: var(--wait-bg); } .chip.fail { color: var(--fail); background: var(--fail-bg); }
+.label { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: 0.04em; }
+.says { display: flex; flex-wrap: wrap; gap: 6px; }
+.says span { background: var(--you); color: var(--you-ink); font-size: 13.5px; padding: 3px 10px; border-radius: 10px; }
+.says small { width: 100%; color: var(--muted); font-size: 13px; }
+.next { font-size: 14px; color: var(--muted); }
+.next b { color: var(--ink); font-weight: 600; }
+
+.chat { background: var(--chat); border-radius: 12px; padding: 12px; display: flex; gap: 8px; align-items: flex-start; font-size: 13px; line-height: 1.5; color: #1b1f24; align-self: start; }
+.ava { flex: none; width: 30px; height: 30px; border-radius: 11px; background: #fff3a6; display: grid; place-items: center; font-weight: 800; font-family: var(--f-display); color: #4a3d00; font-size: 12px; }
+.stack { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1; }
+.bubble { background: var(--bubble); border-radius: 4px 12px 12px 12px; padding: 8px 11px; white-space: pre-line; }
+.card { background: var(--bubble); border-radius: 10px; overflow: hidden; }
+.card-h { padding: 8px 12px; font-weight: 700; border-bottom: 1px solid #e6e9ed; }
+.row { display: flex; gap: 9px; align-items: center; padding: 6px 12px; }
+.row + .row { border-top: 1px solid #f0f2f4; }
+.th { flex: none; width: 34px; height: 34px; border-radius: 6px; background: var(--thumb); }
+.row b { display: block; font-weight: 600; } .row small { color: #6b7684; font-size: 11.5px; }
+.btns { display: flex; border-top: 1px solid #e6e9ed; }
+.btns span { flex: 1; text-align: center; padding: 7px 4px; font-weight: 600; color: #2b3640; }
+.btns span + span { border-left: 1px solid #e6e9ed; }
+.tc { padding: 9px 12px; white-space: pre-line; } .tc b { display: block; }
+footer { font-size: 13px; color: var(--muted); }
+
+.watch { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+.watch ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 14px; }
+.watch li b { color: var(--ink); font-weight: 600; }
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; }
+img { max-width: 100%; }
+.topnav { margin-bottom: 18px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.topnav a { font-size: 13px; font-weight: 600; color: var(--muted); text-decoration: none; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); }
+.topnav a:hover, .topnav a:focus-visible { color: var(--ink); border-color: var(--muted); }
+.topnav a[aria-current="page"] { color: var(--bg); background: var(--ink); border-color: var(--ink); }
+.topnav .home { margin-right: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <nav class="topnav" aria-label="페이지"><a class="home" href="index.html">목차</a><a href="attraction.html">관광지</a><a href="hotel.html">호텔</a><a href="flight.html" aria-current="page">항공권</a></nav>
+  <div class="eyebrow">가자고 그룹챗봇 · 항공권</div>
+  <h1>항공권 응답 한눈에</h1>
+  <p class="lede">항공권은 검색을 하지 않습니다. 출발지·도착지·날짜·인원을 넣은 예약 사이트 검색 링크를 바로 만들어 줍니다. 그래서 기다림이 없고, 대신 날짜와 공항을 확인하는 단계가 있습니다.</p>
+</header>
+
+<section>
+  <div class="flow">
+<pre class="mermaid">
+flowchart LR
+  S(["항공권 질문"]) --> Q1{"여행 얘기인가?"}
+  Q1 -- 아니오 --> R5["⑤ 도움말"]
+  Q1 -- 예 --> Q2{"도착 도시를<br/>알 수 있나?"}
+  Q2 -- "지명 없음 · 나라만" --> R2["② 되묻기"]
+  Q2 -- 예 --> Q3{"날짜가 말이 되나?"}
+  Q3 -- "지난 날짜 · 귀국이 먼저" --> R3["③ 날짜 다시 고르기"]
+  Q3 -- 예 --> Q4{"도착 도시에<br/>공항이 있나?"}
+  Q4 -- 없음 --> R4["④ 정리하지 못했어요"]
+  Q4 -- 있음 --> R1["① 예약 사이트 링크 카드"]
+  R2 -. 도시를 고르면 .-> Q3
+  R3 -. 날짜를 고르면 .-> R1
+</pre>
+  </div>
+  <p class="lede">출발지를 말하지 않으면 서울 출발로 봅니다.</p>
+</section>
+
+<section class="results">
+  <h2>결과 5가지</h2>
+  <article class="result ok">
+    <div class="left">
+      <div class="head"><span class="num">①</span><h3>예약 사이트 링크 카드</h3><span class="chip ok">원하는 답</span></div>
+      <div><div class="label">이럴 때</div><div class="says"><span>오사카 항공권 찾아줘</span><span>부산에서 오사카 가는 비행기</span><span>다낭 편도 항공권 12월 3일 2명</span><span>제주 비행기 다음주 금요일</span><small>AI 검색 없이 바로 나갑니다. 항공편이나 가격을 보여주는 게 아니라, 날짜·인원을 넣은 예약 사이트 검색 화면으로 보내는 카드입니다.</small></div></div><div><div class="label">출발지를 말하지 않으면</div><div class="says"><span>오사카 항공권</span><small>서울(인천) 출발로 보고, 카드 아래에 그렇다고 적습니다. 국내선이면 김포로 바뀝니다.</small></div></div>
+      <p class="next"><b>다음:</b> 줄을 누르면 그 사이트의 검색 결과가 열립니다. 트립닷컴·마이리얼트립은 그때 제휴 링크로 바뀌고, 스카이스캐너는 그대로 갑니다. 날짜를 안 말하면 내일 출발 · 7일 뒤 귀국 · 1명.</p>
+    </div>
+    <div class="chat"><div class="ava">가</div><div class="stack"><div class="card"><div class="card-h">서울→오사카 항공권</div><div class="row"><div><b>트립닷컴에서 보기</b><small>그 자리에서 예약·결제까지</small></div></div><div class="row"><div><b>스카이스캐너에서 보기</b><small>여러 예약처 가격을 한 번에 비교</small></div></div><div class="row"><div><b>마이리얼트립에서 보기</b><small>한국어 고객센터 · 원화 결제</small></div></div><div class="btns"><span>공유하기</span></div></div><div class="bubble">링크는 11월 6일 출발 · 11월 13일 귀국 · 1인으로 검색돼요.
+서울 출발 기준이에요. 다른 곳이면 "부산에서 출발" 처럼 알려주세요.
+본 검색 결과에는 제휴 업체가 포함되어 있습니다.</div></div></div>
+  </article>
+  <article class="result ask">
+    <div class="left">
+      <div class="head"><span class="num">②</span><h3>되묻기</h3><span class="chip ask">어디인지 확인</span></div>
+      <div><div class="label">도착지가 없을 때</div><div class="says"><span>항공권 찾아줘</span><span>비행기표 알아봐줘</span></div></div><div><div class="label">나라만 말했을 때</div><div class="says"><span>일본 항공권</span><span>베트남 비행기</span><small>인기 도시 4곳을 보여주고, 누르면 「서울에서 다낭 항공권 찾아줘」가 전송돼 ①로 갑니다.</small></div></div>
+      <p class="next"><b>다음:</b> 5분 안에 「@가자고 다낭」처럼 지명만 답해도 이어집니다.</p>
+    </div>
+    <div class="chat"><div class="ava">가</div><div class="stack"><div class="bubble">어느 지역 항공권을 찾으세요?
+아래 버튼을 누르고 「오사카 항공권 찾아줘」처럼 보내주세요.</div><div class="card"><div class="card-h">일본 어느 도시의 항공권을 찾을까요?</div><div class="row"><div><b>도쿄</b><small>신주쿠 · 시부야</small></div></div><div class="row"><div><b>오사카</b><small>난바 · 우메다</small></div></div><div class="row"><div><b>…</b><small>2곳 더</small></div></div></div></div></div>
+  </article>
+  <article class="result ask">
+    <div class="left">
+      <div class="head"><span class="num">③</span><h3>날짜 다시 고르기</h3><span class="chip ask">항공권만 있음</span></div>
+      <div><div class="label">이럴 때</div><div class="says"><span>도쿄 항공권 11월 23일 출발 11월 20일 귀국</span><span>도쿄 항공권 2025년 10월 20일 출발</span><small>귀국일이 출발일보다 빠르거나, 연도까지 적은 날짜가 이미 지났을 때입니다.</small></div></div>
+      <p class="next"><b>다음:</b> 후보 날짜 줄을 누르면 그 날짜로 ①이 나갑니다.</p>
+    </div>
+    <div class="chat"><div class="ava">가</div><div class="stack"><div class="card"><div class="card-h">귀국일(11월 20일)이 출발일(11월 23일)보다 빨라요</div><div class="row"><div><b>11월 20일 출발 · 11월 23일 귀국</b><small>이 날짜로 찾기</small></div></div><div class="row"><div><b>…</b><small>다른 후보</small></div></div></div><div class="bubble">다른 날짜로 찾으시려면 아래 버튼을 누르고
+「서울에서 도쿄 항공권 12월 1일 출발 12월 5일 귀국」
+처럼 출발지까지 함께 보내주세요.</div></div></div>
+  </article>
+  <article class="result fail">
+    <div class="left">
+      <div class="head"><span class="num">④</span><h3>정리하지 못했어요</h3><span class="chip fail">공항 없는 곳</span></div>
+      <div><div class="label">이럴 때</div><div class="says"><span>강릉 항공권</span><span>유후인 항공권</span><span>하롱베이 항공권</span><small>도착 도시에 공항 코드가 없어 링크를 만들 수 없을 때입니다. 「다시 물어봐 주세요」라고 하지만 다시 물어도 같은 답입니다.</small></div></div>
+      <p class="next"><b>다음:</b> 가까운 공항 도시(예: 유후인 → 후쿠오카)로 다시 물어야 합니다. 봇이 그걸 알려주지는 않습니다.</p>
+    </div>
+    <div class="chat"><div class="ava">가</div><div class="stack"><div class="bubble">서울→강릉 항공권 정보를 지금은 정리하지 못했어요 🙏
+잠시 뒤 다시 물어봐 주세요.</div></div></div>
+  </article>
+  <article class="result fail">
+    <div class="left">
+      <div class="head"><span class="num">⑤</span><h3>도움말</h3><span class="chip fail">못 알아들음</span></div>
+      <div><div class="label">이럴 때</div><div class="says"><span>안녕</span><span>부산 오사카 왕복</span><span>오사카 편도</span><small>「왕복」「편도」는 항공 단어인데 첫 관문(여행 단어 목록)에 없어서, 이 단어만 있으면 여기로 옵니다.</small></div></div>
+      <p class="next"><b>다음:</b> [도움말] 버튼으로 예시 문장을 보여줍니다.</p>
+    </div>
+    <div class="chat"><div class="ava">가</div><div class="stack"><div class="card"><div class="tc"><b>🤔 어떤 여행을 찾으시나요?</b>요청하신 내용을 정확히 이해하지 못했어요.
+아래 예시를 참고해 다시 말씀해 주세요!</div><div class="btns"><span>도움말</span></div></div></div></div>
+  </article>
+</section>
+
+<section class="watch">
+  <h2>알아두면 좋은 동작</h2>
+  <ul><li><b>항공권은 「찾고 있어요」와 「검색 안 됨」이 없습니다.</b> AI 를 부르지 않고 링크만 만들어서 늘 바로 답합니다. 의도 해석에 모델이 필요한 문장만 3.5초를 넘겨 「아직 정리 중이에요 🔍」가 날 수 있습니다.</li><li><b>「서울 항공권」은 「서울→서울 항공권」 카드가 나갑니다.</b> 출발지와 도착지가 같은지 막는 곳이 없습니다.</li><li><b>공항 없는 출발지는 말없이 서울로 바뀝니다.</b> 「강릉에서 제주 항공권」은 머리글이 「강릉→제주」인데 링크는 김포→제주로 열립니다.</li><li><b>도시를 두 개 말하면 앞이 출발지입니다.</b> 「오사카 도쿄 항공권」 → 오사카→도쿄. 「에서」를 붙이면 그쪽이 출발지가 됩니다.</li><li><b>만료된 링크를 누르면 「챗봇에서 호텔을 다시 추천받아 주세요」가 뜹니다.</b> 항공권 링크인데도 문구가 호텔입니다.</li></ul>
+</section>
+
+<footer>말풍선 문구는 코드 그대로이고, 호텔·도시 이름과 날짜는 예시입니다. 실행 화면이 아니라 코드 기준입니다. </footer>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+  // 흐름도는 mermaid 가 그린다. 어두운 화면이면 어두운 테마로.
+  var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'neutral', securityLevel: 'strict',
+    flowchart: { useMaxWidth: false, nodeSpacing: 40, rankSpacing: 50 }, themeVariables: { fontSize: '15px' },
+    fontFamily: '"IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif' });
+</script>
+</body>
+</html>
