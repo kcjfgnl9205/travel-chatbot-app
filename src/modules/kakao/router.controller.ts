@@ -271,9 +271,16 @@ export class RouterController {
 
     // 2-b. 되묻기에 대한 대답. **"다낭" 한 마디에는 여행 신호가 없으므로 1차 필터보다 먼저 본다.**
     const waiting = looksLikePlaceName(req.utterance) ? this.pending.take(req.userKey) : null;
-    if (waiting) {
-      const place = await this.places.resolve(req.utterance.trim());
-      if (place && place.kind !== 'country') {
+    // ⚠️ **알아본 지명만 대답으로 받는다** (strict). 여기는 여행 단어 검사 전이라, 짧은 잡담
+    //    (「점심뭐먹지」)도 들어온다. 지명이 아니면 기다림을 되살리고 평소 흐름으로 보낸다 —
+    //    거기서 1차 필터가 도움말을 준다.
+    const answered = waiting
+      ? await this.places.resolve(req.utterance.trim(), null, { strict: true })
+      : null;
+    if (waiting && !answered) this.pending.remember(req.userKey, waiting);
+    if (waiting && answered) {
+      const place = answered;
+      if (place.kind !== 'country') {
         this.logger.log(`pending answer "${req.utterance}" → ${waiting.kind}/${place.canonicalName}`);
         // 대기 상태를 되살린다. 콜백이 꺼져 있으면 사용자는 같은 말("다낭")을 한 번 더
         // 보내게 되는데, 그때 도움말이 나가면 대화가 끊긴다.
@@ -291,9 +298,9 @@ export class RouterController {
           req,
         );
       }
-      // 나라를 또 말했거나 못 알아들었다 — 다시 되묻는다(대기 상태를 되살린다).
+      // 나라를 또 말했다 — 그 나라 안에서 다시 되묻는다(대기 상태를 되살린다).
       this.pending.remember(req.userKey, waiting);
-      return cards.askPlaceNameOnly(waiting.kind, place?.canonicalName ?? null, req.botName);
+      return cards.askPlaceNameOnly(waiting.kind, place.canonicalName, req.botName);
     }
 
     // 3. 1차 필터 — 여행과 무관하면 AI 를 아예 부르지 않는다.

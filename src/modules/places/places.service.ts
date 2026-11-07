@@ -174,25 +174,44 @@ export class PlacesService {
    * 지명 하나를 place 로 바꾼다. **실패하지 않는다** — 모르는 곳은 원문 그대로 등록한다.
    *
    * @param raw 발화에서 뽑힌 지명. "오사카", "도톤보리", "오사카시"
+   * @param opts.strict **알아본 지명만 받는다.** 사전·모델 어느 쪽도 지명이라고 하지 않으면
+   *   원문을 등록하지 않고 null 을 준다. 되묻기 대답처럼 **여행 단어 검사를 건너뛴 경로**에서 쓴다.
+   *
+   *   ⚠️ 되묻기 대답은 1차 필터(TRAVEL_HINT)보다 먼저 본다("다낭" 한 마디엔 여행 단어가 없다).
+   *      그래서 되묻고 5분 안에 「점심뭐먹지」라고 하면 그게 지명으로 등록되고 관광지 검색까지
+   *      갔다 — 사용자는 「응, 잠시만 기다려 줘」 뒤에 「점심뭐먹지 관광지 정보를 지금은
+   *      정리하지 못했어요」를 받았다. 모델은 이미 "지명이 아니다(null)" 라고 답하고 있었는데
+   *      그걸 무시하고 원문으로 등록한 것이 원인이다.
    */
   async resolve(
     raw: string | null | undefined,
     hint: PlaceHint | null = null,
+    opts: { strict?: boolean } = {},
   ): Promise<Place | null> {
     const key = aliasKey(raw ?? '');
     if (!key) return null;
+    // 예전에 원문 그대로 등록된 행(「점심뭐먹지」 같은)도 엄격 모드에서는 지명으로 치지 않는다.
+    const accept = (place: Place): Place | null =>
+      opts.strict && looksUnrecognized(place) ? null : place;
 
     const cached = this.aliases.get(key);
-    if (cached) return cached;
+    if (cached) return accept(cached);
 
     const stored = await this.fromStore(key);
-    if (stored) return this.remember(key, stored);
+    if (stored) return accept(this.remember(key, stored));
 
     // 나라 → 도시 사전 → 발화 해석이 준 값 → 모델 순.
     // 앞의 둘은 0ms·0원이고 **판정이 매번 같다.** 셋째는 이미 치른 호출의 부산물이다.
     const known = draftFromCountry(lookupCountry(raw)) ?? draftFromTable(lookupCity(raw));
     const fromHint = known ? null : await this.draftFromHint(hint);
-    const fromModel = known || fromHint ? null : await this.askModel(raw ?? '');
+    const answer = known || fromHint ? null : await this.askModel(raw ?? '');
+    // ⚠️ 모델이 **"지명이 아니다" 라고 답한 경우에만** 막는다. 호출이 실패하거나 꺼진 경우까지
+    //    막으면 사전에 없는 진짜 도시("코타키나발루")가 모델이 느린 날 도움말로 떨어진다.
+    if (opts.strict && answer === NOT_A_PLACE) {
+      this.logger.log(`not a place (strict) raw=${JSON.stringify(raw)} — 등록하지 않는다`);
+      return null;
+    }
+    const fromModel = answer === NOT_A_PLACE ? null : answer;
     const draft = known ?? fromHint ?? fromModel?.draft ?? fallbackDraft(raw ?? '');
     const place = await this.register(draft);
 
@@ -434,7 +453,9 @@ export class PlacesService {
    * ⚠️ 이건 카카오 5초 예산 안에서 돈다. 짧게 끊고(OPENAI_PARSE_TIMEOUT_SECONDS),
    *    실패하면 원문 그대로 등록한다 — 되묻는 것보다 검색해 보는 게 낫다.
    */
-  private async askModel(raw: string): Promise<{ draft: PlaceDraft; cities: CityChoice[] } | null> {
+  private async askModel(
+    raw: string,
+  ): Promise<{ draft: PlaceDraft; cities: CityChoice[] } | typeof NOT_A_PLACE | null> {
     if (!this.openai.enabled) return null;
 
     try {
@@ -453,7 +474,8 @@ export class PlacesService {
         // ⚠️ 조용히 null 을 주면 원문 그대로 등록되고(kind=area) 나라가 지역으로 검색된다.
         //    로그가 없으면 "왜 되묻지 않지?" 를 영영 못 찾는다 — 실제로 그랬다.
         this.logger.warn(`place lookup returned no name raw=${raw} text=${clip(result.text, 120)}`);
-        return null;
+        // 읽을 수 있는 답에서 이름만 비었으면 모델의 판정이다 — "지명이 아니다".
+        return parsed ? NOT_A_PLACE : null;
       }
 
       const kind = KINDS.has(String(parsed.kind)) ? (parsed.kind as PlaceKind) : 'city';
@@ -535,6 +557,17 @@ function draftFromTable(city: CityEntry | null): PlaceDraft | null {
  * (도톤보리·해운대·시부야), 그때 "어느 지역이세요?" 를 띄우면 같은 말을 또 하게 된다.
  * 검색을 시켜 보고, 정말 없으면 빈 결과로 드러난다.
  */
+/**
+ * 아무도 알아보지 못해 **원문 그대로 등록된** 지역인가 — [fallbackDraft](#) 의 모양이다.
+ * 사전과 모델이 만든 세부 지역은 나라나 부모 도시를 달고 온다.
+ */
+/** 모델이 "지명이 아니다(canonical_name=null)" 라고 답했다. 호출 실패(null)와 구별한다. */
+const NOT_A_PLACE = Symbol('not-a-place');
+
+function looksUnrecognized(place: Place): boolean {
+  return place.kind === 'area' && !place.countryCode && !place.parentId;
+}
+
 function fallbackDraft(raw: string): PlaceDraft {
   const name = raw.trim();
   return {

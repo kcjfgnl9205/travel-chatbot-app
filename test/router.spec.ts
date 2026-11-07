@@ -679,6 +679,40 @@ describe('POST /api/v1/kakao/router', () => {
     expect(notUnderstoodCardOf(res.body)).toBeDefined();
   });
 
+  /**
+   * ⚠️ **되묻기 뒤의 짧은 잡담을 지명으로 받지 않는다.**
+   *
+   * 운영에서 되묻기 5분 안에 「점심뭐먹지」를 쳤더니 그게 지역으로 등록되고 관광지 검색까지
+   * 돌았다 — 「응, 잠시만 기다려 줘」 뒤에 「점심뭐먹지 관광지 정보를 지금은 정리하지 못했어요」.
+   * 짧고 띄어쓰기가 없어서 지명 모양 검사를 통과했고, 모델이 "지명이 아니다" 라고 답했는데도
+   * 원문 그대로 등록했다.
+   */
+  it('되묻기 뒤 「점심뭐먹지」는 지명이 아니다 — 검색하지 않고 도움말을 준다', async () => {
+    const user = { userKey: 'lunch' };
+    await post(ctx.app, kakaoPayload('관광지 추천해줘', user));
+
+    const res = await post(ctx.app, kakaoPayload('점심뭐먹지', user));
+
+    expect(notUnderstoodCardOf(res.body)).toBeDefined();
+    expect(JSON.stringify(res.body)).not.toContain('점심뭐먹지 관광지');
+    expect(JSON.stringify(res.body)).not.toContain('찾고 있어요');
+
+    // 기다리던 질문은 살아 있다 — 이어서 지명을 말하면 받는다.
+    const body = await askUntilCard(ctx.app, '다낭', user);
+    expect(listCardOf(body).header.title).toContain('다낭');
+  });
+
+  it('되묻기 대답에서 모델이 실패하면 예전처럼 검색해 본다 — 느린 날 진짜 도시를 버리지 않는다', async () => {
+    const user = { userKey: 'slow-model' };
+    await post(ctx.app, kakaoPayload('호텔 추천해줘', user));
+
+    ctx.openai.failNext = true;
+    const res = await post(ctx.app, kakaoPayload('코타키나발루', user));
+
+    expect(notUnderstoodCardOf(res.body)).toBeUndefined();
+    expect(JSON.stringify(res.body)).toContain('코타키나발루');
+  });
+
   // ---------------------------------------------------------- 실패 경로
   it('결과가 비어도 "도시 이름을 확인하라" 고 하지 않는다', async () => {
     ctx.provider.reply = () => [];
