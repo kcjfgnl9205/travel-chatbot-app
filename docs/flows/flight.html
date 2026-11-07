@@ -93,17 +93,20 @@ img { max-width: 100%; }
 .topnav a[aria-current="page"] { color: var(--bg); background: var(--ink); border-color: var(--ink); }
 .topnav .home { margin-right: 6px; }
 
-.more { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
-.more h3 { font-size: 16px; font-weight: 700; margin-top: 6px; }
-.more .sub { color: var(--muted); font-size: 14px; }
-.tbl { overflow-x: auto; }
-.tbl table { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 560px; }
-.tbl th, .tbl td { text-align: left; vertical-align: top; padding: 8px 10px; border-top: 1px solid var(--line); }
-.tbl th { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: 0.04em; border-top: 0; }
-.tbl td:first-child { width: 30%; font-weight: 600; }
-.tbl .u { display: inline-block; background: var(--you); color: var(--you-ink); font-size: 13px; padding: 1px 8px; border-radius: 8px; margin: 1px 2px 1px 0; font-weight: 400; }
-.tbl .q { color: var(--muted); }
-.tbl .warn { color: var(--fail); font-weight: 600; }
+.more { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 18px; }
+.more .sub { color: var(--muted); font-size: 14px; margin-top: -10px; }
+.grp { display: flex; flex-direction: column; gap: 8px; }
+.grp h3 { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.grp.warn h3 { color: var(--fail); }
+.cases { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.cases li { display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr); gap: 4px 16px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; align-items: baseline; }
+.cases li:first-child { border-top: 0; }
+@media (max-width: 620px) { .cases li { grid-template-columns: minmax(0, 1fr); } }
+.cases .when { display: flex; flex-wrap: wrap; gap: 4px; align-items: baseline; }
+.cases .u { background: var(--you); color: var(--you-ink); font-size: 13px; padding: 1px 8px; border-radius: 8px; }
+.cases .q { color: var(--muted); font-size: 13px; }
+.cases .then b { font-weight: 600; }
+.cases .why { color: var(--muted); font-size: 13px; }
 
 .result.split { grid-template-columns: minmax(0, 1fr); }
 .split .case { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 330px); gap: 20px; padding-top: 16px; border-top: 1px dashed var(--line); }
@@ -206,17 +209,10 @@ flowchart LR
 
 <section class="more">
   <h2>그 밖의 경우</h2>
-  <p class="sub">위 흐름도에 없는 갈래입니다. <span class="warn">빨간 글씨</span>는 사용자가 헷갈릴 수 있는 동작입니다.</p>
-  <h3>되묻기 다음 대화</h3>
-  <div class="tbl"><table><thead><tr><th>상황</th><th>예시</th><th>결과</th></tr></thead><tbody><tr><td>되묻기 뒤 나라를 또 말함</td><td>(되묻기) → <span class="u">베트남</span></td><td>「베트남 어디로 가세요?<br>아래 버튼을 누르고 도시 이름을 보내주세요. 예) 다낭」 — 이번엔 도시 버튼 없이 글만 나갑니다.</td></tr><tr><td>되묻기 뒤 애매한 대답</td><td>(되묻기) → <span class="u">몰라</span><span class="u">아무데나</span><span class="u">응</span></td><td>지명으로 보지 않고 ④ 도움말. 기다리던 상태는 5분 동안 남아 있어 그 안에 지명을 말하면 이어집니다.</td></tr><tr><td>되묻기 뒤 긴 문장·숫자·물음표</td><td>(되묻기) → <span class="u">다낭 가고 싶은데요</span><span class="u">3박</span><span class="u">어디?</span></td><td>지명 한 마디로 보지 않습니다(12자 넘음 · 세 단어 이상 · 숫자 · 물음표). 처음 질문처럼 다시 판단합니다.</td></tr><tr><td>5분 지나서 지명만 답함</td><td>(6분 뒤) <span class="u">다낭</span></td><td><span class="warn">④ 도움말.</span> 기다린 시간이 지났고, 「다낭」 한 마디에는 여행 단어가 없습니다.</td></tr><tr><td>「다른 도시」라고 답함</td><td><span class="u">다른 도시</span><span class="u">직접 입력</span></td><td>「어느 도시 항공권을 찾으세요?<br>아래 버튼을 누르고 도시 이름을 보내주세요. 예) 다낭」. 나라를 고르다 왔으면 「베트남 어디로 가세요?」.</td></tr><tr><td>봇 이름만 멘션</td><td><span class="u">@가자고</span></td><td>되묻던 중이면 같은 질문을 다시 하고, 아니면 ④ 도움말.</td></tr></tbody></table></div>
-  <h3>단톡방이라서 생기는 경우</h3>
-  <div class="tbl"><table><thead><tr><th>상황</th><th>예시</th><th>결과</th></tr></thead><tbody><tr><td>봇이 A에게 되물었는데 B가 답함</td><td>(A에게 되묻기) → B: <span class="u">다낭</span></td><td><span class="warn">B에게 ④ 도움말.</span> 기다리는 상태가 사람별로 따로라 B에게는 기다리던 질문이 없습니다.</td></tr><tr><td>배포·재시작 직후에 되묻기 답</td><td>(되묻기) → (배포) → <span class="u">다낭</span></td><td><span class="warn">④ 도움말.</span> 기다리는 상태가 서버 메모리에만 있어서 재시작하면 사라집니다.</td></tr></tbody></table></div>
-  <h3>한 번에 여러 개</h3>
-  <div class="tbl"><table><thead><tr><th>상황</th><th>예시</th><th>결과</th></tr></thead><tbody><tr><td>한 문장에 두 가지를 물음</td><td><span class="u">오사카 항공권이랑 호텔</span></td><td><span class="warn">항공권이 아니라 호텔 카드가 나갑니다.</span> 하나만 고르고 나머지는 말없이 빠집니다(호텔 → 항공권 → 관광지 순). 따로따로 물어야 합니다.</td></tr></tbody></table></div>
-  <h3>서버 쪽 사정</h3>
-  <div class="tbl"><table><thead><tr><th>상황</th><th>예시</th><th>결과</th></tr></thead><tbody><tr><td>5초 안에 못 끝냄</td><td><span class="q">AI 해석이 느릴 때</span></td><td>「찾고 있어요. 잠시만요 🔍」 뒤에 결과가 따로 옵니다. 다시 물을 필요가 없습니다.</td></tr><tr><td>코드에서 예외 발생</td><td><span class="q">발화와 상관없음</span></td><td><span class="warn">④ 도움말과 똑같은 카드.</span> 사용자는 자기 말이 틀렸다고 느낄 수 있어서, 원인은 서버 로그(<code>router failed</code>)에서 봐야 합니다.</td></tr><tr><td>배포 중 · 앱이 죽음</td><td><span class="q">발화와 상관없음</span></td><td>앱 대신 nginx 가 「지금 잠깐 점검 중이에요 🙏 1분 뒤에 다시 말 걸어주세요.」</td></tr></tbody></table></div>
-  <h3>버튼과 링크</h3>
-  <div class="tbl"><table><thead><tr><th>상황</th><th>예시</th><th>결과</th></tr></thead><tbody><tr><td>「더 보기」를 눌렀는데 저장된 결과가 없음</td><td><span class="q">관리 API 로 데이터를 비운 뒤 등</span></td><td>④와 다른 카드 「가자고가 도와드릴 수 있는 것」 — 호텔·항공권·관광지 예시 세 줄.</td></tr><tr><td>「더 보기」를 버튼 대신 직접 침</td><td><span class="u">더 보기</span></td><td>④ 도움말. 버튼만 저장된 목록을 이어 줍니다.</td></tr><tr><td>오래된 카드의 링크를 누름</td><td><span class="q">링크 기록이 지워진 뒤</span></td><td>브라우저에 「링크가 만료되었어요 · 챗봇에서 다시 추천받아 주세요.」</td></tr></tbody></table></div>
+  <p class="sub">위 흐름도에 없는 경우를 짧게 모았습니다. 왼쪽이 상황·발화, 오른쪽이 결과입니다. 항공권은 검색 없이 바로 링크를 만들어서 「찾고 있어요」가 없습니다.</p>
+  <div class="grp warn"><h3>⚠️ 헷갈릴 수 있어요</h3><ul class="cases"><li><div class="when"><span class="u">오사카 항공권이랑 호텔</span></div><div class="then">→ <b>호텔 카드</b> <span class="why">항공권이 아니라 호텔이 나갑니다. 두 가지를 물으면 하나만 답합니다(호텔 → 항공권 → 관광지 순).</span></div></li><li><div class="when"><span class="q">A에게 되물었는데</span> B가 <span class="u">다낭</span></div><div class="then">→ <b>⑤ 도움말</b> <span class="why">되묻기는 물어본 사람에게만 이어집니다.</span></div></li><li><div class="when"><span class="q">되묻고 5분 뒤</span> <span class="u">다낭</span></div><div class="then">→ <b>⑤ 도움말</b> <span class="why">5분이 지나면 기다리던 질문이 사라집니다.</span></div></li><li><div class="when"><span class="q">배포 직후</span> <span class="u">다낭</span></div><div class="then">→ <b>⑤ 도움말</b> <span class="why">재시작하면 기다리던 질문이 사라집니다.</span></div></li><li><div class="when"><span class="q">서버에서 오류</span></div><div class="then">→ <b>⑤ 도움말</b> <span class="why">말을 잘못한 것처럼 보이지만 서버 문제입니다.</span></div></li></ul></div>
+  <div class="grp "><h3>되묻기에 이렇게 답하면</h3><ul class="cases"><li><div class="when"><span class="u">다낭</span></div><div class="then">→ <b>① 서울→다낭 왕복 링크</b> <span class="why">출발지는 서울, 왕복으로 봅니다. 다르면 「부산에서 다낭 편도」처럼 다시 물으면 됩니다.</span></div></li><li><div class="when"><span class="u">베트남</span></div><div class="then">→ <b>다시 되묻기</b> 「베트남 어디로 가세요?」 <span class="why">이번엔 도시 버튼 없이 글만 나갑니다.</span></div></li><li><div class="when"><span class="u">다른 도시</span></div><div class="then">→ <b>도시 이름 묻기</b> 「어느 도시 항공권을 찾으세요?」</div></li><li><div class="when"><span class="u">@가자고</span><span class="q">만</span></div><div class="then">→ <b>같은 질문 다시</b></div></li><li><div class="when"><span class="u">몰라</span><span class="u">응</span><span class="u">점심뭐먹지</span></div><div class="then">→ <b>⑤ 도움말</b> <span class="why">지명이 아니면 찾지 않습니다. 5분 안에 지명을 말하면 다시 이어집니다.</span></div></li><li><div class="when"><span class="u">다낭 가고 싶은데요</span><span class="u">12월 1일</span></div><div class="then">→ <b>처음 질문처럼 판단</b> <span class="why">길거나 숫자·물음표가 있으면 지명으로 안 봅니다.</span></div></li></ul></div>
+  <div class="grp "><h3>그 밖에</h3><ul class="cases"><li><div class="when"><span class="q">5초 안에 못 끝냄</span></div><div class="then">→ 「응, 잠시만 기다려 줘.」 <span class="why">카카오 대기 문구입니다. 결과는 자동으로 옵니다.</span></div></li><li><div class="when"><span class="q">배포 중 · 앱이 꺼짐</span></div><div class="then">→ 「지금 잠깐 점검 중이에요 🙏」</div></li><li><div class="when"><span class="q">오래된 카드의 링크</span></div><div class="then">→ <b>「링크가 만료되었어요」 페이지</b></div></li></ul></div>
 </section>
 
 <footer>말풍선 문구는 코드 그대로이고, 호텔·도시 이름과 날짜는 예시입니다. 실행 화면이 아니라 코드 기준입니다. </footer>
