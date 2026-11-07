@@ -103,6 +103,11 @@ img { max-width: 100%; }
 .cases .q { color: var(--muted); font-size: 13px; }
 .cases .then b { font-weight: 600; }
 .cases .why { color: var(--muted); font-size: 13px; }
+
+.result.split { grid-template-columns: minmax(0, 1fr); }
+.split .case { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 330px); gap: 20px; padding-top: 16px; border-top: 1px dashed var(--line); }
+.split .case .left { gap: 8px; }
+@media (max-width: 720px) { .split .case { grid-template-columns: minmax(0, 1fr); } }
 </style>
 </head>
 <body>
@@ -153,24 +158,19 @@ flowchart LR
     </div></div>
   </article>
 
-  <article class="result ask">
-    <div class="left">
-      <div class="head"><span class="num">②</span><h3>되묻기</h3><span class="chip ask">어디인지 확인</span></div>
-      <div><div class="label">지명이 없을 때</div>
-        <div class="says"><span>관광지 추천해줘</span><span>가볼 만한 곳 알려줘</span></div></div>
-      <div><div class="label">나라만 말했을 때</div>
-        <div class="says"><span>일본 관광지</span><span>국내 관광지</span>
-          <small>이때는 인기 도시 4곳을 골라 보여주고, 누르면 바로 ①로 갑니다.</small></div></div>
-      <p class="next"><b>다음:</b> 5분 안에 「@가자고 방콕」처럼 지명만 답해도 이어집니다.</p>
+  <article class="result ask split">
+    <div class="head"><span class="num">②</span><h3>되묻기</h3><span class="chip ask">어디인지 확인</span></div>
+    <div class="case">
+      <div class="left"><div class="label">지명이 없을 때</div><div class="says"><span>관광지 추천해줘</span><span>가볼 만한 곳 알려줘</span><small>예시 문장과 [@가자고] 버튼이 나갑니다. 버튼을 누르면 입력창에 멘션이 들어갑니다.</small></div></div>
+      <div class="chat"><div class="ava">가</div><div class="stack"><div class="bubble">어느 지역 관광지를 찾으세요?
+아래 버튼을 누르고 「오사카 관광지 추천해줘」처럼 보내주세요.</div><div class="card"><div class="tc">가자고에게 이어서 말하기</div><div class="btns"><span>@가자고</span></div></div></div></div>
     </div>
-    <div class="chat"><div class="ava">가</div><div class="stack">
-      <div class="bubble">어느 지역 관광지를 찾으세요?
-아래 버튼을 누르고 「오사카 관광지 추천해줘」처럼 보내주세요.</div>
-      <div class="card"><div class="card-h">일본 어느 도시의 관광지를 찾을까요?</div>
-        <div class="row"><div><b>도쿄</b><small>신주쿠 · 시부야</small></div></div>
-        <div class="row"><div><b>오사카</b><small>난바 · 우메다</small></div></div>
-        <div class="row"><div><b>…</b><small>2곳 더</small></div></div></div>
-    </div></div>
+    <div class="case">
+      <div class="left"><div class="label">나라만 말했을 때</div><div class="says"><span>일본 관광지</span><span>태국 가볼만한 곳</span><small>인기 도시 4곳 중 하나를 누르면 「도쿄 관광지 추천해줘」가 전송돼 바로 ①로 갑니다. 목록에 없는 도시는 아래 카드의 버튼으로 직접 보냅니다.</small></div></div>
+      <div class="chat"><div class="ava">가</div><div class="stack"><div class="card"><div class="card-h">일본 어느 도시의 관광지를 찾을까요?</div><div class="row"><div><b>도쿄</b><small>신주쿠 · 시부야</small></div></div><div class="row"><div><b>오사카</b><small>난바 · 우메다</small></div></div><div class="row"><div><b>후쿠오카</b><small>하카타 · 텐진</small></div></div><div class="row"><div><b>…</b><small>1곳 더</small></div></div></div><div class="card"><div class="tc">다른 도시를 찾고 있나요?
+아래 버튼을 누르고 「삿포로 관광지 추천해줘」처럼 보내주세요.</div><div class="btns"><span>@가자고</span></div></div></div></div>
+    </div>
+    <p class="next"><b>다음:</b> 둘 다 5분 안에 「@가자고 방콕」처럼 지명만 답해도 이어집니다. 나라를 또 말하면 「베트남 어디로 가세요?」로 한 번 더 묻습니다.</p>
   </article>
 
   <article class="result wait">

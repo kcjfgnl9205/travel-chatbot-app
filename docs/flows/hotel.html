@@ -104,6 +104,11 @@ img { max-width: 100%; }
 .tbl .u { display: inline-block; background: var(--you); color: var(--you-ink); font-size: 13px; padding: 1px 8px; border-radius: 8px; margin: 1px 2px 1px 0; font-weight: 400; }
 .tbl .q { color: var(--muted); }
 .tbl .warn { color: var(--fail); font-weight: 600; }
+
+.result.split { grid-template-columns: minmax(0, 1fr); }
+.split .case { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 330px); gap: 20px; padding-top: 16px; border-top: 1px dashed var(--line); }
+.split .case .left { gap: 8px; }
+@media (max-width: 720px) { .split .case { grid-template-columns: minmax(0, 1fr); } }
 </style>
 </head>
 <body>
@@ -146,14 +151,19 @@ flowchart LR
     <div class="chat"><div class="ava">가</div><div class="stack"><div class="card"><div class="card-h">오사카 호텔 5곳</div><div class="row"><div class="th"></div><div><b>호텔 그란비아 오사카</b><small>1박 182,000원~ · 평점 9.0 · 우메다</small></div></div><div class="row"><div class="th"></div><div><b>크로스 호텔 오사카</b><small>1박 154,000원~ · 평점 8.8 · 난바</small></div></div><div class="row"><div class="th"></div><div><b>…</b><small>3곳 더</small></div></div><div class="btns"><span>더 보기</span><span>공유하기</span></div></div><div class="bubble">날짜·인원(4명, 9월 22~24일)은 반영되지 않았어요.
 본 검색 결과에는 제휴 업체가 포함되어 있습니다.</div></div></div>
   </article>
-  <article class="result ask">
-    <div class="left">
-      <div class="head"><span class="num">②</span><h3>되묻기</h3><span class="chip ask">어디인지 확인</span></div>
-      <div><div class="label">지명이 없을 때</div><div class="says"><span>호텔 추천해줘</span><span>숙소 어디가 좋아?</span></div></div><div><div class="label">나라만 말했을 때</div><div class="says"><span>일본 호텔 추천해줘</span><span>베트남 숙소 알려줘</span><small>인기 도시 4곳을 골라 보여주고, 누르면 그 도시 호텔로 갑니다.</small></div></div>
-      <p class="next"><b>다음:</b> 5분 안에 「@가자고 다낭」처럼 지명만 답해도 이어집니다.</p>
+  <article class="result ask split">
+    <div class="head"><span class="num">②</span><h3>되묻기</h3><span class="chip ask">어디인지 확인</span></div>
+    <div class="case">
+      <div class="left"><div class="label">지명이 없을 때</div><div class="says"><span>호텔 추천해줘</span><span>숙소 어디가 좋아?</span><small>예시 문장과 [@가자고] 버튼이 나갑니다. 버튼을 누르면 입력창에 멘션이 들어갑니다.</small></div></div>
+      <div class="chat"><div class="ava">가</div><div class="stack"><div class="bubble">어느 지역 호텔을 찾으세요?
+아래 버튼을 누르고 「오사카 호텔 추천해줘」처럼 보내주세요.</div><div class="card"><div class="tc">가자고에게 이어서 말하기</div><div class="btns"><span>@가자고</span></div></div></div></div>
     </div>
-    <div class="chat"><div class="ava">가</div><div class="stack"><div class="bubble">어느 지역 호텔을 찾으세요?
-아래 버튼을 누르고 「오사카 호텔 추천해줘」처럼 보내주세요.</div><div class="card"><div class="card-h">일본 어느 도시의 호텔을 찾을까요?</div><div class="row"><div><b>도쿄</b><small>신주쿠 · 시부야</small></div></div><div class="row"><div><b>오사카</b><small>난바 · 우메다</small></div></div><div class="row"><div><b>…</b><small>2곳 더</small></div></div></div></div></div>
+    <div class="case">
+      <div class="left"><div class="label">나라만 말했을 때</div><div class="says"><span>일본 호텔 추천해줘</span><span>베트남 숙소 알려줘</span><small>인기 도시 4곳 중 하나를 누르면 「도쿄 호텔 추천해줘」가 전송돼 그 도시 호텔로 갑니다. 목록에 없는 도시는 아래 카드의 버튼으로 직접 보냅니다.</small></div></div>
+      <div class="chat"><div class="ava">가</div><div class="stack"><div class="card"><div class="card-h">일본 어느 도시의 호텔을 찾을까요?</div><div class="row"><div><b>도쿄</b><small>신주쿠 · 시부야</small></div></div><div class="row"><div><b>오사카</b><small>난바 · 우메다</small></div></div><div class="row"><div><b>후쿠오카</b><small>하카타 · 텐진</small></div></div><div class="row"><div><b>…</b><small>1곳 더</small></div></div></div><div class="card"><div class="tc">다른 도시를 찾고 있나요?
+아래 버튼을 누르고 「삿포로 호텔 추천해줘」처럼 보내주세요.</div><div class="btns"><span>@가자고</span></div></div></div></div>
+    </div>
+    <p class="next"><b>다음:</b> 둘 다 5분 안에 「@가자고 다낭」처럼 지명만 답해도 이어집니다. 나라를 또 말하면 「베트남 어디로 가세요?」로 한 번 더 묻습니다.</p>
   </article>
   <article class="result wait">
     <div class="left">
