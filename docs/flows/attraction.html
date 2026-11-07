@@ -135,7 +135,7 @@ flowchart LR
 </pre>
   </div>
   <p class="lede">⑤ 검색 안 됨은 발화와 상관없이 서버의 DB 가 꺼졌을 때만 나옵니다.</p>
-  <p class="lede">운영 봇은 오픈빌더 폴백 블록의 [콜백 사용]이 켜져 있어서, 검색이 끝나면 카드가 같은 대화에 자동으로 옵니다. 다시 물을 필요가 없습니다.</p>
+  <p class="lede">운영 봇은 오픈빌더 폴백 블록의 [콜백 사용]이 켜져 있어서, 검색이 끝나면 카드가 같은 대화에 자동으로 옵니다. 다시 물을 필요가 없습니다. 기다리는 동안 보이는 「응, 잠시만 기다려 줘.」는 서버가 아니라 카카오가 띄우는 대기 문구입니다.</p>
 </section>
 
 <section class="results">
@@ -182,7 +182,7 @@ flowchart LR
       <p class="next"><b>다음:</b> 뒤에서 AI 가 찾아 저장하고, 다 찾으면 ① 카드가 <b>자동으로</b> 옵니다(보통 7~30초). 못 찾으면 「…관광지 정보를 지금은 정리하지 못했어요 🙏」가 대신 옵니다.</p>
     </div>
     <div class="chat"><div class="ava">가</div><div class="stack">
-      <div class="bubble">치앙마이 관광지를 찾고 있어요. 잠시만요 🔍</div>
+      <div class="bubble">응, 잠시만 기다려 줘.</div>
       <div class="bubble">(잠시 뒤) 치앙마이 관광지 5곳 …</div>
     </div></div>
   </article>
@@ -220,7 +220,7 @@ flowchart LR
   <p class="sub">위 흐름도에 없는 경우를 짧게 모았습니다. 왼쪽이 상황·발화, 오른쪽이 결과입니다.</p>
   <div class="grp warn"><h3>⚠️ 헷갈릴 수 있어요</h3><ul class="cases"><li><div class="when"><span class="q">A에게 되물었는데</span> B가 <span class="u">방콕</span></div><div class="then">→ <b>④ 도움말</b> <span class="why">되묻기는 물어본 사람에게만 이어집니다.</span></div></li><li><div class="when"><span class="q">되묻고 5분 뒤</span> <span class="u">방콕</span></div><div class="then">→ <b>④ 도움말</b> <span class="why">5분이 지나면 기다리던 질문이 사라집니다.</span></div></li><li><div class="when"><span class="q">배포 직후</span> <span class="u">방콕</span></div><div class="then">→ <b>④ 도움말</b> <span class="why">재시작하면 기다리던 질문이 사라집니다.</span></div></li><li><div class="when"><span class="u">오사카 맛집이랑 호텔</span></div><div class="then">→ <b>호텔 카드</b> <span class="why">두 가지를 물으면 하나만 답합니다(호텔 → 항공권 → 관광지 순).</span></div></li><li><div class="when"><span class="q">서버에서 오류</span></div><div class="then">→ <b>④ 도움말</b> <span class="why">말을 잘못한 것처럼 보이지만 서버 문제입니다.</span></div></li></ul></div>
   <div class="grp "><h3>되묻기에 이렇게 답하면</h3><ul class="cases"><li><div class="when"><span class="u">태국</span></div><div class="then">→ <b>다시 되묻기</b> 「태국 어디로 가세요?」 <span class="why">이번엔 도시 버튼 없이 글만 나갑니다.</span></div></li><li><div class="when"><span class="u">다른 도시</span></div><div class="then">→ <b>도시 이름 묻기</b> 「어느 도시 관광지를 찾으세요?」</div></li><li><div class="when"><span class="u">@가자고</span><span class="q">만</span></div><div class="then">→ <b>같은 질문 다시</b></div></li><li><div class="when"><span class="u">몰라</span><span class="u">응</span><span class="u">점심뭐먹지</span></div><div class="then">→ <b>④ 도움말</b> <span class="why">지명이 아니면 검색하지 않습니다. 5분 안에 지명을 말하면 다시 이어집니다.</span></div></li><li><div class="when"><span class="u">방콕 가고 싶은데요</span><span class="u">3박</span></div><div class="then">→ <b>처음 질문처럼 판단</b> <span class="why">길거나 숫자·물음표가 있으면 지명으로 안 봅니다.</span></div></li></ul></div>
-  <div class="grp "><h3>그 밖에</h3><ul class="cases"><li><div class="when"><span class="q">누가 같은 도시를 먼저 찾는 중</span></div><div class="then">→ 「오사카 관광지를 먼저 찾고 있어요 🔍」 <span class="why">잠시 뒤 다시 물어야 합니다.</span></div></li><li><div class="when"><span class="q">5초 안에 못 끝냄</span></div><div class="then">→ 「찾고 있어요. 잠시만요 🔍」 <span class="why">결과는 자동으로 옵니다.</span></div></li><li><div class="when"><span class="q">배포 중 · 앱이 꺼짐</span></div><div class="then">→ 「지금 잠깐 점검 중이에요 🙏」</div></li><li><div class="when"><span class="q">결과가 지워진 뒤</span> <span class="u">더 보기</span><span class="q">버튼</span></div><div class="then">→ <b>「가자고가 도와드릴 수 있는 것」 카드</b></div></li><li><div class="when"><span class="q">오래된 카드의 링크</span></div><div class="then">→ <b>「링크가 만료되었어요」 페이지</b></div></li></ul></div>
+  <div class="grp "><h3>그 밖에</h3><ul class="cases"><li><div class="when"><span class="q">누가 같은 도시를 먼저 찾는 중</span></div><div class="then">→ 「오사카 관광지를 먼저 찾고 있어요 🔍」 <span class="why">잠시 뒤 다시 물어야 합니다.</span></div></li><li><div class="when"><span class="q">5초 안에 못 끝냄</span></div><div class="then">→ 「응, 잠시만 기다려 줘.」 <span class="why">카카오 대기 문구입니다. 결과는 자동으로 옵니다.</span></div></li><li><div class="when"><span class="q">배포 중 · 앱이 꺼짐</span></div><div class="then">→ 「지금 잠깐 점검 중이에요 🙏」</div></li><li><div class="when"><span class="q">결과가 지워진 뒤</span> <span class="u">더 보기</span><span class="q">버튼</span></div><div class="then">→ <b>「가자고가 도와드릴 수 있는 것」 카드</b></div></li><li><div class="when"><span class="q">기록이 지워진 링크</span></div><div class="then">→ <b>「링크가 만료되었어요」 페이지</b> <span class="why">링크에 유효기간은 없습니다. 데이터 비우기 뒤에 누르거나, DB 조회가 실패했을 때만 나옵니다.</span></div></li></ul></div>
 </section>
 
 <footer>말풍선 문구는 코드 그대로이고, 관광지·도시 이름은 예시입니다. 실행 화면이 아니라 코드 기준입니다.</footer>
