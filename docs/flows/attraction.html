@@ -123,10 +123,11 @@ flowchart LR
   Q3 -- 예 --> R1["① 목록 카드"]
   Q3 -- 아니오 --> R3["③ 찾고 있어요"]
   R2 -. 도시를 고르면 .-> Q3
-  R3 -. 30초 뒤 다시 물으면 .-> R1
+  R3 -. "다 찾으면 자동으로" .-> R1
 </pre>
   </div>
   <p class="lede">⑤ 검색 안 됨은 발화와 상관없이 서버의 DB 가 꺼졌을 때만 나옵니다.</p>
+  <p class="lede">운영 봇은 오픈빌더 폴백 블록의 [콜백 사용]이 켜져 있어서, 검색이 끝나면 카드가 같은 대화에 자동으로 옵니다. 다시 물을 필요가 없습니다.</p>
 </section>
 
 <section class="results">
@@ -175,11 +176,11 @@ flowchart LR
       <div><div class="label">이럴 때</div>
         <div class="says"><span>치앙마이 관광지</span><span>도톤보리 관광지</span><span>뿌뿌랜드 관광지</span>
           <small>처음 묻는 도시, 도시 안의 세부 지역, 세상에 없는 지명 모두 여기로 옵니다. 3.5초 안에 못 끝낸 경우(「오사카에서 가볼만한 곳」)도 비슷한 말풍선이 나갑니다.</small></div></div>
-      <p class="next"><b>다음:</b> 뒤에서 AI 가 찾아 저장합니다. 다시 물으면 ①. 못 찾으면 「…관광지 정보를 지금은 정리하지 못했어요 🙏」.</p>
+      <p class="next"><b>다음:</b> 뒤에서 AI 가 찾아 저장하고, 다 찾으면 ① 카드가 <b>자동으로</b> 옵니다(보통 7~30초). 못 찾으면 「…관광지 정보를 지금은 정리하지 못했어요 🙏」가 대신 옵니다.</p>
     </div>
     <div class="chat"><div class="ava">가</div><div class="stack">
-      <div class="bubble">치앙마이 관광지를 찾고 있어요 🔍
-30초쯤 뒤에 다시 물어봐 주세요!</div>
+      <div class="bubble">치앙마이 관광지를 찾고 있어요. 잠시만요 🔍</div>
+      <div class="bubble">(잠시 뒤) 치앙마이 관광지 5곳 …</div>
     </div></div>
   </article>
 
@@ -221,7 +222,7 @@ flowchart LR
   <h3>한 번에 여러 개</h3>
   <div class="tbl"><table><thead><tr><th>상황</th><th>예시</th><th>결과</th></tr></thead><tbody><tr><td>한 문장에 두 가지를 물음</td><td><span class="u">오사카 맛집이랑 호텔</span></td><td><span class="warn">관광지가 아니라 호텔 카드가 나갑니다.</span> 하나만 고르고 나머지는 말없이 빠집니다(호텔 → 항공권 → 관광지 순). 따로따로 물어야 합니다.</td></tr></tbody></table></div>
   <h3>서버 쪽 사정</h3>
-  <div class="tbl"><table><thead><tr><th>상황</th><th>예시</th><th>결과</th></tr></thead><tbody><tr><td>5초 안에 못 끝냄 (콜백 켜짐)</td><td><span class="q">AI 해석이 느릴 때</span></td><td>「찾고 있어요. 잠시만요 🔍」 뒤에 결과가 따로 옵니다.</td></tr><tr><td>5초 안에 못 끝냄 (콜백 꺼짐)</td><td><span class="q">AI 해석이 느릴 때</span></td><td>「아직 정리 중이에요 🔍<br>잠시 뒤 같은 질문을 다시 보내주시면 바로 보여드릴게요!」</td></tr><tr><td>코드에서 예외 발생</td><td><span class="q">발화와 상관없음</span></td><td><span class="warn">④ 도움말과 똑같은 카드.</span> 사용자는 자기 말이 틀렸다고 느낄 수 있어서, 원인은 서버 로그(<code>router failed</code>)에서 봐야 합니다.</td></tr><tr><td>배포 중 · 앱이 죽음</td><td><span class="q">발화와 상관없음</span></td><td>앱 대신 nginx 가 「지금 잠깐 점검 중이에요 🙏 1분 뒤에 다시 말 걸어주세요.」</td></tr></tbody></table></div>
+  <div class="tbl"><table><thead><tr><th>상황</th><th>예시</th><th>결과</th></tr></thead><tbody><tr><td>5초 안에 못 끝냄</td><td><span class="q">AI 해석이 느릴 때</span></td><td>「찾고 있어요. 잠시만요 🔍」 뒤에 결과가 따로 옵니다. 다시 물을 필요가 없습니다.</td></tr><tr><td>코드에서 예외 발생</td><td><span class="q">발화와 상관없음</span></td><td><span class="warn">④ 도움말과 똑같은 카드.</span> 사용자는 자기 말이 틀렸다고 느낄 수 있어서, 원인은 서버 로그(<code>router failed</code>)에서 봐야 합니다.</td></tr><tr><td>배포 중 · 앱이 죽음</td><td><span class="q">발화와 상관없음</span></td><td>앱 대신 nginx 가 「지금 잠깐 점검 중이에요 🙏 1분 뒤에 다시 말 걸어주세요.」</td></tr></tbody></table></div>
   <h3>버튼과 링크</h3>
   <div class="tbl"><table><thead><tr><th>상황</th><th>예시</th><th>결과</th></tr></thead><tbody><tr><td>「더 보기」를 눌렀는데 저장된 결과가 없음</td><td><span class="q">관리 API 로 데이터를 비운 뒤 등</span></td><td>④와 다른 카드 「가자고가 도와드릴 수 있는 것」 — 호텔·항공권·관광지 예시 세 줄.</td></tr><tr><td>「더 보기」를 버튼 대신 직접 침</td><td><span class="u">더 보기</span></td><td>④ 도움말. 버튼만 저장된 목록을 이어 줍니다.</td></tr><tr><td>오래된 카드의 링크를 누름</td><td><span class="q">링크 기록이 지워진 뒤</span></td><td>브라우저에 「링크가 만료되었어요 · 챗봇에서 다시 추천받아 주세요.」</td></tr></tbody></table></div>
 </section>
