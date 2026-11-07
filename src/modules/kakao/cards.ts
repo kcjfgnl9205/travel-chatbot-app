@@ -283,10 +283,15 @@ export function fixDatesCard(
       oneway || !back ? '편도' : `${fullDayText(back)} 귀국`,
     ].join(' ');
 
-  const header =
+  // ⚠️ **이유는 헤더가 아니라 말풍선에 쓴다.** 리스트 카드 헤더는 카카오가 **한 줄**만
+  //    보여주고 넘치면 「…」로 자른다. 「귀국일(11월 20일)이 출발일(11월 23일)보다
+  //    빨라요」는 핵심인 뒤쪽 날짜와 '빨라요' 가 잘려서, 무엇이 틀렸는지가 안 보였다.
+  //    말풍선은 줄바꿈되므로 이유를 온전히 싣고, 헤더는 할 일만 짧게 적는다.
+  const reason =
     problem.kind === 'past'
-      ? `${fullDayText(problem.date)}은 이미 지난 날짜예요`
-      : `귀국일(${dayText(problem.back)})이 출발일(${dayText(problem.depart)})보다 빨라요`;
+      ? `${fullDayText(problem.date)}은 이미 지난 날짜예요.`
+      : `귀국일(${dayText(problem.back)})이 출발일(${dayText(problem.depart)})보다 빨라요.`;
+  const header = '날짜를 다시 골라주세요';
 
   // ⚠️ **예문에는 연도를 안 쓴다.** 버튼(messageText)과 달리 이건 한 해가 지나도
   //    그대로 남는 글이라, 연도를 박으면 지난 날짜를 예문으로 권하게 된다. 연도가
@@ -305,6 +310,7 @@ export function fixDatesCard(
   }));
 
   return t.skillResponse([
+    { simpleText: { text: `${reason}\n아래에서 날짜를 고르시면 바로 찾아드려요.` } },
     {
       listCard: {
         header: { title: t.cut(header, t.MAX_LIST_HEADER_TITLE) },

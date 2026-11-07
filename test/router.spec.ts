@@ -362,8 +362,12 @@ describe('POST /api/v1/kakao/router', () => {
         kakaoPayload('서울에서 도쿄 항공권 11월 23일 출발 11월 20일 귀국'),
       );
 
+      // 이유는 말풍선에 온전히 싣는다. 리스트 헤더는 카카오가 한 줄만 보여주고 「…」로 자른다.
+      expect(res.body.template.outputs[0].simpleText.text).toContain(
+        '귀국일(11월 20일)이 출발일(11월 23일)보다 빨라요',
+      );
       const card = listCardOf(res.body);
-      expect(card.header.title).toContain('빨라요');
+      expect(card.header.title).toBe('날짜를 다시 골라주세요');
       // ⚠️ **링크를 주면 안 된다.** 날짜에 동의하기 전이다.
       expect(JSON.stringify(res.body)).not.toContain('/r/');
       // 멋대로 고른 날짜(출발일 + 7일 = 11월 30일)가 결과처럼 나가서도 안 된다.
@@ -402,7 +406,7 @@ describe('POST /api/v1/kakao/router', () => {
         kakaoPayload('서울에서 도쿄 항공권 11월 23일 출발 11월 20일 귀국'),
       );
 
-      const tail = res.body.template.outputs[1].textCard.description as string;
+      const tail = res.body.template.outputs[2].textCard.description as string;
       const example = /「(.+?)」/s.exec(tail)![1];
       expect(example).toContain('서울에서 도쿄 항공권');
 
@@ -431,9 +435,10 @@ describe('POST /api/v1/kakao/router', () => {
         kakaoPayload('서울에서 도쿄 항공권 2020년 10월 20일 출발 2020년 10월 23일 귀국'),
       );
 
-      const card = listCardOf(res.body);
-      expect(card.header.title).toContain('지난 날짜');
-      expect(card.header.title).toContain('2020년');
+      const reason = res.body.template.outputs[0].simpleText.text as string;
+      expect(reason).toContain('지난 날짜');
+      expect(reason).toContain('2020년');
+      expect(listCardOf(res.body).header.title).toBe('날짜를 다시 골라주세요');
       expect(JSON.stringify(res.body)).not.toContain('/r/');
     });
 
