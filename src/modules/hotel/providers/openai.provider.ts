@@ -86,9 +86,12 @@ export interface TracedSearch {
  * 1차가 긁어온 후보 하나. **2차는 이 중에서 번호만 고른다.**
  *
  * 그래서 카드에 쓰는 값이 전부 여기 있어야 한다 — 카드 줄은
- * `가격 · 평점 x.x · 지역` 이고([listDescription](../hotel.types.ts)), 사진은
- * 예약 페이지에서 긁는다. 예전 2차 스키마가 요구하던 주소·성급·썸네일은 1차에
+ * `평점 x.x · 지역` 이고([listDescription](../hotel.types.ts)), 사진은 예약
+ * 페이지에서 긁는다. 예전 2차 스키마가 요구하던 주소·성급·썸네일은 1차에
  * 없던 값이라 **모델이 지어내거나 null 이었다.**
+ *
+ * ⚠️ **`price_from` 은 카드에 안 나가지만 계속 받는다.** 집계가 그 값을 보고
+ *    (`recommendation_items.price`), 2차 호출이 가격대를 섞어 고르는 데도 쓴다.
  */
 interface RawCandidate {
   name?: unknown;

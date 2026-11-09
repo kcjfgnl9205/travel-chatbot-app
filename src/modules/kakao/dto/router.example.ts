@@ -75,7 +75,7 @@ export const CARD_RESPONSE_EXAMPLE = {
           items: [
             {
               title: '호텔 그란비아 오사카',
-              description: '1박 145,000원~ · 평점 8.7 · 우메다',
+              description: '평점 8.7 · 우메다',
               link: { web: 'https://bot.nolmoa.com/r/Ab3xY9zQ1mKd' },
             },
           ],

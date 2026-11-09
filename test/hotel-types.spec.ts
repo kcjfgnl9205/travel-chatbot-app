@@ -9,14 +9,21 @@ const hotel = (over: Partial<Hotel> = {}): Hotel => ({
 });
 
 describe('호텔 표현', () => {
-  it('있는 필드만 이어 붙인다', () => {
+  /**
+   * ⚠️ **가격은 줄에 안 적는다.** 1차 검색은 날짜 없이 일반 요금대를 훑는데 링크는
+   *    그 사람이 말한 날짜로 열려서, 적어놓은 숫자와 열어서 보는 요금이 어긋났다.
+   *    `priceFrom` 은 계속 저장한다 — 화면에서 뺀 것이지 버린 게 아니다.
+   */
+  it('평점과 지역만 적는다 — 가격은 빠진다', () => {
     expect(
       listDescription(hotel({ priceFrom: 120000, reviewScore: 8.8, tags: ['우메다', '가성비'] })),
-    ).toBe('1박 120,000원~ · 평점 8.8 · 우메다');
+    ).toBe('평점 8.8 · 우메다');
   });
 
-  it('AI/크롤링 결과는 필드가 비어 올 수 있다', () => {
-    expect(listDescription(hotel())).toBe('가격 문의');
+  it('AI/크롤링 결과는 필드가 비어 올 수 있다 — 둘 다 없으면 빈 줄이다', () => {
+    expect(listDescription(hotel())).toBe('');
+    expect(listDescription(hotel({ reviewScore: 9 }))).toBe('평점 9.0');
+    expect(listDescription(hotel({ tags: ['난바'] }))).toBe('난바');
   });
 });
 

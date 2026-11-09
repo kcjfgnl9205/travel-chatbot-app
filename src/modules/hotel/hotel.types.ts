@@ -42,11 +42,6 @@ export function isHotel(item: unknown): item is Hotel {
   return typeof h.name === 'string' && typeof h.sourceUrl === 'string';
 }
 
-export function priceText(h: Hotel): string {
-  if (!h.priceFrom) return '가격 문의';
-  return `1박 ${h.priceFrom.toLocaleString('ko-KR')}원~`;
-}
-
 /**
  * 평점 표기.
  *
@@ -59,11 +54,20 @@ export function scoreText(score: number): string {
 }
 
 /**
- * listCard 한 줄 설명. 1줄이라 가격·평점·지역만 압축해서 넣는다.
- * AI/크롤링 결과는 필드가 비어 올 수 있으므로 있는 것만 이어 붙인다.
+ * listCard 한 줄 설명 — **평점과 지역**. AI 결과는 필드가 비어 올 수 있으므로 있는
+ * 것만 이어 붙이고, 둘 다 없으면 빈 줄이다(그 줄만 설명 없이 나간다).
+ *
+ * ⚠️ **가격을 적지 않는다.** 1차 검색은 날짜 없이 일반 요금대를 훑는데
+ *    ([providers/openai.provider.ts](./providers/openai.provider.ts)), 링크는 그
+ *    사람이 말한 날짜로 열린다([search-url.ts](./search-url.ts) `withStay`). 그래서
+ *    적어놓은 「1박 182,000원~」과 열어서 보는 요금이 어긋날 수밖에 없었다 — 숫자가
+ *    틀리는 것은 안 보여주는 것보다 나쁘다.
+ *
+ * ⚠️ **`priceFrom` 은 계속 저장한다**([rows.service.ts](../recommendation/rows.service.ts)
+ *    `ItemRow.price`). 화면에서 뺀 것이지 버린 게 아니다 — 집계가 그 값을 본다.
  */
 export function listDescription(h: Hotel): string {
-  const bits: string[] = [priceText(h)];
+  const bits: string[] = [];
   if (h.reviewScore) bits.push(`평점 ${scoreText(h.reviewScore)}`);
   if (h.tags?.length) bits.push(h.tags[0]);
   return bits.join(' · ');
