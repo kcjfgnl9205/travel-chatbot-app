@@ -424,3 +424,36 @@ function writerFor(url: string): StayWriter | null {
     return null;
   }
 }
+
+// ------------------------------------------------------------ 상세 페이지인가
+/**
+ * **호텔 한 곳의 상세 페이지 주소인가.** 아니면 카드 줄로 쓰지 않는다.
+ *
+ * 모델은 웹 검색에 잘 걸리는 **도시 목록 페이지**를 자주 준다
+ * (`kr.trip.com/hotels/da-nang-hotels-list-1356/`, `klook.com/ko/destination/c74-da-nang/3-hotel/`).
+ * 허용 호스트라 그대로 통과했고, 사용자는 호텔을 눌렀는데 **다낭 호텔 목록**에
+ * 떨어졌다 (2026-11-09). 이름은 그 호텔인데 열리는 건 검색창이다.
+ *
+ * ⚠️ **확인한 꼴만 받는다.** 날짜를 박을 수 있는 꼴(`DETAIL_FORMATS`)에 더해,
+ *    날짜 칸은 확인 못 했지만 호텔 한 곳을 가리키는 것이 분명한 꼴을 둘 더 받는다 —
+ *    트립닷컴 `/hotels/{도시}-hotel-detail-{번호}/` 와 마이리얼트립 `/offers/{번호}`.
+ *    이 둘은 상세로는 열리고, 조건만 안 붙는다(`staySupported` 가 false).
+ */
+export function isHotelDetailUrl(url: string): boolean {
+  if (staySupported(url)) return true;
+  try {
+    const parsed = new URL(url);
+    return EXTRA_DETAIL_PATHS.some(
+      (known) => hostMatches(parsed.hostname, known.domain) && known.path.test(parsed.pathname),
+    );
+  } catch {
+    return false;
+  }
+}
+
+const EXTRA_DETAIL_PATHS: { domain: string; path: RegExp }[] = [
+  // kr.trip.com/hotels/osaka-hotel-detail-688242/
+  { domain: 'trip.com', path: /^\/hotels\/[a-z0-9-]+-detail-\d+\/?$/ },
+  // www.myrealtrip.com/offers/12345
+  { domain: 'myrealtrip.com', path: /^\/offers\/\d+\/?$/ },
+];

@@ -7,6 +7,7 @@ import { AppConfig, CONFIG } from '../../../config/app.config';
 import { OpenAiService } from '../../openai/openai.service';
 import { TwoStageSearch, TwoStageTrace, newTwoStageTrace } from '../../openai/two-stage';
 import { Hotel, HotelProvider, HotelQuery } from '../hotel.types';
+import { isHotelDetailUrl } from '../search-url';
 import { ThumbnailSource, extractThumbnail } from '../thumbnail';
 
 /**
@@ -112,6 +113,13 @@ const SEARCH_INSTRUCTIONS = [
     + '한국어 페이지 URL 을 적는다 (예: www.trip.com 이 아니라 kr.trip.com, '
     + 'klook 은 /ko/ 경로, hotels.com 은 kr.hotels.com).',
   '검색 결과에 나오지 않은 URL·가격·평점은 절대 지어내지 않는다. 모르면 null 로 둔다.',
+  // ⚠️ 이 문장이 없으면 모델은 검색에 잘 걸리는 **도시 목록 페이지**를 호텔마다 붙인다.
+  //    사용자는 호텔을 눌렀는데 목록에 떨어진다. 서버도 거르지만(isHotelDetailUrl)
+  //    걸러진 만큼 카드가 짧아지므로 처음부터 상세를 고르게 한다.
+  '**URL 은 반드시 그 호텔 한 곳의 상세 예약 페이지여야 한다.** 도시 호텔 목록·검색 결과·'
+    + '지역 페이지(예: kr.trip.com/hotels/da-nang-hotels-list-1356/, klook.com/ko/destination/…)는 '
+    + '안 된다. 상세 페이지 예: kr.trip.com/hotels/detail/?hotelId=…, kr.hotels.com/ho123456/, '
+    + 'klook.com/ko/hotels/detail/…, accommodation.myrealtrip.com/union/products/….',
   // ⚠️ 이 문단을 지우지 마라. 없으면 모델이 "검색을 진행해도 될까요?" 라고 되묻고 끝난다.
   //    상대는 사람이 아니라 프로그램이라 그 질문에 답해줄 사람이 없다.
   '**절대 되묻지 마라.** 확인을 구하거나 진행 여부를 묻지 말고 즉시 검색해서 결과만 낸다.',
@@ -145,7 +153,8 @@ export const CANDIDATE_SCHEMA = {
             url: {
               type: 'string',
               description:
-                `검색 결과에 실제로 나온 예약 페이지 URL. ${ALLOWED_SITES_TEXT} 중 하나. ` +
+                `검색 결과에 실제로 나온 **그 호텔 한 곳의 상세** 예약 페이지 URL. ` +
+                `${ALLOWED_SITES_TEXT} 중 하나. 도시 목록·검색 결과 페이지는 안 된다. ` +
                 '반드시 한국어 페이지 (kr.trip.com, kr.hotels.com, klook.com/ko/ 등)',
             },
             price_from: { type: ['integer', 'null'], description: '1박 최저가(원). 확인된 값만' },
@@ -235,7 +244,8 @@ export class OpenAiHotelProvider
   protected override usableCandidates(candidates: unknown[]): unknown[] {
     return candidates.filter((c) => {
       const url = text((c as RawCandidate)?.url);
-      return Boolean(url) && isAllowedSourceUrl(url as string);
+      // 목록 페이지 후보도 여기서 뺀다 — 넘기면 2차가 버려질 줄을 고른다(위와 같은 이유).
+      return Boolean(url) && isAllowedSourceUrl(url as string) && isHotelDetailUrl(url as string);
     });
   }
 
@@ -282,6 +292,7 @@ export class OpenAiHotelProvider
     /** 어느 호스트에서 몇 개가 떨어졌나. 한 줄 요약에 쓴다. */
     const droppedHosts: Record<string, number> = {};
     let droppedEmpty = 0;
+    let droppedListing = 0;
 
     for (const pick of picks) {
       const name = text(pick.name);
@@ -301,6 +312,13 @@ export class OpenAiHotelProvider
       if (!isAllowedSourceUrl(sourceUrl)) {
         count(droppedHosts, hostOf(sourceUrl));
         this.logger.warn(`dropped hotel with untrusted url name=${name} url=${sourceUrl}`);
+        continue;
+      }
+
+      // 도시 목록 페이지. 누르면 호텔이 아니라 검색창이 열린다(isHotelDetailUrl).
+      if (!isHotelDetailUrl(sourceUrl)) {
+        droppedListing += 1;
+        this.logger.warn(`dropped hotel with listing url name=${name} url=${sourceUrl}`);
         continue;
       }
 
@@ -341,7 +359,8 @@ export class OpenAiHotelProvider
         .join(' ');
       this.logger.warn(
         `hotel normalize ${this.subjectOf(query)} picks=${picks.length} kept=${hotels.length} ` +
-          `droppedEmpty=${droppedEmpty} droppedHost=${picks.length - hotels.length - droppedEmpty}` +
+          `droppedEmpty=${droppedEmpty} droppedListing=${droppedListing} ` +
+          `droppedHost=${picks.length - hotels.length - droppedEmpty - droppedListing}` +
           (hosts ? ` hosts=${hosts}` : ''),
       );
     }
