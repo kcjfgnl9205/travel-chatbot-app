@@ -46,13 +46,16 @@ export class AffiliateService {
    *    넘기면 rate limit 과 경고만 축낸다 — 이유는 ADPICK_UNSUPPORTED_MERCHANTS 에.
    */
   async resolve(
-    targets: { sourceUrl: string; merchant?: string | null }[],
+    targets: { sourceUrl: string; merchant?: string | null; identityUrl?: string | null }[],
   ): Promise<Map<string, ResolvedLink>> {
     const wanted = new Map<string, string | null>();
+    /** 추적 코드를 만들 주소. 날짜·인원을 뗀 것이고, 없으면 sourceUrl 그대로다. */
+    const identity = new Map<string, string | null>();
     for (const t of targets) {
       if (!t.sourceUrl || wanted.has(t.sourceUrl)) continue;
       if (!adpickCarries(t.merchant)) continue;
       wanted.set(t.sourceUrl, t.merchant ?? null);
+      identity.set(t.sourceUrl, t.identityUrl ?? null);
     }
 
     const resolved = new Map<string, ResolvedLink>();
@@ -73,7 +76,7 @@ export class AffiliateService {
     if (!misses.length) return resolved;
 
     const results: LinkResult[] = await Promise.all(
-      misses.map((url) => this.adpick.convert(url, wanted.get(url))),
+      misses.map((url) => this.adpick.convert(url, wanted.get(url), identity.get(url))),
     );
 
     // 변환에 성공했든 폴백이든 기록해둔다. 실패 이유를 나중에 봐야 하므로.
@@ -126,12 +129,14 @@ export class AffiliateService {
   async resolveForClick(
     sourceUrl: string,
     merchant: string | null,
+    /** 추적 코드를 만들 주소 (날짜·인원을 뗀 것). 안 주면 `sourceUrl` 그대로. */
+    identityUrl?: string | null,
   ): Promise<ResolvedLink | null> {
     if (!sourceUrl || !adpickCarries(merchant)) return null;
 
     // ⚠️ race 에 넘기기 전에 반드시 catch 를 달아둔다. 타임아웃이 이긴 뒤에 변환이
     //    터지면 핸들러 없는 rejection 이 되어 프로세스가 죽을 수 있다.
-    const converting = this.resolve([{ sourceUrl, merchant }]).catch((err) => {
+    const converting = this.resolve([{ sourceUrl, merchant, identityUrl }]).catch((err) => {
       this.logger.warn(`click-time convert failed url=${sourceUrl} err=${err}`);
       return null;
     });

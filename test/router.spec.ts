@@ -14,6 +14,7 @@ import {
   post,
   textOf,
 } from './helpers';
+import { MemoryStoreService } from '../src/modules/database/memory-store.service';
 import { OpenAiHttpError } from '../src/modules/openai/openai.service';
 
 /**
@@ -121,6 +122,166 @@ describe('POST /api/v1/kakao/router', () => {
     expect(notice).toContain('테마');
     expect(notice).toContain('아이랑');
     expect(notice).toContain('반영되지 않았어요');
+  });
+
+  /**
+   * **호텔 날짜도 조용히 고치지 않는다.**
+   *
+   * ⚠️ 항공권과 하나가 다르다 — 체크인과 체크아웃이 **같은 날이면 0박**이라 검색
+   *    자체가 안 된다. 항공권에서 같은 날은 당일치기라 멀쩡한 일정이라서, 판정도
+   *    카드도 따로 간다([hotel/search-url.ts](../src/modules/hotel/search-url.ts) stayProblem).
+   */
+  describe('호텔 날짜가 잘못됐을 때', () => {
+    it('체크인과 체크아웃이 같은 날이면 링크 대신 되묻는다', async () => {
+      const res = await post(
+        ctx.app,
+        kakaoPayload('오사카 호텔 11월 20일 체크인 11월 20일 체크아웃'),
+      );
+
+      // 이유는 말풍선에 온전히 싣는다 — 리스트 헤더는 한 줄만 보이고 「…」로 잘린다.
+      expect(res.body.template.outputs[0].simpleText.text).toContain('1박 이상');
+      expect(listCardOf(res.body).header.title).toBe('날짜를 다시 골라주세요');
+      // ⚠️ **링크를 주면 안 된다.** 날짜에 동의하기 전이다.
+      expect(JSON.stringify(res.body)).not.toContain('/r/');
+      // AI 도 부르지 않는다 — 되물을 일에 7~30초짜리 검색을 태울 이유가 없다.
+      expect(ctx.provider.calls).toHaveLength(0);
+    });
+
+    it('체크아웃이 체크인보다 빠르면 되묻는다', async () => {
+      const res = await post(
+        ctx.app,
+        kakaoPayload('오사카 호텔 11월 23일 체크인 11월 20일 체크아웃'),
+      );
+
+      expect(res.body.template.outputs[0].simpleText.text).toContain(
+        '체크아웃(11월 20일)이 체크인(11월 23일)보다 빨라요',
+      );
+      expect(JSON.stringify(res.body)).not.toContain('/r/');
+    });
+
+    it('되묻기 버튼은 체크인·체크아웃 문장을 그대로 보낸다 — 누르면 평소 경로를 탄다', async () => {
+      const res = await post(
+        ctx.app,
+        kakaoPayload('오사카 호텔 11월 20일 체크인 11월 20일 체크아웃'),
+      );
+
+      const items = listCardOf(res.body).items as { action: string; messageText: string }[];
+      expect(items.length).toBeGreaterThan(0);
+      for (const item of items) {
+        expect(item.action).toBe('message');
+        // 연도를 박아 보낸다 — 안 박으면 그 문장이 또 굴러간다.
+        expect(item.messageText).toMatch(/\d{4}년/);
+        expect(item.messageText).toContain('체크인');
+        expect(item.messageText).toContain('체크아웃');
+      }
+      // 첫 후보는 1박이다. 며칠 묵을지는 아무도 말하지 않았다.
+      expect(items[0].messageText).toContain('11월 21일');
+
+      // ⚠️ **버튼 문장이 그대로 통해야 한다.** 시킨 대로 보냈는데 또 되물으면 대화가 끊긴다.
+      const next = await askUntilCard(ctx.app, items[0].messageText);
+      expect(listCardOf(next).header.title).toContain('오사카 호텔');
+    });
+
+    it('1박 이상이면 평소대로 카드가 나간다', async () => {
+      const body = await askUntilCard(
+        ctx.app,
+        '오사카 호텔 11월 20일 체크인 11월 21일 체크아웃',
+      );
+
+      expect(listCardOf(body).header.title).toContain('오사카 호텔');
+    });
+  });
+
+  /**
+   * **날짜·인원은 목록이 아니라 링크로 간다.**
+   *
+   * ⚠️ 기본 가짜 provider 는 `example.com` 주소를 준다 — 형식을 확인한 제휴몰이
+   *    아니라서 조건이 안 붙고, 그래서 위 테스트들은 「반영되지 않았어요」를 본다.
+   *    여기서는 **실제 상세 주소 꼴**을 줘서 붙는 쪽을 검증한다.
+   */
+  describe('상세 링크에 날짜·인원이 들어갈 때', () => {
+    const detail = (i: number) =>
+      `https://accommodation.myrealtrip.com/union/products/500731${i}`;
+
+    beforeEach(() => {
+      ctx.provider.reply = (query) =>
+        Array.from({ length: 3 }, (_, i) => ({
+          name: `${query.cityName} 호텔 ${i + 1}`,
+          citySlug: query.citySlug,
+          sourceUrl: detail(i),
+          merchant: 'myrealtrip',
+          priceFrom: 120000,
+        }));
+    });
+
+    /**
+     * ⚠️ **카드 줄은 `/r/{clickId}` 를 가리킨다.** 조건이 박힌 주소는 그 뒤에 있으므로
+     *    (리다이렉트가 302 로 보낼 목적지) 카드 JSON 만 봐서는 검증되지 않는다.
+     *    메모리에 남은 재료에서 꺼내 본다 — 리다이렉트가 보는 것과 같은 값이다.
+     */
+    it('링크 뒤의 실제 주소에 날짜·인원이 박힌다', async () => {
+      const body = await askUntilCard(ctx.app, '오사카 호텔 11월 20일 체크인 11월 23일 체크아웃 3명');
+
+      const linkUrl = listCardOf(body).items[0].link.web as string;
+      const clickId = linkUrl.split('/r/')[1];
+      const stored = ctx.app.get(MemoryStoreService).registerClick(clickId);
+
+      const params = new URL(stored!.sourceUrl).searchParams;
+      expect(params.get('checkIn')).toBe('2026-11-20');
+      expect(params.get('checkOut')).toBe('2026-11-23');
+      expect(params.get('adultCount')).toBe('3');
+    });
+
+    it('말한 날짜·인원을 링크에 넣고, 넣었다고 적는다', async () => {
+      const body = await askUntilCard(ctx.app, '오사카 호텔 11월 20일 체크인 11월 23일 체크아웃 3명');
+      const notice = noticeOf(body);
+
+      expect(notice).toContain('11월 20일 체크인');
+      expect(notice).toContain('11월 23일 체크아웃');
+      expect(notice).toContain('3명');
+      // ⚠️ **반영한 조건을 "반영되지 않았어요" 라고 적으면 안 된다.** 맞는 링크를
+      //    받고도 틀렸다고 읽는다.
+      expect(notice).not.toContain('반영되지 않았어요');
+      // 목록은 여전히 지역으로만 찾는다 — 그래서 "검색돼요" 가 아니라 "열려요" 다.
+      expect(notice).toContain('열려요');
+    });
+
+    it('아무 말 없으면 내일 체크인 · 1박 · 2명으로 적는다', async () => {
+      const notice = noticeOf(await askUntilCard(ctx.app, '오사카 호텔 추천해줘'));
+
+      const tomorrow = new Date(Date.now() + 86_400_000);
+      const day = `${tomorrow.getMonth() + 1}월 ${tomorrow.getDate()}일`;
+      expect(notice).toContain(`${day} 체크인`);
+      expect(notice).toContain('2명으로 열려요');
+    });
+
+    it('6명을 넘으면 6명으로 맞추고 맞췄다고 알린다', async () => {
+      const body = await askUntilCard(ctx.app, '오사카 호텔 8명');
+      const notice = noticeOf(body);
+
+      expect(notice).toContain('6명으로 열려요');
+      expect(notice).toContain('인원은 6명까지만 넣을 수 있어 6명으로 맞췄어요.');
+      // ⚠️ **말풍선을 새로 만들면 안 된다.** 셋이 한계라, 넘기면 멘션 버튼이 조용히
+      //    잘린다. 이 안내는 기존 고지에 한 줄로 붙는다.
+      expect(body.template.outputs.length).toBeLessThanOrEqual(3);
+      expect(mentionCardOf(body)).toBeDefined();
+    });
+
+    /**
+     * ⚠️ **조건은 저장된 주소가 아니라 그릴 때 붙는다.** 검색 결과는 지역으로만 갈려
+     *    하루를 산다 — 주소에 날짜를 구워 저장하면 **내일 캐시를 맞은 사람이 어제
+     *    날짜로 열린 페이지**를 받는다 (0004 와 같은 이유).
+     */
+    it('저장된 결과를 다시 꺼내도 그 사람이 말한 날짜로 열린다', async () => {
+      await askUntilCard(ctx.app, '오사카 호텔 11월 20일 체크인 11월 23일 체크아웃');
+
+      // 같은 도시를 **다른 날짜로** 다시 묻는다. 검색은 다시 돌지 않는다(캐시).
+      const again = await askUntilCard(ctx.app, '오사카 호텔 12월 1일 체크인 12월 5일 체크아웃');
+
+      expect(ctx.provider.calls).toHaveLength(1);
+      expect(noticeOf(again)).toContain('12월 1일 체크인');
+      expect(noticeOf(again)).not.toContain('11월 20일');
+    });
   });
 
   it('호텔 카드에는 제휴 고지가 붙는다 — 누르기 전에 알아야 한다', async () => {

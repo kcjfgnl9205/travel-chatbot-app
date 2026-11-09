@@ -70,10 +70,16 @@ export const linkOk = (r: LinkResult): boolean =>
   (r.status === STATUS_OK || r.status === STATUS_FALLBACK) && Boolean(r.affiliateUrl);
 
 /**
- * sourceUrl 하나당 고정되는 추적 코드.
+ * **상품 하나당 고정되는** 추적 코드.
  *
- * 애드픽 성과 데이터 API 의 구분 코드와 우리 affiliate_links 행을 조인하는 키.
+ * 애드픽 성과 데이터 API 의 구분 코드와 우리 affiliate_links 행을 잇는 키.
  * 링크를 캐시해서 재사용하므로 클릭마다 다르게 만들 수는 없다.
+ *
+ * ⚠️ **조건이 아니라 상품으로 갈려야 한다.** 호텔 상세 주소에는 날짜·인원이 박히는데
+ *    (`withStay`) 그 주소로 코드를 만들면 **같은 호텔이 날짜마다 다른 코드**를 받는다.
+ *    전환은 드물어서 그렇게 쪼개면 한 줄에 0 아니면 1 이 찍히고 아무것도 못 읽는다.
+ *    그래서 호출부가 조건을 뗀 주소를 `identityUrl` 로 준다 — 여러 링크가 같은 코드를
+ *    공유해도 된다(`p_data` 는 유니크가 아니라 인덱스만 걸려 있다).
  */
 export function pDataFor(sourceUrl: string): string {
   const digest = createHash('sha1').update(sourceUrl, 'utf8').digest('hex').slice(0, 15);
@@ -142,7 +148,17 @@ export class AdpickService {
   // ⚠️ merchant 는 받기만 하고 쓰지 않는다. 애드픽은 URL 만 보고 광고주를 판정하므로
   //    넘길 데가 없다. 호출부(AffiliateService)가 이미 들고 있는 값이라 시그니처에
   //    남겨두지만, 다른 제휴사를 붙이기 전까지는 죽은 인자다.
-  async convert(sourceUrl: string, _merchant?: string | null): Promise<LinkResult> {
+  /**
+   * @param identityUrl 추적 코드(`p_data`)를 만들 때 쓸 주소. 안 주면 `sourceUrl`.
+   *   **날짜·인원이 박힌 주소를 변환할 때 이걸 준다** — 코드까지 조건마다 갈리면
+   *   애드픽 성과 화면에서 같은 상품이 수십 줄로 쪼개진다
+   *   ([hotel/search-url.ts](../hotel/search-url.ts) `withoutStay`).
+   */
+  async convert(
+    sourceUrl: string,
+    _merchant?: string | null,
+    identityUrl?: string | null,
+  ): Promise<LinkResult> {
     if (!sourceUrl) {
       return {
         sourceUrl,
@@ -154,7 +170,7 @@ export class AdpickService {
 
     if (!adpickApiEnabled(this.config)) return this.fallback(sourceUrl);
 
-    const pData = pDataFor(sourceUrl);
+    const pData = pDataFor(identityUrl || sourceUrl);
     const url = new URL(this.endpoint);
     url.searchParams.set('url', sourceUrl);
     url.searchParams.set('p_data', pData);

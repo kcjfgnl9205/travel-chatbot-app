@@ -5,6 +5,7 @@ import { Response } from 'express';
 import { AppConfig, CONFIG } from '../../config/app.config';
 import { adpickCarries, applySubid } from '../adpick/adpick.service';
 import { AffiliateService } from '../affiliate/affiliate.service';
+import { withoutStay } from '../hotel/search-url';
 import { kakaoMapUrl, mapsUrl } from '../../common/maps-url';
 import { isKorea } from '../places/city-table';
 import { MemoryStoreService } from '../database/memory-store.service';
@@ -154,8 +155,12 @@ export class RedirectController {
   ): Promise<string> {
     if (!sourceUrl || !adpickCarries(merchant)) return fallbackUrl;
 
+    // ⚠️ **변환은 조건이 박힌 주소로, 추적 코드는 조건을 뗀 주소로.** 사용자는 자기
+    //    날짜로 열려야 하고(그래서 변환 입력은 `sourceUrl`), 성과는 호텔 단위로 모여야
+    //    한다(그래서 `p_data` 는 `withoutStay`). 호텔 상세가 아닌 주소에는 아무 일도
+    //    일어나지 않는다 — 항공권 주소는 그대로 지나간다.
     const link = await this.affiliate
-      .resolveForClick(sourceUrl, merchant)
+      .resolveForClick(sourceUrl, merchant, withoutStay(sourceUrl))
       .catch((err) => {
         this.logger.warn(`convert failed clickId=${clickId} err=${err}`);
         return null;

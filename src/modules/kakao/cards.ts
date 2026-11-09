@@ -8,7 +8,19 @@
 
 import * as t from './templates';
 import { RouteProblem } from '../flight/airports';
-import { TripDateProblem, TripParams, resolveTrip } from '../flight/search-url';
+import {
+  MAX_ADULTS as FLIGHT_MAX_ADULTS,
+  ResolvedTrip,
+  TripDateProblem,
+  TripParams,
+  resolveTrip,
+} from '../flight/search-url';
+import {
+  MAX_ADULTS as HOTEL_MAX_ADULTS,
+  StayDateProblem,
+  resolveStay,
+  stayOf,
+} from '../hotel/search-url';
 import { CityChoice } from '../places/places.types';
 import { SearchKind, SearchMeta } from '../search/search.types';
 
@@ -365,6 +377,106 @@ function choicesFor(
   ];
 }
 
+/**
+ * **호텔판 날짜 되묻기.** 항공권의 [fixDatesCard](#fixDatesCard) 와 같은 일을 하되
+ * 말이 다르다 — 출발·귀국이 아니라 체크인·체크아웃이고, **같은 날이 하나 더 있다.**
+ *
+ * ⚠️ **호텔은 0박을 검색할 수 없다.** 항공권에서 같은 날은 당일치기라 멀쩡한 일정이고,
+ *    그래서 같은 카드를 돌려쓸 수 없다. 조용히 1박으로 늘리는 것도 안 된다 — 사용자가
+ *    콕 집어 말한 날짜라 말한 적 없는 일정으로 링크가 나간다.
+ *
+ * ⚠️ 카카오에는 날짜 선택 버튼이 없다(action 은 `webLink`·`message`·`block`·`phone`·
+ *    `share`·`operator` 가 전부). **후보를 message 버튼으로 내놓는 것이 유일한 길**이고,
+ *    누르면 고쳐진 문장이 그대로 전송돼 평소 경로를 탄다.
+ */
+export function fixStayDatesCard(
+  meta: SearchMeta,
+  trip: TripParams,
+  problem: StayDateProblem,
+  botName: string | null,
+): t.Json {
+  const say = (checkIn: string, checkOut: string): string =>
+    `${meta.placeName} 호텔 ${fullDayText(checkIn)} 체크인 ${fullDayText(checkOut)} 체크아웃`;
+
+  // ⚠️ **이유는 헤더가 아니라 말풍선에 쓴다.** 리스트 카드 헤더는 한 줄만 보이고
+  //    넘치면 「…」로 잘려서, 무엇이 틀렸는지가 통째로 사라진다 (항공권에서 겪었다).
+  let reason: string;
+  if (problem.kind === 'past') {
+    reason = `${fullDayText(problem.date)}은 이미 지난 날짜예요.`;
+  } else if (problem.kind === 'reversed') {
+    reason = `체크아웃(${dayText(problem.back)})이 체크인(${dayText(problem.depart)})보다 빨라요.`;
+  } else {
+    reason =
+      `체크인과 체크아웃이 ${dayText(problem.date)}로 같아요.\n` +
+      '호텔은 1박 이상이어야 찾을 수 있어요.';
+  }
+
+  // ⚠️ **예문에는 연도를 안 쓴다.** 버튼과 달리 한 해가 지나도 그대로 남는 글이라,
+  //    연도를 박으면 지난 날짜를 예문으로 권하게 된다. 연도가 없으면 파서가 다음 해로
+  //    굴려서 항상 미래 날짜가 된다.
+  const example = `${meta.placeName} 호텔 12월 1일 체크인 12월 3일 체크아웃`;
+
+  const items = stayChoicesFor(problem, trip).map((choice) => ({
+    title: t.cut(choice.label, t.MAX_LIST_ITEM_TITLE),
+    description: t.cut('이 날짜로 찾기', t.MAX_LIST_ITEM_DESC),
+    action: 'message',
+    messageText: say(choice.checkIn, choice.checkOut),
+  }));
+
+  return t.skillResponse([
+    { simpleText: { text: `${reason}\n아래에서 날짜를 고르시면 바로 찾아드려요.` } },
+    {
+      listCard: {
+        header: { title: t.cut('날짜를 다시 골라주세요', t.MAX_LIST_HEADER_TITLE) },
+        items: items.slice(0, t.MAX_LIST_ITEMS),
+      },
+    },
+    t.textCard({
+      description: `다른 날짜로 찾으시려면 아래 버튼을 누르고\n「${example}」\n처럼 보내주세요.`,
+      buttons: [t.mentionButton(botName)],
+    }),
+  ]);
+}
+
+/**
+ * 호텔 되묻기 카드에 내놓을 **고친 날짜 후보.**
+ *
+ * ⚠️ 우리가 고른 날짜를 자동으로 쓰지 않는다. 여기 있는 건 버튼 라벨이고, 실제로
+ *    적용되는 건 사용자가 누른 뒤다.
+ */
+function stayChoicesFor(
+  problem: StayDateProblem,
+  trip: TripParams,
+): { label: string; checkIn: string; checkOut: string }[] {
+  const label = (checkIn: string, checkOut: string): string =>
+    `${dayText(checkIn)} 체크인 · ${dayText(checkOut)} 체크아웃`;
+
+  if (problem.kind === 'past') {
+    // 연도만 한 해 민다. **달·일은 사용자가 적은 그대로 둔다** — 거기까지 고치면
+    // 무슨 날짜로 검색되는지 사용자가 못 쫓아간다.
+    const checkIn = plusYear(trip.departDate ?? problem.date);
+    // 체크아웃을 안 말했으면 1박. 안 민 채로 두면 **지난 날짜가 그대로 남는다.**
+    const checkOut = trip.returnDate ? plusYear(trip.returnDate) : addDays(checkIn, 1);
+    return [{ label: `${fullDayText(checkIn)} 체크인 · ${dayText(checkOut)} 체크아웃`, checkIn, checkOut }];
+  }
+
+  if (problem.kind === 'reversed') {
+    // 두 날짜를 **바꿔 끼우는 것**이 가장 흔한 의도다.
+    const swapped = { label: label(problem.back, problem.depart), checkIn: problem.back, checkOut: problem.depart };
+    // 체크인을 그대로 두고 싶은 사람도 있다. 그때는 1박이 가장 흔하다.
+    const oneNight = addDays(problem.depart, 1);
+    return [swapped, { label: label(problem.depart, oneNight), checkIn: problem.depart, checkOut: oneNight }];
+  }
+
+  // 같은 날. 며칠을 묵을지는 아무도 말하지 않았으므로 1박·2박을 내놓는다.
+  const first = addDays(problem.date, 1);
+  const second = addDays(problem.date, 2);
+  return [
+    { label: `${label(problem.date, first)} (1박)`, checkIn: problem.date, checkOut: first },
+    { label: `${label(problem.date, second)} (2박)`, checkIn: problem.date, checkOut: second },
+  ];
+}
+
 /** '2027-10-20' → '2027년 10월 20일'. **연도를 반드시 찍는다** — 7번이 연도 문제다. */
 function fullDayText(iso: string): string {
   return `${iso.slice(0, 4)}년 ${dayText(iso)}`;
@@ -408,6 +520,15 @@ export function noticeText(opts: {
    * ([adpick.service.ts](../adpick/adpick.service.ts) `adpickCarries`).
    */
   affiliate?: boolean;
+  /**
+   * 호텔 전용. **이 카드의 줄들이 실제로 날짜·인원이 박힌 주소를 가리키는가.**
+   *
+   * ⚠️ 형식을 확인한 제휴몰만 조건을 받는다([hotel/search-url.ts](../hotel/search-url.ts)
+   *    `withStay`). 한 줄이라도 맨 주소로 나가는 카드에 "링크는 ...으로 열려요" 를
+   *    적으면 그 줄을 누른 사람은 적힌 날짜와 다른 페이지를 본다 — 판정은 호출부가
+   *    한다(`staySupported`).
+   */
+  stayApplied?: boolean;
 }): string {
   const lines: string[] = [];
 
@@ -422,8 +543,22 @@ export function noticeText(opts: {
   //    안 적으면 "왜 내 날짜가 아니지" 로 끝난다.
   if (opts.meta?.kind === 'flight') {
     const tripType = opts.meta.tripType === 'ow' ? 'oneway' : 'round';
+    const resolved = resolveTrip(tripType, opts.trip, opts.now ?? new Date());
     // 카드에 가격이 없으므로 "확정 운임이 아니다" 같은 고지는 할 말이 없다.
-    lines.push(`링크는 ${tripText(tripType, opts.trip, opts.now)}으로 검색돼요.`);
+    lines.push(`링크는 ${tripText(resolved)}으로 검색돼요.`);
+    if (resolved.adultsClamped) lines.push(adultsClampedText(FLIGHT_MAX_ADULTS));
+  }
+
+  // ⚠️ **호텔은 추천 목록과 링크가 다른 조건이다.** AI 목록은 지역으로만 찾고(캐시를
+  //    지역으로 가른다) 날짜·인원은 **링크에만** 들어간다. 그래서 "검색돼요" 가 아니라
+  //    "열려요" 다 — 목록까지 그 날짜로 고른 줄 알면 예약 가능 여부를 오해한다.
+  if (opts.meta?.kind === 'hotel' && opts.stayApplied) {
+    const stay = resolveStay(stayOf(opts.trip), opts.now ?? new Date());
+    lines.push(
+      `링크는 ${dayText(stay.checkIn)} 체크인 · ${dayText(stay.checkOut)} 체크아웃 · ` +
+        `${stay.adults}명으로 열려요.`,
+    );
+    if (stay.adultsClamped) lines.push(adultsClampedText(HOTEL_MAX_ADULTS));
   }
 
   // 출발지를 추측했으면 반드시 알려준다. 부산에서 가려던 사람이 고쳐 말할 유일한 단서다.
@@ -457,13 +592,23 @@ export const AFFILIATE_NOTICE = '본 검색 결과에는 제휴 업체가 포함
  * ⚠️ **링크를 만드는 함수와 같은 곳에서 값을 받아 적는다** (`resolveTrip`). 여기서
  *    기본값을 따로 쓰면 "내일 출발" 이라고 적어놓고 다른 날로 여는 카드가 나온다.
  */
-function tripText(tripType: 'oneway' | 'round', trip: TripParams | null | undefined, now?: Date): string {
-  const { depart, back, adults } = resolveTrip(tripType, trip, now ?? new Date());
+function tripText(resolved: ResolvedTrip): string {
+  const { depart, back, adults } = resolved;
   const parts = [`${dayText(depart)} 출발`];
   if (back) parts.push(`${dayText(back)} 귀국`);
   else parts.push('편도');
   parts.push(`${adults}인`);
   return parts.join(' · ');
+}
+
+/**
+ * 말한 인원을 우리가 줄였을 때.
+ *
+ * ⚠️ **말풍선을 새로 만들지 않는다.** 카드 + 고지 + 멘션 버튼이 이미 MAX_OUTPUTS(3)
+ *    으로 꽉 차서 하나 더 얹으면 멘션 버튼이 조용히 잘린다. 기존 고지에 한 줄로 붙인다.
+ */
+function adultsClampedText(max: number): string {
+  return `인원은 ${max}명까지만 넣을 수 있어 ${max}명으로 맞췄어요.`;
 }
 
 /** '2026-10-20' → '10월 20일'. 연도는 적지 않는다 — 카드 한 줄이 좁다. */

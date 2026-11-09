@@ -243,6 +243,25 @@ describe('기본값 채우기', () => {
       depart: '2026-10-15',
       back: '2026-10-22',
       adults: 1,
+      adultsClamped: false,
+    });
+  });
+
+  /**
+   * ⚠️ **상한을 넘은 인원은 "못 읽은 것" 이 아니라 "줄인 것" 이다.**
+   *
+   * 예전에는 파서가 9명까지만 읽어서 "10명" 이 통째로 버려졌고, 고지는
+   * 「인원은 반영되지 않았어요」로 나갔다 — 사용자는 왜 안 됐는지도, 몇 명으로
+   * 열리는지도 알 수 없었다. 이제 읽어서 9명으로 맞추고 **맞췄다고 말한다.**
+   */
+  it('플랫폼 상한을 넘으면 9인으로 맞추고 맞췄다고 표시한다', () => {
+    expect(resolveTrip('round', parse('오사카 항공권 12명'), NOW)).toMatchObject({
+      adults: 9,
+      adultsClamped: true,
+    });
+    expect(resolveTrip('round', parse('오사카 항공권 4명'), NOW)).toMatchObject({
+      adults: 4,
+      adultsClamped: false,
     });
   });
 

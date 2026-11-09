@@ -229,7 +229,9 @@ describe('애드픽이 취급하지 않는 제휴몰', () => {
     ]);
 
     expect(convert).toHaveBeenCalledTimes(1);
-    expect(convert).toHaveBeenCalledWith(BOOKING, 'trip');
+    // 세 번째 인자는 추적 코드를 만들 주소다. 호출부가 안 주면 null 이고,
+    // 그때는 sourceUrl 로 만든다 (이 줄은 호텔 상세가 아니라 뗄 조건도 없다).
+    expect(convert).toHaveBeenCalledWith(BOOKING, 'trip', null);
     expect(links.get(BOOKING)?.affiliateLinkId).toBe('link-1');
   });
 });

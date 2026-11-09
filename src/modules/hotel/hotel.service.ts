@@ -1,7 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import { dedupeBy } from '../../common/dedupe';
-import { TripParams } from '../flight/search-url';
 import * as t from '../kakao/templates';
 import { RecommendationRowsService } from '../recommendation/rows.service';
 import { searchName } from '../search/search-name';
@@ -12,7 +11,7 @@ import {
   SearchMeta,
   SearchTrace,
 } from '../search/search.types';
-import { HotelStay, hotelSearchUrls, resolveStay } from './search-url';
+import { hotelSearchUrls, resolveStay, stayOf, withStay } from './search-url';
 import {
   HOTEL_PROVIDER,
   Hotel,
@@ -226,13 +225,23 @@ export class HotelService implements SearchDomain<Hotel> {
    * 변환하면 분당 60회 rate limit 을 헛되이 쓴다.
    */
   async rows(hotels: Hotel[], ctx: RenderContext): Promise<t.Json[]> {
+    // ⚠️ **날짜·인원을 여기서 붙인다. 저장된 주소에는 없다.** 검색 캐시는 지역으로만
+    //    갈려 하루를 살기 때문에(`queryOf`), 주소에 날짜를 구워서 저장하면 내일 캐시를
+    //    맞은 사람이 어제 날짜로 열린 페이지를 받는다 (0004 와 같은 이유).
+    //
+    // ⚠️ **형식을 모르는 제휴몰은 원본 그대로 나간다**([search-url.ts](./search-url.ts)
+    //    `withStay`). 그 경우 카드 고지도 조건을 말하지 않아야 한다 — 판정은
+    //    `staySupported` 로 [search.service.ts](../search/search.service.ts) 가 한다.
+    const now = new Date(ctx.started);
+    const stay = stayOf(ctx.trip);
+
     // ⚠️ **애드픽을 여기서 부르지 않는다** (0015). 눌리는 줄은 많아야 하나인데
     //    다섯 줄을 전부 변환했고, 캐시가 빗나가면 요청 경로에서 2초를 기다렸다.
     //    변환은 눌린 줄 하나만 `/r/{clickId}` 가 한다.
     return this.renderer.render(
       hotels.map((hotel) => ({
         label: hotel.name,
-        sourceUrl: hotel.sourceUrl,
+        sourceUrl: withStay(hotel.sourceUrl, stay, now),
         title: hotel.name,
         description: listDescription(hotel),
         imageUrl: hotel.thumbnailUrl,
@@ -259,23 +268,6 @@ export function queryOf(ctx: SearchContext): HotelQuery {
     cityName: searchName(ctx),
     guests: null,
     limit: ctx.limit,
-  };
-}
-
-/**
- * 발화에서 읽은 날짜·인원([TripParams](../flight/search-url.ts))을 숙박 조건으로.
- *
- * 같은 파서를 쓴다 — "11월 20일 체크인 11월 23일 체크아웃" 도 "11월 20일 출발
- * 11월 23일 귀국" 과 똑같이 **앞이 시작, 뒤가 끝**이라 가를 이유가 없다. 파서를
- * 하나 더 만들면 호텔과 항공권이 같은 문장을 다르게 읽기 시작한다.
- */
-function stayOf(trip: TripParams | null | undefined): HotelStay | null {
-  if (!trip) return null;
-  return {
-    checkIn: trip.departDate,
-    checkOut: trip.returnDate,
-    nights: trip.nights,
-    adults: trip.adults,
   };
 }
 

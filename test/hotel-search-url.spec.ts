@@ -1,7 +1,12 @@
+import { parseTripParams } from '../src/modules/flight/trip-params';
 import {
   hotelSearchUrl,
   hotelSearchUrls,
   resolveStay,
+  stayProblem,
+  staySupported,
+  withStay,
+  withoutStay,
 } from '../src/modules/hotel/search-url';
 
 /**
@@ -115,6 +120,7 @@ describe('숙박 조건 기본값', () => {
       checkOut: '2026-11-04',
       adults: 2,
       rooms: 1,
+      adultsClamped: false,
     });
   });
 
@@ -134,8 +140,232 @@ describe('숙박 조건 기본값', () => {
     ).toMatchObject({ checkOut: '2026-12-11' });
   });
 
-  it('인원은 플랫폼이 받는 범위로 자른다', () => {
-    expect(resolveStay({ checkIn: null, checkOut: null, nights: null, adults: 20 }, NOW).adults).toBe(9);
-    expect(resolveStay({ checkIn: null, checkOut: null, nights: null, adults: 0 }, NOW).adults).toBe(2);
+  /**
+   * ⚠️ **6명을 넘으면 줄이되, 줄였다고 말할 수 있어야 한다.** 그 위는 제휴몰이 객실을
+   *    나누라고 요구하는데 우리는 방을 몇 개로 쪼갤지 모른다. 말없이 6명으로 보내면
+   *    8명이라고 말한 사람이 8명으로 검색된 줄 안다.
+   */
+  it('인원은 6명까지만 넣고, 줄였으면 표시한다', () => {
+    const many = resolveStay({ checkIn: null, checkOut: null, nights: null, adults: 8 }, NOW);
+    expect(many.adults).toBe(6);
+    expect(many.adultsClamped).toBe(true);
+
+    const six = resolveStay({ checkIn: null, checkOut: null, nights: null, adults: 6 }, NOW);
+    expect(six.adults).toBe(6);
+    expect(six.adultsClamped).toBe(false);
+
+    // 못 읽었거나 말이 안 되는 값은 기본값 2명이다. **줄인 게 아니다.**
+    const none = resolveStay({ checkIn: null, checkOut: null, nights: null, adults: 0 }, NOW);
+    expect(none.adults).toBe(2);
+    expect(none.adultsClamped).toBe(false);
+  });
+});
+
+/**
+ * 되물어야 하는 날짜.
+ *
+ * ⚠️ **항공권과 하나가 다르다** — 체크인과 체크아웃이 같은 날이면 0박이라 검색이
+ *    안 된다. 항공권에서 같은 날은 당일치기라 멀쩡한 일정이다.
+ */
+describe('숙박 날짜 되묻기 판정', () => {
+  const parse = (utterance: string) => parseTripParams(utterance, NOW);
+
+  it('체크인과 체크아웃이 같은 날이면 되묻는다 — 호텔은 0박을 못 찾는다', () => {
+    expect(stayProblem(parse('오사카 호텔 11월 20일 체크인 11월 20일 체크아웃'))).toEqual({
+      kind: 'same-day',
+      date: '2026-11-20',
+    });
+  });
+
+  it('1박이면 되묻지 않는다', () => {
+    expect(stayProblem(parse('오사카 호텔 11월 20일 체크인 11월 21일 체크아웃'))).toBeNull();
+  });
+
+  /** 상대 표현을 파서가 한 날로 읽은 것까지 되물으면, 말한 적 없는 날짜를 질문받는다. */
+  it('직접 말한 날짜가 아니면 되묻지 않는다', () => {
+    expect(stayProblem(parse('오사카 호텔 주말에'))).toBeNull();
+  });
+
+  it('지난 날짜·거꾸로 선 일정은 항공권과 같은 판정을 쓴다', () => {
+    expect(stayProblem(parse('오사카 호텔 2025년 11월 20일'))).toMatchObject({ kind: 'past' });
+    expect(
+      stayProblem(parse('오사카 호텔 11월 23일 체크인 11월 20일 체크아웃')),
+    ).toMatchObject({ kind: 'reversed' });
+  });
+
+  it('날짜를 안 말했으면 문제가 없다', () => {
+    expect(stayProblem(parse('오사카 호텔 추천해줘'))).toBeNull();
+    expect(stayProblem(null)).toBeNull();
+  });
+});
+
+/**
+ * 호텔 **상세 페이지**에 조건 박기.
+ *
+ * ⚠️ **여기 적힌 형식도 지어낸 것이 아니다.** 네 곳에서 실제로 호텔 하나를 날짜·인원
+ *    넣고 연 뒤 주소창을 복사한 것이고(2026-11-09), 우리가 만들 수 없는 값(추적 토큰·
+ *    내부 번호)을 덜어냈다. 검색 결과 주소와 같은 규칙이다.
+ *
+ * ⚠️ **확인한 경로 모양에만 붙인다.** 같은 사이트에도 상세 주소가 여러 꼴이라
+ *    (`/hotels/detail/` vs `/hotels/오사카-hotel-detail-688242/`) 호스트만 보고 붙이면
+ *    무시되는 꼴이 생기고, 그러면 카드에 적은 날짜와 열리는 날짜가 갈린다.
+ */
+describe('호텔 상세 주소', () => {
+  const stay = { checkIn: '2026-11-20', checkOut: '2026-11-23', nights: null, adults: 3 };
+
+  it('호텔스닷컴 — chkin·chkout 과 객실별 인원(rm1=a3)', () => {
+    const url = withStay(
+      'https://kr.hotels.com/ho1948759872/hotel-intergate-osaka-umeda-osaka-ilbon/',
+      stay,
+      NOW,
+    );
+
+    const p = paramsOf(url);
+    expect(p.get('chkin')).toBe('2026-11-20');
+    expect(p.get('chkout')).toBe('2026-11-23');
+    // `adults=3` 이 아니다. 상세는 방 번호를 앞에 단 `rm1=a3` 꼴로 받는다.
+    expect(p.get('rm1')).toBe('a3');
+  });
+
+  it('트립닷컴 — 아이 수·객실 수까지 같이 보낸다', () => {
+    const url = withStay(
+      'https://kr.trip.com/hotels/detail/?cityId=248&hotelId=49507812&locale=ko-KR',
+      stay,
+      NOW,
+    );
+
+    const p = paramsOf(url);
+    expect(p.get('checkIn')).toBe('2026-11-20');
+    expect(p.get('checkOut')).toBe('2026-11-23');
+    expect(p.get('adult')).toBe('3');
+    expect(p.get('children')).toBe('0');
+    expect(p.get('crn')).toBe('1');
+    // 호텔의 신원은 건드리지 않는다.
+    expect(p.get('hotelId')).toBe('49507812');
+  });
+
+  it('클룩 — 로케일이 경로에 있어도 찾는다', () => {
+    const url = withStay(
+      'https://www.klook.com/ko/hotels/detail/1134329-prince-smart-inn-osaka-yodoyabashi/',
+      stay,
+      NOW,
+    );
+
+    const p = paramsOf(url);
+    expect(p.get('check_in')).toBe('2026-11-20');
+    expect(p.get('check_out')).toBe('2026-11-23');
+    expect(p.get('adult_num')).toBe('3');
+    expect(p.get('room_num')).toBe('1');
+  });
+
+  it('마이리얼트립 — 숙소 상세는 검색과 같은 이름의 칸을 쓴다', () => {
+    const url = withStay(
+      'https://accommodation.myrealtrip.com/union/products/5007313',
+      stay,
+      NOW,
+    );
+
+    const p = paramsOf(url);
+    expect(p.get('checkIn')).toBe('2026-11-20');
+    expect(p.get('checkOut')).toBe('2026-11-23');
+    expect(p.get('adultCount')).toBe('3');
+    expect(p.get('childCount')).toBe('0');
+    // ⚠️ 국내/해외 탭은 상품 번호가 이미 정한다. 잘못 넣으면 탭만 틀어진다.
+    expect(p.has('isDomestic')).toBe(false);
+  });
+
+  it('조건을 안 말했으면 기본값이 박힌다 — 내일 체크인 · 1박 · 2명', () => {
+    const p = paramsOf(
+      withStay('https://accommodation.myrealtrip.com/union/products/5007313', null, NOW),
+    );
+
+    expect(p.get('checkIn')).toBe('2026-11-03');
+    expect(p.get('checkOut')).toBe('2026-11-04');
+    expect(p.get('adultCount')).toBe('2');
+  });
+
+  it('인원은 6명을 넘지 않는다 — 방이 하나라서다', () => {
+    const many = { checkIn: null, checkOut: null, nights: null, adults: 9 };
+
+    expect(
+      paramsOf(withStay('https://kr.hotels.com/ho1948759872/x/', many, NOW)).get('rm1'),
+    ).toBe('a6');
+  });
+
+  /**
+   * ⚠️ **확인하지 않은 꼴에는 안 붙인다.** 모델은 같은 사이트의 다른 주소 꼴도 주는데,
+   *    거기서 파라미터가 무시되면 카드에 적은 날짜와 열리는 날짜가 갈린다. 그때는
+   *    조건을 말하지 않는 쪽(`staySupported === false`)이 맞다.
+   */
+  it('확인하지 않은 주소 꼴은 건드리지 않는다', () => {
+    const unknown = [
+      // 트립닷컴의 다른 상세 꼴.
+      'https://kr.trip.com/hotels/osaka-hotel-detail-688242/',
+      // 마이리얼트립 오퍼 페이지.
+      'https://www.myrealtrip.com/offers/12345',
+      // 클룩의 옛 상세 꼴.
+      'https://www.klook.com/ko/hotel/12345-abc/',
+      // 호텔 상세가 아니라 목록.
+      'https://kr.trip.com/hotels/osaka-list',
+    ];
+
+    for (const url of unknown) {
+      expect(withStay(url, stay, NOW)).toBe(url);
+      expect(staySupported(url)).toBe(false);
+    }
+  });
+
+  it('주소가 아니면 그대로 돌려준다', () => {
+    expect(withStay('그냥 글자', stay, NOW)).toBe('그냥 글자');
+    expect(staySupported('')).toBe(false);
+  });
+});
+
+/**
+ * 조건을 **도로 떼는** 길. 애드픽 추적 코드(`p_data` = `sha1(주소)`)가 이걸 본다.
+ *
+ * ⚠️ **같은 호텔은 날짜가 달라도 같은 코드여야 한다.** 조건이 박힌 주소로 코드를
+ *    만들면 성과 화면에서 한 호텔이 수십 줄로 쪼개지고, 전환은 드물어서 한 줄에
+ *    0 아니면 1 이 찍힌다 — 아무것도 못 읽는다.
+ */
+describe('조건을 뗀 주소', () => {
+  const base = 'https://accommodation.myrealtrip.com/union/products/5007313';
+  const stay = { checkIn: '2026-11-20', checkOut: '2026-11-23', nights: null, adults: 3 };
+
+  it('날짜·인원이 달라도 같은 주소로 돌아온다 — 추적 코드가 안 갈린다', () => {
+    const a = withStay(base, { checkIn: '2026-11-20', checkOut: '2026-11-23', nights: null, adults: 3 }, NOW);
+    const b = withStay(base, { checkIn: '2026-12-01', checkOut: '2026-12-05', nights: null, adults: 2 }, NOW);
+
+    expect(a).not.toBe(b); // 링크는 달라야 한다 — 각자 자기 날짜로 열린다
+    expect(withoutStay(a)).toBe(withoutStay(b));
+    expect(withoutStay(a)).toBe(base);
+  });
+
+  it('네 곳 모두 뗀 뒤가 원래 주소다', () => {
+    const urls = [
+      'https://kr.hotels.com/ho1948759872/hotel-intergate-osaka-umeda/',
+      'https://kr.trip.com/hotels/detail/?cityId=248&hotelId=49507812',
+      'https://www.klook.com/ko/hotels/detail/1134329-prince-smart-inn/',
+      base,
+    ];
+
+    for (const url of urls) {
+      expect(withoutStay(withStay(url, stay, NOW))).toBe(url);
+    }
+  });
+
+  /**
+   * ⚠️ **같은 이름의 칸이라도 남의 주소는 건드리지 않는다.** `adult` 는 마이리얼트립
+   *    **항공권** 검색 주소에도 있는 칸이다. 호스트만 보고 떼면 항공권 추적이 노선별이
+   *    아니라 통째로 뭉개진다.
+   */
+  it('호텔 상세가 아닌 주소는 그대로 둔다 — 항공권 주소를 건드리면 안 된다', () => {
+    const flight = 'https://air-web.myrealtrip.com/results?trip=SEL-OSA&adult=3&cabins=ECONOMY';
+
+    expect(withoutStay(flight)).toBe(flight);
+    expect(withoutStay('https://kr.trip.com/hotels/osaka-hotel-detail-688242/')).toBe(
+      'https://kr.trip.com/hotels/osaka-hotel-detail-688242/',
+    );
+    expect(withoutStay('그냥 글자')).toBe('그냥 글자');
   });
 });

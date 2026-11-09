@@ -1,4 +1,5 @@
-import { seoulDate } from '../flight/search-url';
+import { hostMatches } from '../../common/booking-url';
+import { TripDateProblem, TripParams, seoulDate } from '../flight/search-url';
 import { isKorea } from '../places/city-table';
 
 /**
@@ -47,6 +48,12 @@ export interface ResolvedStay {
   checkOut: string;
   adults: number;
   rooms: number;
+  /**
+   * 말한 인원이 상한을 넘어 **우리가 줄였는가.** 넘었으면 카드에 적어야 한다 —
+   * 8명이라고 말한 사람에게 6명짜리 링크를 말없이 주면 그 사람은 8명으로 검색된
+   * 줄 알고 예약하러 간다.
+   */
+  adultsClamped: boolean;
 }
 
 /**
@@ -57,6 +64,20 @@ export const CHECKIN_AFTER_DAYS = 1;
 
 /** 체크아웃을 체크인으로부터 며칠 뒤로 둘지. */
 export const DEFAULT_NIGHTS = 1;
+
+/** 인원을 안 말했을 때. 2인 1실이 가장 흔한 숙박이다. */
+export const DEFAULT_ADULTS = 2;
+
+/**
+ * 한 방에 넣을 수 있는 최대 인원. **6명에서 끊는다.**
+ *
+ * 그 위는 제휴몰마다 객실을 나누라고 요구하는데(2+2+2 식), 우리는 방을 몇 개로
+ * 쪼갤지 알 수 없다. 억지로 한 방 7명을 보내면 폼이 빈 결과를 열거나 조용히
+ * 기본값으로 돌아간다 — **몇 명으로 열리는지 사용자가 모르게 되는 쪽**이 가장 나쁘다.
+ *
+ * 그래서 6명으로 맞추고, **맞췄다는 사실을 카드에 적는다**(`adultsClamped`).
+ */
+export const MAX_ADULTS = 6;
 
 /**
  * 못 읽은 칸을 기본값으로 채운다. **기본값이 사는 유일한 곳이다** — 주소를 만드는
@@ -71,13 +92,14 @@ export function resolveStay(stay: HotelStay | null | undefined, now: Date): Reso
   // 거꾸로 선 일정은 폼을 못 연다. 못 읽은 것으로 보고 기본값으로 돌린다.
   // ⚠️ 같은 날도 안 된다 — 호텔은 **1박 이상**이어야 검색이 된다(항공권과 다르다).
   if (checkOut <= checkIn) checkOut = fallbackOut;
-  return { checkIn, checkOut, adults: clampAdults(stay?.adults), rooms: 1 };
+  const { adults, adultsClamped } = clampAdults(stay?.adults);
+  return { checkIn, checkOut, adults, rooms: 1, adultsClamped };
 }
 
-/** 플랫폼 파라미터가 1~9 라 그 범위만 보낸다. */
-function clampAdults(adults: number | null | undefined): number {
-  if (!adults || adults < 1) return 2;
-  return Math.min(adults, 9);
+/** 6명을 넘으면 6명으로 맞춘다. **줄였다는 사실을 같이 돌려준다** — 고지가 그걸 읽는다. */
+function clampAdults(asked: number | null | undefined): { adults: number; adultsClamped: boolean } {
+  if (!asked || asked < 1) return { adults: DEFAULT_ADULTS, adultsClamped: false };
+  return { adults: Math.min(asked, MAX_ADULTS), adultsClamped: asked > MAX_ADULTS };
 }
 
 /** 주소를 만들 수 있는 제휴몰. **순서가 카드 줄 순서다.** */
@@ -171,4 +193,234 @@ export function hotelSearchUrls(
 
 function addDays(iso: string, days: number): string {
   return new Date(Date.parse(`${iso}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+/**
+ * 발화에서 읽은 날짜·인원([TripParams](../flight/search-url.ts))을 숙박 조건으로.
+ *
+ * 같은 파서를 쓴다 — "11월 20일 체크인 11월 23일 체크아웃" 도 "11월 20일 출발
+ * 11월 23일 귀국" 과 똑같이 **앞이 시작, 뒤가 끝**이라 가를 이유가 없다. 파서를
+ * 하나 더 만들면 호텔과 항공권이 같은 문장을 다르게 읽기 시작한다.
+ */
+export function stayOf(trip: TripParams | null | undefined): HotelStay | null {
+  if (!trip) return null;
+  return {
+    checkIn: trip.departDate,
+    checkOut: trip.returnDate,
+    nights: trip.nights,
+    adults: trip.adults,
+  };
+}
+
+// ------------------------------------------------------------ 되물어야 하는 날짜
+/**
+ * 호텔에서 되물어야 하는 날짜 문제.
+ *
+ * 항공권의 둘([TripDateProblem](../flight/search-url.ts))에 **호텔에만 있는 하나**를
+ * 더한다 — 체크인과 체크아웃이 같은 날이면 0박이라 **검색 자체가 안 된다.**
+ * 항공권에서 같은 날은 당일치기라 멀쩡한 일정이고, 그래서 이 판정을 공유할 수 없다.
+ */
+export type StayDateProblem = TripDateProblem | { kind: 'same-day'; date: string };
+
+/**
+ * 고쳐서는 안 되는 날짜인가. 없으면 null 이고 평소대로 간다.
+ *
+ * ⚠️ **둘 다 사용자가 콕 집어 말한 날짜일 때만 문제로 삼는다.** "다음 주말" 을
+ *    파서가 한 날로 읽은 것까지 되물으면, 사용자는 자기가 말한 적 없는 날짜에 대해
+ *    질문을 받는다 — 항공권이 같은 규칙을 쓴다.
+ */
+export function stayProblem(trip: TripParams | null | undefined): StayDateProblem | null {
+  if (!trip) return null;
+  // 지난 날짜·역순은 항공권과 판정이 같다. 한 번 더 세지 않는다.
+  if (trip.problem) return trip.problem;
+  if (
+    trip.departDate &&
+    trip.departDate === trip.returnDate &&
+    trip.explicit?.depart &&
+    trip.explicit?.return
+  ) {
+    return { kind: 'same-day', date: trip.departDate };
+  }
+  return null;
+}
+
+// ------------------------------------------------------------ 상세 페이지 조건
+/**
+ * **호텔 한 곳의 상세 페이지**에 날짜·인원을 박는다.
+ *
+ * 왜 필요한가 — 모델이 주는 주소는 조건이 없는 맨 상세 페이지라, 열면 사용자가
+ * 날짜·인원을 다시 입력해야 한다. 그 한 단계가 이탈 지점이다(항공권이 같은 이유로
+ * 검색된 상태를 연다).
+ *
+ * ⚠️ **형식을 확인한 제휴몰만 바꾼다. 모르면 원본 그대로 돌려준다.** 파라미터
+ *    이름은 사이트마다 다르고 문서화돼 있지도 않다. 지어낸 이름을 붙이면 둘 중
+ *    하나인데 **둘 다 맨 페이지보다 나쁘다** — 사이트가 무시하면 카드에 적은 날짜와
+ *    열리는 날짜가 갈리고, 잘못 해석하면 말한 적 없는 날짜로 열린다.
+ *
+ * ⚠️ **저장하면 안 된다. 카드를 그릴 때마다 만든다.** 검색 캐시는 날짜를 키에 안
+ *    넣고 하루를 산다 — 구워서 저장하면 내일 캐시를 맞은 사람이 어제 날짜로 열린다
+ *    (`hotelSearchUrl` 과 같은 이유, 0004).
+ *
+ * ⚠️ **조건이 붙은 주소가 곧 애드픽 변환 키다**([affiliate.service.ts](../affiliate/affiliate.service.ts)).
+ *    날짜가 바뀌면 커미션 링크도 새로 만들어진다. 기본값으로 여는 사람은 하루 동안
+ *    같은 키라 캐시를 맞지만, 날짜를 직접 말한 사람의 첫 클릭은 변환을 기다린다.
+ *    **추적 코드(`p_data`)까지 갈리지는 않는다** — `withoutStay` 가 그걸 막는다.
+ */
+export function withStay(
+  url: string,
+  stay: HotelStay | null | undefined,
+  now: Date = new Date(),
+): string {
+  const params = writerFor(url);
+  if (!params) return url;
+  try {
+    const parsed = new URL(url);
+    for (const [key, value] of Object.entries(params(resolveStay(stay, now)))) {
+      parsed.searchParams.set(key, value);
+    }
+    return parsed.toString();
+  } catch {
+    // 주소가 아니면 손대지 않는다. 호출부는 원본을 그대로 쓴다.
+    return url;
+  }
+}
+
+/**
+ * `withStay` 가 붙인 칸을 도로 뗀다. **호텔 한 곳의 신원이 되는 주소다.**
+ *
+ * 애드픽 추적 코드(`p_data` = `sha1(주소)`)가 이걸 보고 만들어진다. 조건이 붙은
+ * 주소로 만들면 **같은 호텔이 날짜마다 다른 코드**를 받아서, 애드픽 성과 화면에서
+ * 한 호텔이 수십 줄로 쪼개진다 — 전환은 드물어서 쪼개면 한 줄에 0 아니면 1 이 찍히고
+ * 아무것도 못 읽는다. 날짜별로 보고 싶으면 우리 `recommendation_items.source_url`
+ * 에 조건이 그대로 남아 있다.
+ *
+ * ⚠️ **우리가 붙인 칸만 뗀다.** 같은 이름이라도 모르는 주소 꼴이면 손대지 않는다 —
+ *    예컨대 `adult` 는 마이리얼트립 **항공권** 검색 주소에도 있는 칸이라, 호스트와
+ *    경로까지 맞을 때만 떼야 항공권 추적이 같이 뭉개지지 않는다.
+ */
+export function withoutStay(url: string): string {
+  const params = writerFor(url);
+  if (!params) return url;
+  try {
+    const parsed = new URL(url);
+    // 값은 필요 없고 **칸 이름만** 필요하다. 쓰는 쪽과 떼는 쪽이 같은 표를 보므로
+    // 한쪽만 고쳐서 어긋날 일이 없다.
+    for (const key of Object.keys(params(SAMPLE_STAY))) parsed.searchParams.delete(key);
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+/** 칸 이름을 뽑으려고 쓰는 값. 어떤 주소에도 안 들어간다. */
+const SAMPLE_STAY: ResolvedStay = {
+  checkIn: '',
+  checkOut: '',
+  adults: 1,
+  rooms: 1,
+  adultsClamped: false,
+};
+
+/** 이 주소에 조건을 박을 수 있는가. **카드 고지가 이걸 보고 말을 고른다.** */
+export function staySupported(url: string): boolean {
+  return writerFor(url) !== null;
+}
+
+/** 조건 → 주소에 박을 칸. **이 표 하나가 쓰기와 떼기를 다 정한다.** */
+type StayWriter = (stay: ResolvedStay) => Record<string, string>;
+
+interface DetailFormat {
+  domain: string;
+  /**
+   * **확인한 경로 모양.** 호스트만 보고 붙이지 않는다 — 같은 사이트 안에서도 상세
+   * 주소가 여러 꼴이고(`/hotels/detail/` vs `/hotels/{도시}-hotel-detail-{번호}/`),
+   * 확인하지 않은 꼴에서 파라미터가 무시되면 **카드에 적은 날짜와 열리는 날짜가
+   * 갈린다.** 그건 맨 주소로 여는 것보다 나쁘다.
+   */
+  path: RegExp;
+  params: StayWriter;
+}
+
+/**
+ * 제휴몰별 상세 페이지 파라미터.
+ *
+ * ⚠️ **전부 실제 상세 페이지에서 날짜·인원을 넣고 주소창을 복사한 것이다**
+ *    (2026-11-09). 검색 결과 주소(`hotelSearchUrl`)가 2026-11-02 에 같은 방법으로
+ *    확인된 것과 같은 규칙이다 — **지어낸 파라미터는 넣지 않는다.**
+ *
+ *    우리가 만들 수 없는 값은 덜어냈다: 추적 토큰(`pwa_ts`·`searchId`·
+ *    `source_price_token`·`serverData`·`hoteluniquekey`), 내부 번호(`regionId`·
+ *    `neighborhoodId`·`expediaPropertyId`), 그리고 그 호텔 주소가 이미 들고 있는
+ *    것(`hotelId`·`cityId`).
+ *
+ * ⚠️ **방은 늘 하나다**(`stay.rooms`). 인원을 6명에서 끊는 이유이기도 하다 — 그
+ *    위는 사이트가 객실을 나누라고 요구하는데 몇 개로 쪼갤지 우리가 모른다.
+ */
+const DETAIL_FORMATS: DetailFormat[] = [
+  {
+    // kr.hotels.com/ho1948759872/hotel-intergate-osaka-umeda-osaka-ilbon/
+    domain: 'hotels.com',
+    path: /^\/ho\d+\//,
+    params: (stay) => ({
+      chkin: stay.checkIn,
+      chkout: stay.checkOut,
+      // ⚠️ **인원은 객실별로 적는다.** `rm1=a3` 이 "1번 방 성인 3명" 이다.
+      //    `adults=3` 은 검색 결과 주소의 칸이고, 상세에는 이 꼴로 붙어 있었다.
+      rm1: `a${stay.adults}`,
+    }),
+  },
+  {
+    // kr.trip.com/hotels/detail/?cityId=248&hotelId=49507812&checkIn=...
+    domain: 'trip.com',
+    path: /^\/hotels\/detail\/?$/,
+    params: (stay) => ({
+      checkIn: stay.checkIn,
+      checkOut: stay.checkOut,
+      adult: String(stay.adults),
+      // 아이 수·객실 수도 같이 붙어 있었다. 한 칸을 빼면 조용히 기본값이 될 수 있다
+      // (항공권에서 한 칸을 뺐다가 인원이 1명으로 열린 적이 있다).
+      children: '0',
+      crn: String(stay.rooms),
+    }),
+  },
+  {
+    // www.klook.com/ko/hotels/detail/1134329-prince-smart-inn-osaka-yodoyabashi/
+    domain: 'klook.com',
+    path: /^\/[a-z]{2}(?:-[a-zA-Z]{2,4})?\/hotels\/detail\//,
+    params: (stay) => ({
+      check_in: stay.checkIn,
+      check_out: stay.checkOut,
+      adult_num: String(stay.adults),
+      child_num: '0',
+      room_num: String(stay.rooms),
+    }),
+  },
+  {
+    // accommodation.myrealtrip.com/union/products/5007313
+    //
+    // ⚠️ **`www.myrealtrip.com/offers/...` 는 여기 없다.** 모델이 그 꼴도 주는데,
+    //    오퍼 페이지에서도 같은 칸이 먹는지 확인한 적이 없다.
+    domain: 'myrealtrip.com',
+    path: /^\/union\/products\/\d+/,
+    params: (stay) => ({
+      checkIn: stay.checkIn,
+      checkOut: stay.checkOut,
+      adultCount: String(stay.adults),
+      childCount: '0',
+      // ⚠️ `isDomestic` 은 **건드리지 않는다.** 주소창에 같이 있었지만 그 상품이
+      //    국내인지는 상품 번호가 이미 정한다. 잘못 넣으면 탭만 틀어진다.
+    }),
+  },
+];
+
+function writerFor(url: string): StayWriter | null {
+  try {
+    const parsed = new URL(url);
+    const format = DETAIL_FORMATS.find(
+      (known) => hostMatches(parsed.hostname, known.domain) && known.path.test(parsed.pathname),
+    );
+    return format?.params ?? null;
+  } catch {
+    return null;
+  }
 }

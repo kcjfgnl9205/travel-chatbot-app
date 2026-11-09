@@ -69,7 +69,11 @@ export interface TripParams {
   returnDate: string | null;
   /** '3박' 의 3. 귀국일을 안 말했을 때 출발일에서 이만큼 뒤로 민다. */
   nights: number | null;
-  /** 어른 수. 플랫폼 파라미터가 1~9 라 그 범위만 읽는다. */
+  /**
+   * 어른 수. **말한 그대로다** — 플랫폼 상한(`MAX_ADULTS`)보다 클 수 있고, 줄이는
+   * 것은 링크를 만드는 쪽(`resolveTrip`·`resolveStay`)이 한다. 여기서 미리 줄이면
+   * "몇 명이라고 말했는지" 를 잃어버려서 줄였다는 고지를 쓸 수 없다.
+   */
   adults: number | null;
   /** 반영한 표현 그대로. "반영하지 않았어요" 고지에서 빼는 데 쓴다. */
   used: string[];
@@ -110,7 +114,23 @@ export interface ResolvedTrip {
   /** 편도면 null. */
   back: string | null;
   adults: number;
+  /**
+   * 말한 인원이 상한을 넘어 **우리가 줄였는가.** 넘었으면 카드에 적어야 한다 —
+   * 10명이라고 말한 사람에게 9명짜리 링크를 말없이 주면 그 사람은 10명으로 검색된
+   * 줄 알고 예약하러 간다.
+   */
+  adultsClamped: boolean;
 }
+
+/**
+ * 링크에 넣을 수 있는 최대 인원. **플랫폼 검색 폼의 한계다** — 트립닷컴·스카이스캐너
+ * 둘 다 성인 9명까지만 받는다.
+ *
+ * ⚠️ [trip-params.ts](./trip-params.ts) 는 이보다 큰 수도 읽는다. 읽어야 **줄였다고
+ *    말할 수 있기** 때문이다 — 안 읽으면 "인원은 반영되지 않았어요" 로만 나가서,
+ *    10명이라고 말한 사람은 왜 안 됐는지도 몇 명으로 열리는지도 모른다.
+ */
+export const MAX_ADULTS = 9;
 
 /**
  * 못 읽은 칸을 기본값으로 채운다.
@@ -138,7 +158,13 @@ export function resolveTrip(
   //    링크를 만들기 전에 끊는다 — 여기서 덮으면 **말한 적 없는 날짜로 검색된 링크**
   //    가 나간다 (11월 20일 귀국 → 11월 30일로 안내한 적이 있다).
   if (back && back < depart) back = fallbackBack;
-  return { depart, back, adults: trip?.adults ?? 1 };
+  const asked = trip?.adults ?? null;
+  return {
+    depart,
+    back,
+    adults: asked ? Math.min(asked, MAX_ADULTS) : 1,
+    adultsClamped: Boolean(asked && asked > MAX_ADULTS),
+  };
 }
 
 /** ISO 날짜에 며칠 더하기. 서울 기준으로 뽑힌 문자열이라 산술만 하면 된다. */

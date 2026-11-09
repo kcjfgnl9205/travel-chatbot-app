@@ -9,6 +9,7 @@ import { routeProblem } from '../flight/airports';
 import { FlightService } from '../flight/flight.service';
 import { parseTripParams, withoutUsed } from '../flight/trip-params';
 import { HotelService } from '../hotel/hotel.service';
+import { stayProblem, staySupported } from '../hotel/search-url';
 import { ParsedIntent } from '../intent/intent.types';
 import * as cards from '../kakao/cards';
 import { isCredentialError } from '../openai/openai.service';
@@ -119,12 +120,27 @@ export class SearchService {
     //
     //    검색을 시작하기 전에 끊는 게 중요하다. 항공권은 캐시가 노선 단위라 날짜가
     //    틀려도 캐시는 멀쩡히 채워지고, 그러면 다음 사람이 그 행을 받는다.
-    const asked = kind === 'flight' ? parseTripParams(req.utterance, new Date(req.started)) : null;
-    if (asked?.problem) {
+    //    호텔도 같은 관문을 탄다. 다만 **판정이 하나 더 있다** — 체크인과 체크아웃이
+    //    같은 날이면 0박이라 검색 자체가 안 된다([hotel/search-url.ts](../hotel/search-url.ts)
+    //    `stayProblem`). 항공권에서 같은 날은 당일치기라 멀쩡한 일정이라서 공유할 수 없다.
+    const asked =
+      kind === 'flight' || kind === 'hotel'
+        ? parseTripParams(req.utterance, new Date(req.started))
+        : null;
+    if (kind === 'flight' && asked?.problem) {
       this.logger.log(
         `date problem kind=${asked.problem.kind} utterance=${JSON.stringify(req.utterance)}`,
       );
       return cards.fixDatesCard(meta, asked, req.botName);
+    }
+    if (kind === 'hotel') {
+      const problem = stayProblem(asked);
+      if (problem) {
+        this.logger.log(
+          `stay date problem kind=${problem.kind} utterance=${JSON.stringify(req.utterance)}`,
+        );
+        return cards.fixStayDatesCard(meta, asked!, problem, req.botName);
+      }
     }
 
     // 링크를 만들 수 없는 노선도 여기서 끊는다 — 같은 도시끼리, 공항 없는 출발지·도착지.
@@ -437,7 +453,14 @@ export class SearchService {
     //
     //    "더 보기" 경로의 발화는 버튼이 보낸 문장이라 날짜가 없다. 그때는 기본값으로
     //    열린다 — 링크 카드는 줄이 셋뿐이라 다음 페이지가 없으므로 실제로는 안 걸린다.
-    const trip = meta.kind === 'flight' ? parseTripParams(req.utterance, new Date(req.started)) : null;
+    //
+    //    ⚠️ **호텔도 읽는다.** 추천 목록은 여전히 지역으로만 찾지만(캐시를 지역으로
+    //    가른다) **링크는 그 날짜·인원으로 연다** — 상세 페이지를 맨 주소로 열면
+    //    사용자가 날짜를 다시 입력해야 하고, 그 한 단계가 이탈 지점이다.
+    const trip =
+      meta.kind === 'flight' || meta.kind === 'hotel'
+        ? parseTripParams(req.utterance, new Date(req.started))
+        : null;
 
     const render: RenderContext = {
       meta,
@@ -450,6 +473,14 @@ export class SearchService {
     };
     const rows = await domain.rows(page, render);
     if (!rows.length) return await this.emptyResponse(meta, req);
+
+    // ⚠️ **한 줄이라도 맨 주소로 나가면 조건을 말하지 않는다.** 상세 페이지에 날짜를
+    //    박을 수 있는 제휴몰만 받기 때문이다([hotel/search-url.ts](../hotel/search-url.ts)
+    //    `withStay`). 섞인 카드에 "링크는 11월 10일 체크인으로 열려요" 를 적으면,
+    //    안 받은 줄을 누른 사람은 적힌 것과 다른 페이지를 본다.
+    const stayApplied =
+      meta.kind === 'hotel' && page.every((item) => staySupported(sourceUrlOf(item)));
+    const reflectsConditions = meta.kind === 'hotel' ? stayApplied : true;
 
     const buttons: t.Json[] = [];
     if (hasNextPage(valid.length, start, this.config.resultMaxItems)) {
@@ -482,11 +513,15 @@ export class SearchService {
       // ⚠️ **반영한 조건은 고지에서 뺀다.** 날짜를 링크에 넣어놓고 "날짜는 반영되지
       //    않았어요" 라고 적으면, 사용자는 맞는 링크를 받고도 틀렸다고 읽는다.
       cards.noticeText({
-        ignored: trip ? withoutUsed(opts.ignored, trip.used) : opts.ignored,
+        // ⚠️ **조건을 실제로 반영한 카드에서만 뺀다.** 호텔은 형식을 확인한 제휴몰만
+        //    상세 주소에 날짜를 받으므로(`staySupported`), 안 받은 줄이 섞인 카드는
+        //    지금까지처럼 "반영되지 않았어요" 가 맞다.
+        ignored: trip && reflectsConditions ? withoutUsed(opts.ignored, trip.used) : opts.ignored,
         meta,
         trip,
         now: new Date(req.started),
         affiliate: carriesAffiliate(meta.kind, page),
+        stayApplied,
       }),
       req.botName,
     );
@@ -688,6 +723,16 @@ export function cacheKeyOf(
  * ⚠️ **리다이렉트와 같은 함수로 판정한다.** 두 곳이 각자 기억하면 언젠가 갈리고,
  *    그러면 고지가 붙은 줄이 제휴를 안 타거나 그 반대가 된다.
  */
+/**
+ * 저장된 항목에서 원본 주소를 꺼낸다.
+ *
+ * 도메인 타입(`Hotel`)을 끌어오지 않는 이유는 `carriesAffiliate` 와 같다 — 이 파일은
+ * 도메인을 모르는 자리이고, 캐시에서 살아난 값이라 필드가 없을 수도 있다.
+ */
+function sourceUrlOf(item: unknown): string {
+  return (item as { sourceUrl?: string | null } | null)?.sourceUrl ?? '';
+}
+
 export function carriesAffiliate(kind: SearchKind, page: unknown[]): boolean {
   if (kind === 'attraction') return false;
   return page.some((item) =>

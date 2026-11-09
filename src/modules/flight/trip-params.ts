@@ -17,6 +17,13 @@ import { TripDateProblem, TripParams, seoulDate } from './search-url';
  *    읽은 날짜가 다음 주에 같은 말을 한 사람에게 그대로 나간다. 그래서 이 함수는
  *    **카드를 그리는 순간** 발화에서 다시 읽는다 (0004 와 같은 이유다).
  */
+/**
+ * 발화에서 읽어주는 최대 인원. **링크에 넣는 상한이 아니다** — 그건 도메인마다
+ * 다르고([search-url.ts](./search-url.ts) `MAX_ADULTS` 9, 호텔은 6) 줄이는 것은
+ * 그쪽 일이다. 여기서 끊으면 "줄였다" 는 말조차 못 한다.
+ */
+export const PARSED_ADULTS_MAX = 30;
+
 export function parseTripParams(utterance: string, now: Date): TripParams {
   const today = seoulDate(now);
   const used: string[] = [];
@@ -45,9 +52,17 @@ export function parseTripParams(utterance: string, now: Date): TripParams {
   };
 
   // 인원. '2인천' 같은 지명 조각을 먹지 않게 '인' 뒤를 본다.
+  //
+  // ⚠️ **상한을 플랫폼 한계보다 넉넉히 둔다.** 예전에는 9명까지만 읽어서 "10명" 이
+  //    아예 안 읽혔고, 그러면 고지가 「인원은 반영되지 않았어요」로 나간다 — 사용자는
+  //    왜 안 됐는지도, 몇 명으로 열리는지도 모른다. 읽어둬야 도메인이 자기 상한으로
+  //    줄이면서 **"6명으로 맞췄어요"** 라고 말할 수 있다 (호텔 6명 · 항공권 9명,
+  //    [search-url.ts](./search-url.ts) `MAX_ADULTS`).
+  //
+  // 30 에서 끊는 것은 그 위가 대개 인원이 아니기 때문이다 ('50인분', 전화번호 조각).
   text = scan(text, /(\d{1,2})\s*(?:명|인(?!천))/g, (m) => {
     const n = Number(m[1]);
-    if (n < 1 || n > 9) return false;
+    if (n < 1 || n > PARSED_ADULTS_MAX) return false;
     adults ??= n;
     used.push(m[0].trim());
     return true;
