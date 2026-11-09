@@ -88,39 +88,81 @@ export abstract class TwoStageSearch<TQuery> {
    */
   protected async findCandidates(query: TQuery, trace: TwoStageTrace): Promise<unknown[] | null> {
     const subject = this.subjectOf(query);
+    const inputs = this.searchInputs(query, this.config.openaiCandidateCount);
 
-    const result = await this.openai.respond({
-      instructions: this.searchInstructions,
-      tools: [this.openai.webSearchToolSpec],
-      // ⚠️ 검색을 **반드시** 돌린다. auto 로 두면 모델이 건너뛰고 빈 결과를 낸다.
-      toolChoice: 'required',
-      effort: this.config.openaiSearchEffort,
-      format: this.candidateSchema,
-      input: this.searchInput(query, this.config.openaiCandidateCount),
-    });
-
-    trace.searchMs = result.ms;
-    trace.searchCalls = result.searchCalls;
-
-    // 검색을 한 번도 안 돌았으면 모델이 기억으로 답한 것이다 — URL 과 가격이 특히 위험하다.
-    if (!result.searchCalls) {
-      this.logger.warn(`web_search 가 호출되지 않았다 ${subject}`);
+    // ⚠️ **여러 갈래면 동시에 돈다.** 한 갈래가 30~60초라 줄 세우면 콜백 수명을 먹는다.
+    //    한 갈래가 실패해도 나머지로 간다 — 전부 실패했을 때만 던진다(호출부가 실패
+    //    카드를 고른다).
+    const settled = await Promise.allSettled(
+      inputs.map((input) =>
+        this.openai.respond({
+          instructions: this.searchInstructions,
+          tools: [this.openai.webSearchToolSpec],
+          // ⚠️ 검색을 **반드시** 돌린다. auto 로 두면 모델이 건너뛰고 빈 결과를 낸다.
+          toolChoice: 'required',
+          effort: this.config.openaiSearchEffort,
+          format: this.candidateSchema,
+          input,
+          include: this.groundsOnSources ? [SEARCH_SOURCES_INCLUDE] : undefined,
+        }),
+      ),
+    );
+    const failures = settled.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    if (failures.length === settled.length) throw failures[0].reason;
+    for (const failure of failures) {
+      this.logger.warn(`${this.label} search branch failed ${subject} err=${failure.reason}`);
     }
 
-    const parsed = parseJsonLoose<{ candidates?: unknown[] }>(result.text);
-    const candidates = Array.isArray(parsed?.candidates) ? parsed.candidates : [];
+    const candidates: unknown[] = [];
+    trace.searchMs = 0;
+    trace.searchCalls = 0;
+    trace.ungrounded = 0;
+    settled.forEach((outcome, branch) => {
+      if (outcome.status !== 'fulfilled') return;
+      const result = outcome.value;
+      trace.searchMs = Math.max(trace.searchMs, result.ms);
+      trace.searchCalls += result.searchCalls;
+
+      const parsed = parseJsonLoose<{ candidates?: unknown[] }>(result.text);
+      const found = Array.isArray(parsed?.candidates) ? parsed.candidates : [];
+
+      // 검색을 한 번도 안 돌았으면 모델이 기억으로 답한 것이다 — URL 과 가격이 특히 위험하다.
+      if (!result.searchCalls) {
+        this.logger.warn(
+          `web_search 가 호출되지 않았다 ${subject} branch=${branch}` +
+            (this.groundsOnSources ? ` — 후보 ${found.length}곳을 버린다(기억으로 쓴 답이다)` : ''),
+        );
+        if (this.groundsOnSources) return;
+      }
+
+      // ⚠️ **검색 도구가 돌려준 주소와 대조한다.** 모델이 JSON 에 적은 주소는 타이핑한
+      //    값이라 지어낼 수 있다. 출처가 비어 오면(툴이 안 줬다) 대조할 수 없으므로
+      //    그대로 두고 그 사실을 남긴다 — 여기서 전부 버리면 툴 버전 하나에 검색이 죽는다.
+      const sources = result.sources ?? [];
+      let kept = found;
+      if (this.groundsOnSources) {
+        if (sources.length) {
+          kept = this.groundedCandidates(found, sources);
+          trace.ungrounded += found.length - kept.length;
+        } else {
+          this.logger.warn(
+            `${this.label} search returned no sources ${subject} branch=${branch} — 출처 대조를 건너뛴다`,
+          );
+        }
+      }
+
+      this.logger.log(
+        `${this.label} search ${subject} branch=${branch} searches=${result.searchCalls} ` +
+          `sources=${sources.length} candidates=${found.length} grounded=${kept.length} ` +
+          `chars=${result.text.length} ms=${result.ms}`,
+      );
+      candidates.push(...kept);
+    });
     trace.candidates = candidates.length;
 
-    this.logger.log(
-      `${this.label} search ${subject} searches=${result.searchCalls} ` +
-        `candidates=${candidates.length} chars=${result.text.length} ms=${result.ms}`,
-    );
-
     if (!candidates.length) {
-      // 스키마를 걸어뒀는데도 비어 오면 프롬프트가 안 먹은 것이다. 원문을 남긴다.
-      this.logger.warn(
-        `${this.label} search produced no candidates ${subject} text=${clip(result.text, 200)}`,
-      );
+      // 스키마를 걸어뒀는데도 비어 오면 프롬프트가 안 먹은 것이다.
+      this.logger.warn(`${this.label} search produced no candidates ${subject}`);
       return null;
     }
 
@@ -159,6 +201,30 @@ export abstract class TwoStageSearch<TQuery> {
    * 이 훅을 안 덮어쓰는 도메인도 있다).
    */
   protected usableCandidates(candidates: unknown[]): unknown[] {
+    return candidates;
+  }
+
+  /**
+   * 검색 갈래. **기본은 하나**다(`searchInput`). 호텔처럼 사이트마다 따로 찾아야
+   * 결과가 좋아지는 도메인만 여럿을 낸다 — 갈래들은 동시에 돈다.
+   */
+  protected searchInputs(query: TQuery, wanted: number): string[] {
+    return [this.searchInput(query, wanted)];
+  }
+
+  /**
+   * **검색 도구가 실제로 본 주소만 쓰는가.** 켜면 세 가지가 달라진다 —
+   *
+   *   · 응답에 출처(`web_search_call.action.sources`)를 같이 받는다
+   *   · 검색을 안 돌고 답한 갈래는 통째로 버린다(기억으로 쓴 답이다)
+   *   · 후보를 `groundedCandidates` 로 출처와 대조한다
+   *
+   * 기본은 꺼져 있다 — 다른 도메인의 동작을 바꾸지 않는다.
+   */
+  protected readonly groundsOnSources: boolean = false;
+
+  /** 출처와 대조해 남길 후보. `groundsOnSources` 일 때만 불린다. */
+  protected groundedCandidates(candidates: unknown[], _sources: string[]): unknown[] {
     return candidates;
   }
 
@@ -233,6 +299,9 @@ export abstract class TwoStageSearch<TQuery> {
   }
 }
 
+/** 웹 검색이 실제로 가져온 페이지 목록을 응답에 같이 받는 `include` 항목. */
+export const SEARCH_SOURCES_INCLUDE = 'web_search_call.action.sources';
+
 /**
  * 2차 응답 스키마. **도메인과 무관하게 하나다** — 번호만 받기 때문이다.
  *
@@ -294,8 +363,13 @@ export interface TwoStageTrace {
   rankMs: number;
   /** 모델이 web_search 를 실제로 돌린 횟수. 0 이면 기억으로 답한 것이다. */
   searchCalls: number;
-  /** 1차 호출이 모아온 후보 개수. 0 이면 검색 프롬프트가 안 먹은 것이다. */
+  /** 1차 호출이 모아온 후보 개수 (출처 대조 뒤). 0 이면 검색 프롬프트가 안 먹은 것이다. */
   candidates: number;
+  /**
+   * 출처 대조에서 떨어진 후보 수. **모델이 검색 결과에 없는 주소를 적었다**는 뜻이다.
+   * 크면 모델이 주소를 지어내고 있다.
+   */
+  ungrounded: number;
   /**
    * 그중 **2차에 실제로 넘긴** 개수. `candidates` 보다 한참 작으면 1차가 못 쓰는 것을
    * 물어온 것이고, 그건 2차·정규화가 아니라 **1차 프롬프트나 허용 목록**의 문제다.
@@ -307,5 +381,13 @@ export interface TwoStageTrace {
 
 /** 공통 필드를 0으로. 도메인 필드는 호출부가 덧붙인다. */
 export function newTwoStageTrace(): TwoStageTrace {
-  return { searchMs: 0, rankMs: 0, searchCalls: 0, candidates: 0, usableCandidates: 0, picks: 0 };
+  return {
+    searchMs: 0,
+    rankMs: 0,
+    searchCalls: 0,
+    candidates: 0,
+    ungrounded: 0,
+    usableCandidates: 0,
+    picks: 0,
+  };
 }

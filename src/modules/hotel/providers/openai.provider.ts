@@ -8,7 +8,8 @@ import { OpenAiService } from '../../openai/openai.service';
 import { TwoStageSearch, TwoStageTrace, newTwoStageTrace } from '../../openai/two-stage';
 import { Hotel, HotelProvider, HotelQuery } from '../hotel.types';
 import { isHotelDetailUrl } from '../search-url';
-import { ThumbnailSource, extractThumbnail } from '../thumbnail';
+import { isGrounded, nameKey, nameMatchesTitle, pageTitleOf, sourceKeys } from '../verify';
+import { extractThumbnail } from '../thumbnail';
 
 /**
  * gpt-5-mini + 웹 검색으로 호텔을 찾는 provider.
@@ -43,6 +44,31 @@ export const ALLOWED_HOSTS = [
   'hotels.com', // 호텔스닷컴
 ];
 
+/**
+ * 사이트별 검색 갈래. **순서가 우선순위다** — 같은 호텔이 두 곳에서 오면 앞의 것이 남는다.
+ *
+ * 상세 주소 꼴은 [search-url.ts](../search-url.ts) `DETAIL_FORMATS` 와 같은 것이다.
+ * 클룩은 갈래를 따로 두지 않는다(허용은 한다) — 호텔 상세가 검색에 잘 안 걸린다.
+ */
+export const SITE_BRANCHES = [
+  {
+    site: '호텔스닷컴(kr.hotels.com)',
+    host: 'hotels.com',
+    detail: 'https://kr.hotels.com/ho123456789/호텔-이름/',
+  },
+  {
+    site: '트립닷컴(kr.trip.com)',
+    host: 'trip.com',
+    detail:
+      'https://kr.trip.com/hotels/detail/?hotelId=12345 또는 https://kr.trip.com/hotels/osaka-hotel-detail-12345/',
+  },
+  {
+    site: '마이리얼트립(myrealtrip.com)',
+    host: 'myrealtrip.com',
+    detail: 'https://accommodation.myrealtrip.com/union/products/1234567',
+  },
+] as const;
+
 /** 프롬프트에 그대로 박아 넣는 표기. 목록과 문구가 어긋나지 않게 여기서 만든다. */
 export const ALLOWED_SITES_TEXT =
   '트립닷컴(trip.com), 마이리얼트립(myrealtrip.com), 클룩(klook.com), 호텔스닷컴(hotels.com)';
@@ -68,6 +94,10 @@ export { chooseUrl, toKoreanUrl } from '../../../common/booking-url';
 export interface SearchTrace extends TwoStageTrace {
   /** 404·410 이라 버린 예약 링크 수. 모델이 주소를 지어낸 정도를 보여준다. */
   deadLinks: number;
+  /** 페이지 제목에 호텔 이름이 없어서 버린 수. 다른 호텔·목록 페이지를 가리킨 것이다. */
+  nameMismatches: number;
+  /** 페이지 제목으로 이름까지 확인한 수. 나머지는 페이지를 못 읽어(봇 차단) 확인 못 했다. */
+  namesVerified: number;
   /** 살아 있지 않아서 버린 이미지 주소 수. */
   droppedThumbnails: number;
   /** 최종적으로 이미지가 붙은 호텔 수. */
@@ -99,6 +129,7 @@ interface RawCandidate {
   url?: unknown;
   price_from?: unknown;
   review_score?: unknown;
+  review_count?: unknown;
   area?: unknown;
   note?: unknown;
 }
@@ -112,7 +143,12 @@ const SEARCH_INSTRUCTIONS = [
   '**반드시 한국어 페이지 주소를 골라라.** 같은 호텔이라도 영문 페이지가 아니라 '
     + '한국어 페이지 URL 을 적는다 (예: www.trip.com 이 아니라 kr.trip.com, '
     + 'klook 은 /ko/ 경로, hotels.com 은 kr.hotels.com).',
-  '검색 결과에 나오지 않은 URL·가격·평점은 절대 지어내지 않는다. 모르면 null 로 둔다.',
+  '검색 결과에 나오지 않은 URL·가격·평점·리뷰 수는 절대 지어내지 않는다. 모르면 null 로 둔다.',
+  // ⚠️ 서버가 이걸 **검사한다**(groundedCandidates). 검색 도구가 돌려준 출처에 없는
+  //    주소는 버려지므로, 기억으로 적은 주소는 카드까지 못 간다.
+  '**URL 은 이번 검색에서 실제로 열어 보거나 검색 결과로 받은 주소를 그대로 옮겨 적는다.** '
+    + '기억으로 주소를 만들거나 비슷하게 고쳐 쓰지 마라. 상세 페이지를 못 찾은 호텔은 빼라.',
+  '**개수를 채우려고 호텔을 지어내지 마라.** 찾은 만큼만 낸다.',
   // ⚠️ 이 문장이 없으면 모델은 검색에 잘 걸리는 **도시 목록 페이지**를 호텔마다 붙인다.
   //    사용자는 호텔을 눌렀는데 목록에 떨어진다. 서버도 거르지만(isHotelDetailUrl)
   //    걸러진 만큼 카드가 짧아지므로 처음부터 상세를 고르게 한다.
@@ -147,7 +183,7 @@ export const CANDIDATE_SCHEMA = {
         items: {
           type: 'object',
           additionalProperties: false,
-          required: ['name', 'url', 'price_from', 'review_score', 'area', 'note'],
+          required: ['name', 'url', 'price_from', 'review_score', 'review_count', 'area', 'note'],
           properties: {
             name: { type: 'string', description: '호텔명 (한국어, 영문 병기)' },
             url: {
@@ -158,7 +194,11 @@ export const CANDIDATE_SCHEMA = {
                 '반드시 한국어 페이지 (kr.trip.com, kr.hotels.com, klook.com/ko/ 등)',
             },
             price_from: { type: ['integer', 'null'], description: '1박 최저가(원). 확인된 값만' },
-            review_score: { type: ['number', 'null'], description: '10점 만점' },
+            review_score: { type: ['number', 'null'], description: '10점 만점. 그 페이지에 적힌 값만' },
+            review_count: {
+              type: ['integer', 'null'],
+              description: '리뷰 수. 그 페이지에 적힌 값만, 모르면 null',
+            },
             area: { type: ['string', 'null'], description: '위치 (역/번화가 기준)' },
             note: { type: ['string', 'null'], description: '특징 한 줄' },
           },
@@ -216,6 +256,58 @@ export class OpenAiHotelProvider
     ].join('\n');
   }
 
+  /**
+   * **사이트별로 따로, 동시에 찾는다.**
+   *
+   * 한 번에 「오사카 호텔 30곳」을 시키면 모델은 「오사카 호텔」로 검색하고, 그 검색어에는
+   * 예약 사이트의 **도시 목록 페이지**가 상위에 걸린다. 모델은 그 목록에서 이름만 따고
+   * 주소는 목록 페이지를 붙인다 — 시즈오카는 31곳이 전부 그랬다(2026-11-09).
+   *
+   * 사이트를 하나로 좁히고 그 사이트의 상세 주소 꼴을 알려주면, 모델이 `site:` 검색으로
+   * 호텔 하나짜리 페이지를 찾는다. 셋을 동시에 돌리므로 걸리는 시간은 한 번과 비슷하다.
+   */
+  protected override searchInputs(query: HotelQuery, wanted: number): string[] {
+    const per = Math.max(5, Math.ceil(wanted / SITE_BRANCHES.length));
+    const guests = query.guests ? `${query.guests}명이 묵을 예정이다.` : '';
+    return SITE_BRANCHES.map((branch) =>
+      [
+        `${query.cityName} 에서 묵을 만한 호텔을 **${branch.site}** 에서만 찾아라. 최대 ${per}곳.`,
+        guests,
+        `검색어에 site:${branch.host} 를 붙여 그 사이트의 **호텔 상세 페이지**를 찾는다.`,
+        `상세 페이지 주소는 이런 꼴이다: ${branch.detail}`,
+        '도시 호텔 목록·검색 결과·지역 페이지 주소는 쓰지 마라. 상세 페이지를 못 찾은 호텔은 빼라.',
+        '가격대와 지역이 겹치지 않게 다양하게 모아라. 확인 못 한 항목은 null 로 둔다.',
+        '되묻지 말고 바로 결과를 낸다.',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    );
+  }
+
+  /** 검색 도구가 실제로 돌려준 주소만 쓴다 — 기억으로 적은 주소를 막는다. */
+  protected override readonly groundsOnSources = true;
+
+  /**
+   * **검색 도구가 돌려준 출처와 주소가 맞는 후보만 남긴다.**
+   *
+   * 모델이 적은 주소는 타이핑한 값이다. 출처 목록은 검색 도구가 준 값이다. 둘이 맞아야
+   * "실제 검색 결과에서 확인된 호텔" 이다. 표기 차이(`www.`/`kr.`, `/ko/`, 끝 슬래시)는
+   * [verify.ts](../verify.ts) `urlKey` 가 지운다.
+   */
+  protected override groundedCandidates(candidates: unknown[], sources: string[]): unknown[] {
+    const keys = sourceKeys(sources);
+    return candidates.filter((c) => {
+      const url = text((c as RawCandidate)?.url);
+      const ok = Boolean(url) && isGrounded(url as string, keys);
+      if (!ok) {
+        this.logger.warn(
+          `dropped hotel not in search sources name=${text((c as RawCandidate)?.name) ?? '-'} url=${url ?? '-'}`,
+        );
+      }
+      return ok;
+    });
+  }
+
   protected rankInput(query: HotelQuery, candidates: string): string {
     const guests = query.guests ? `투숙 인원은 ${query.guests}명이다.` : '';
     return [
@@ -242,10 +334,17 @@ export class OpenAiHotelProvider
    *    하는 자리다.
    */
   protected override usableCandidates(candidates: unknown[]): unknown[] {
+    // ⚠️ **사이트별로 따로 찾으므로 같은 호텔이 두 번 올 수 있다**(트립닷컴·호텔스닷컴).
+    //    먼저 온 것을 남긴다 — 갈래 순서가 곧 사이트 우선순위다(SITE_BRANCHES).
+    const seen = new Set<string>();
     return candidates.filter((c) => {
       const url = text((c as RawCandidate)?.url);
       // 목록 페이지 후보도 여기서 뺀다 — 넘기면 2차가 버려질 줄을 고른다(위와 같은 이유).
-      return Boolean(url) && isAllowedSourceUrl(url as string) && isHotelDetailUrl(url as string);
+      if (!url || !isAllowedSourceUrl(url) || !isHotelDetailUrl(url)) return false;
+      const key = nameKey(text((c as RawCandidate)?.name) ?? '');
+      if (key && seen.has(key)) return false;
+      if (key) seen.add(key);
+      return true;
     });
   }
 
@@ -258,6 +357,8 @@ export class OpenAiHotelProvider
     const trace: SearchTrace = {
       ...newTwoStageTrace(),
       deadLinks: 0,
+      nameMismatches: 0,
+      namesVerified: 0,
       droppedThumbnails: 0,
       thumbnails: 0,
       thumbnailSources: {},
@@ -335,6 +436,8 @@ export class OpenAiHotelProvider
         address: null,
         starRating: null,
         reviewScore: bounded(pick.review_score, 0, 10),
+        // 평점이 없으면 리뷰 수만 적어 봐야 뜻이 없다. 둘은 같은 페이지에서 같이 온다.
+        reviewCount: positiveInt(pick.review_count),
         priceFrom: positiveInt(pick.price_from),
         currency: 'KRW',
         // 모델은 이미지 주소를 사실상 못 준다 — 아래 withThumbnails 가 예약 페이지에서
@@ -437,16 +540,35 @@ export class OpenAiHotelProvider
     trace: SearchTrace,
     query: HotelQuery,
   ): Promise<Hotel[]> {
-    if (!this.config.hotelThumbnails) {
+    const illustrate = this.config.hotelThumbnails;
+    if (!illustrate) {
       // 꺼져 있으면 카드에 사진이 하나도 안 나간다. 설정을 의심할 자리를 남긴다.
       this.logger.log(`hotel thumbnails off (HOTEL_THUMBNAILS=false) hotels=${hotels.length}`);
-      return hotels;
+      // ⚠️ 이름 확인은 사진과 따로 켜고 끈다(HOTEL_VERIFY_LINKS). 둘 다 꺼야 페이지를 안 읽는다.
+      if (!this.config.hotelVerifyLinks) return hotels;
     }
 
     /** 왜 못 붙였나. 개별 줄이 아니라 이걸로 진단한다 (아래 한 줄 요약). */
     const failed: Record<string, number> = {};
 
-    const resolved = hotels.map(async (hotel) => {
+    const resolved = hotels.map(async (hotel): Promise<Hotel | null> => {
+      // 페이지는 **한 번만** 읽는다. 이름 확인과 사진 긁기가 같은 HTML 을 쓴다.
+      const html = await this.readPage(hotel.sourceUrl, failed);
+
+      // ⓪ **그 호텔의 페이지인가.** 읽었는데 제목에 이름이 없으면 다른 호텔이거나
+      //    목록 페이지다 — 사용자가 눌렀을 때 엉뚱한 곳이 열린다. 못 읽은 페이지(봇 차단)는
+      //    판단할 근거가 없으므로 남긴다. 그 비율은 아래 요약의 unreadable 이 보여준다.
+      const title = html && this.config.hotelVerifyLinks ? pageTitleOf(html) : null;
+      if (title && !nameMatchesTitle(hotel.name, title, [query.cityName, query.citySlug])) {
+        trace.nameMismatches += 1;
+        this.logger.warn(
+          `dropped hotel name mismatch name=${hotel.name} title=${JSON.stringify(title)} url=${hotel.sourceUrl}`,
+        );
+        return null;
+      }
+      if (title) trace.namesVerified += 1;
+      if (!illustrate) return hotel;
+
       // ① 모델이 준 주소 (거의 없다)
       if (hotel.thumbnailUrl) {
         if (await isLiveImage(hotel.thumbnailUrl)) {
@@ -459,7 +581,8 @@ export class OpenAiHotelProvider
       }
 
       // ② 예약 페이지에서 긁는다
-      const found = await this.thumbnailFromPage(hotel.sourceUrl, failed);
+      const found = html ? extractThumbnail(html, hotel.sourceUrl) : null;
+      if (html && !found) count(failed, `noImage:${hostOf(hotel.sourceUrl)}`);
       if (!found) return { ...hotel, thumbnailUrl: null };
 
       if (!(await isLiveImage(found.url))) {
@@ -475,7 +598,7 @@ export class OpenAiHotelProvider
       return { ...hotel, thumbnailUrl: found.url };
     });
 
-    const withImages = await Promise.all(resolved);
+    const withImages = (await Promise.all(resolved)).filter((h): h is Hotel => h !== null);
 
     // ⚠️ **한 줄로 남긴다.** 개별 줄(page unreadable / not live)은 호텔마다 하나씩이라
     //    스무 곳이면 스무 줄을 세어봐야 "사진이 왜 없나" 를 알 수 있다. 실측으로는
@@ -493,16 +616,13 @@ export class OpenAiHotelProvider
   }
 
   /**
-   * 예약 페이지 HTML 을 (앞부분만) 읽어 대표 이미지를 뽑는다. 실패는 null.
+   * 예약 페이지 HTML 을 (앞부분만) 읽는다. 못 읽으면 null.
    *
    * ⚠️ **두 가지 실패를 갈라 센다.** "페이지를 못 읽었다"(차단·타임아웃)와 "읽었는데
    *    사진이 없다"(추출 실패)는 손볼 데가 전혀 다르다 — 앞은 사이트 문제라 할 수
    *    있는 게 별로 없고, 뒤는 추출기에 층을 하나 더 얹으면 된다.
    */
-  private async thumbnailFromPage(
-    pageUrl: string,
-    failed: Record<string, number>,
-  ): Promise<{ url: string; source: ThumbnailSource } | null> {
+  private async readPage(pageUrl: string, failed: Record<string, number>): Promise<string | null> {
     if (!pageUrl) {
       count(failed, 'noUrl');
       return null;
@@ -514,12 +634,9 @@ export class OpenAiHotelProvider
     );
     if (!html) {
       count(failed, `unreadable:${hostOf(pageUrl)}`);
-      this.logger.log(`thumbnail page unreadable url=${pageUrl}`);
-      return null;
+      this.logger.log(`hotel page unreadable url=${pageUrl}`);
     }
-    const found = extractThumbnail(html, pageUrl);
-    if (!found) count(failed, `noImage:${hostOf(pageUrl)}`);
-    return found;
+    return html;
   }
 }
 

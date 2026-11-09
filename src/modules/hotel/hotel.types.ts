@@ -16,6 +16,8 @@ export interface Hotel {
   address?: string | null;
   starRating?: number | null;
   reviewScore?: number | null;
+  /** 리뷰 수. **페이지에 적힌 값만** — 모르면 null 이고 카드에 안 나간다. */
+  reviewCount?: number | null;
   priceFrom?: number | null;
   currency?: string;
   thumbnailUrl?: string | null;
@@ -68,10 +70,27 @@ export function scoreText(score: number): string {
  */
 export function listDescription(h: Hotel): string {
   const bits: string[] = [];
-  if (h.reviewScore) bits.push(`평점 ${scoreText(h.reviewScore)}`);
+  if (h.reviewScore) {
+    // 리뷰 수는 **평점과 같이 있을 때만** 붙인다. 평점 없는 「리뷰 1,234」는 뜻이 없다.
+    const reviews = h.reviewCount ? `(${h.reviewCount.toLocaleString('ko-KR')})` : '';
+    bits.push(`평점 ${scoreText(h.reviewScore)}${reviews}`);
+  }
   if (h.tags?.length) bits.push(h.tags[0]);
+  // ⚠️ **출처를 적는다.** 사이트마다 따로 찾으므로 줄마다 열리는 사이트가 다르다 —
+  //    적지 않으면 누를 때마다 다른 사이트가 열리는 게 이상해 보인다. 설명이 잘리면
+  //    끝부터 잘리므로 평점·지역보다 뒤에 둔다.
+  const site = h.merchant ? MERCHANT_NAMES[h.merchant] : undefined;
+  if (site) bits.push(site);
   return bits.join(' · ');
 }
+
+/** 카드에 적는 판매처 이름. `merchantOf` 가 주는 이름이 열쇠다. */
+export const MERCHANT_NAMES: Record<string, string> = {
+  hotels: '호텔스닷컴',
+  trip: '트립닷컴',
+  myrealtrip: '마이리얼트립',
+  klook: '클룩',
+};
 
 export interface HotelProvider {
   readonly name: string;

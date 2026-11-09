@@ -39,6 +39,13 @@ export interface ResponsesRequest {
   format?: Record<string, unknown>;
   maxOutputTokens?: number;
   /**
+   * 응답에 같이 받을 것. 웹 검색이 **실제로 본 출처 URL** 을 받으려면
+   * `['web_search_call.action.sources']`.
+   *
+   * ⚠️ `web_search_preview` 로 떨어진 뒤에는 보내지 않는다 — 그 툴은 이 항목을 모른다.
+   */
+  include?: string[];
+  /**
    * 이 호출에만 적용할 타임아웃.
    *
    * 기본값(OPENAI_TIMEOUT_SECONDS)은 웹 검색용이라 60초다. 카카오 5초 예산 안에서
@@ -51,6 +58,15 @@ export interface ResponsesResult {
   text: string;
   /** 모델이 실제로 웹 검색을 몇 번 돌았는지. 프롬프트가 먹었는지 확인용. */
   searchCalls: number;
+  /**
+   * **웹 검색이 실제로 가져온 페이지 주소.** 검색 결과(`action.sources`), 연 페이지
+   * (`open_page`), 본문 인용(`url_citation`)을 합친 것이다.
+   *
+   * 모델이 JSON 에 적은 주소는 모델이 **타이핑한 값**이라 지어낼 수 있다. 이 목록은
+   * 검색 도구가 돌려준 값이라 그렇지 않다 — 둘을 대조하는 것이 "실제 검색 결과만 쓴다"
+   * 를 지키는 유일한 방법이다. 비어 있으면 대조할 수 없다는 뜻이다(툴이 안 줬다).
+   */
+  sources?: string[];
   status: string;
   ms: number;
 }
@@ -108,6 +124,47 @@ export function searchCallsOf(body: unknown): number {
   return raw.output.filter(
     (item) => (item as Record<string, unknown>)?.type === 'web_search_call',
   ).length;
+}
+
+/**
+ * 웹 검색이 실제로 가져온 페이지 주소. 순서대로, 중복 없이.
+ *
+ *   output[].type === 'web_search_call'
+ *     .action.sources[].url        검색 결과 (include 로 요청해야 온다)
+ *     .action.url                  open_page · find 로 연 페이지
+ *   output[].type === 'message'
+ *     .content[].annotations[]     type === 'url_citation' 의 url
+ *
+ * ⚠️ **모양이 조금씩 달라도 견딘다.** 툴 버전마다 필드가 다르게 붙은 적이 있어서,
+ *    모르는 모양은 조용히 건너뛴다 — 여기서 던지면 검색 하나가 통째로 죽는다.
+ */
+export function searchSourcesOf(body: unknown): string[] {
+  const raw = (body ?? {}) as Record<string, unknown>;
+  const seen = new Set<string>();
+  const add = (url: unknown): void => {
+    if (typeof url === 'string' && /^https?:\/\//i.test(url)) seen.add(url);
+  };
+
+  for (const item of Array.isArray(raw.output) ? raw.output : []) {
+    const node = (item ?? {}) as Record<string, unknown>;
+    if (node.type === 'web_search_call') {
+      const action = (node.action ?? {}) as Record<string, unknown>;
+      add(action.url);
+      for (const source of Array.isArray(action.sources) ? action.sources : []) {
+        add((source as Record<string, unknown>)?.url);
+      }
+    }
+    if (node.type === 'message') {
+      for (const chunk of Array.isArray(node.content) ? node.content : []) {
+        const annotations = (chunk as Record<string, unknown>)?.annotations;
+        for (const note of Array.isArray(annotations) ? annotations : []) {
+          const n = note as Record<string, unknown>;
+          if (n?.type === 'url_citation') add(n.url);
+        }
+      }
+    }
+  }
+  return [...seen];
 }
 
 /**
@@ -226,7 +283,7 @@ export class OpenAiService {
       this.webSearchTool = 'web_search_preview';
       this.logger.warn("web_search 가 거부됐다. web_search_preview 로 전환한다");
       body = await this.post(
-        this.payload({ ...req, tools: [this.webSearchToolSpec] }),
+        this.payload({ ...req, tools: [this.webSearchToolSpec], include: undefined }),
         timeoutMs,
       );
     }
@@ -244,7 +301,13 @@ export class OpenAiService {
       this.logger.warn(`openai response incomplete reason=${String(reason)}`);
     }
 
-    return { text, searchCalls: searchCallsOf(body), status, ms: Date.now() - started };
+    return {
+      text,
+      searchCalls: searchCallsOf(body),
+      sources: searchSourcesOf(body),
+      status,
+      ms: Date.now() - started,
+    };
   }
 
   // ---------------------------------------------------------------- 내부
@@ -261,6 +324,7 @@ export class OpenAiService {
     if (req.effort) payload.reasoning = { effort: req.effort };
     if (req.format) payload.text = { format: req.format };
     if (req.maxOutputTokens) payload.max_output_tokens = req.maxOutputTokens;
+    if (req.include?.length && this.webSearchTool === 'web_search') payload.include = req.include;
     return payload;
   }
 
