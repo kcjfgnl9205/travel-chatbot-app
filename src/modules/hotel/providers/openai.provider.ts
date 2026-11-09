@@ -39,10 +39,23 @@ import { extractThumbnail } from '../thumbnail';
  */
 export const ALLOWED_HOSTS = [
   'trip.com', // 트립닷컴
-  'myrealtrip.com', // 마이리얼트립
   'klook.com', // 클룩
   'hotels.com', // 호텔스닷컴
 ];
+
+/**
+ * **호텔에서 뺀 제휴몰.** 제휴 링크를 눌렀더니 「마이리얼트립은 서비스 정책에 의해 링크
+ * 연결이 차단되었습니다」가 떴다(2026-11-09) — 수수료도 없고 사용자는 예약 페이지에
+ * 못 간다. 검색도 하지 않고, **이미 저장된 행에서도 뺀다**(`HotelService.isItem`).
+ *
+ * ⚠️ 항공권은 별개다. 거기서도 막히는지는 따로 확인해야 한다.
+ */
+export const BLOCKED_HOSTS = ['myrealtrip.com'];
+
+/** 차단된 제휴몰 주소인가. 캐시에 남은 옛 행을 거르는 데 쓴다. */
+export function isBlockedSourceUrl(url: string): boolean {
+  return allowedHost(url, BLOCKED_HOSTS);
+}
 
 /**
  * 사이트별 검색 갈래. **순서가 우선순위다** — 같은 호텔이 두 곳에서 오면 앞의 것이 남는다.
@@ -62,16 +75,11 @@ export const SITE_BRANCHES = [
     detail:
       'https://kr.trip.com/hotels/detail/?hotelId=12345 또는 https://kr.trip.com/hotels/osaka-hotel-detail-12345/',
   },
-  {
-    site: '마이리얼트립(myrealtrip.com)',
-    host: 'myrealtrip.com',
-    detail: 'https://accommodation.myrealtrip.com/union/products/1234567',
-  },
 ] as const;
 
 /** 프롬프트에 그대로 박아 넣는 표기. 목록과 문구가 어긋나지 않게 여기서 만든다. */
 export const ALLOWED_SITES_TEXT =
-  '트립닷컴(trip.com), 마이리얼트립(myrealtrip.com), 클룩(klook.com), 호텔스닷컴(hotels.com)';
+  '트립닷컴(trip.com), 클룩(klook.com), 호텔스닷컴(hotels.com)';
 
 /** 호텔 예약 링크로 인정하는가. 호스트 규칙은 항공권과 공유한다. */
 export function isAllowedSourceUrl(url: string): boolean {
@@ -137,8 +145,8 @@ interface RawCandidate {
 const SEARCH_INSTRUCTIONS = [
   '너는 한국인 여행자를 위한 호텔 리서치 어시스턴트다.',
   '반드시 web_search 툴로 실제 웹을 검색해서 답한다. 기억에 의존하지 않는다.',
-  `예약 링크는 반드시 다음 네 곳 중 하나여야 한다: ${ALLOWED_SITES_TEXT}.`,
-  '이 네 곳이 아닌 사이트(아고다·부킹닷컴 등)의 링크는 쓸 수 없으니 적지 마라.',
+  `예약 링크는 반드시 다음 세 곳 중 하나여야 한다: ${ALLOWED_SITES_TEXT}.`,
+  '이 세 곳이 아닌 사이트(아고다·부킹닷컴·마이리얼트립 등)의 링크는 쓸 수 없으니 적지 마라.',
   // 사용자는 한국인이다. 영문 페이지가 뜨면 예약까지 못 간다.
   '**반드시 한국어 페이지 주소를 골라라.** 같은 호텔이라도 영문 페이지가 아니라 '
     + '한국어 페이지 URL 을 적는다 (예: www.trip.com 이 아니라 kr.trip.com, '
@@ -155,7 +163,7 @@ const SEARCH_INSTRUCTIONS = [
   '**URL 은 반드시 그 호텔 한 곳의 상세 예약 페이지여야 한다.** 도시 호텔 목록·검색 결과·'
     + '지역 페이지(예: kr.trip.com/hotels/da-nang-hotels-list-1356/, klook.com/ko/destination/…)는 '
     + '안 된다. 상세 페이지 예: kr.trip.com/hotels/detail/?hotelId=…, kr.hotels.com/ho123456/, '
-    + 'klook.com/ko/hotels/detail/…, accommodation.myrealtrip.com/union/products/….',
+    + 'klook.com/ko/hotels/detail/….',
   // ⚠️ 이 문단을 지우지 마라. 없으면 모델이 "검색을 진행해도 될까요?" 라고 되묻고 끝난다.
   //    상대는 사람이 아니라 프로그램이라 그 질문에 답해줄 사람이 없다.
   '**절대 되묻지 마라.** 확인을 구하거나 진행 여부를 묻지 말고 즉시 검색해서 결과만 낸다.',

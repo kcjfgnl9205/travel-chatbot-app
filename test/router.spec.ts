@@ -200,8 +200,7 @@ describe('POST /api/v1/kakao/router', () => {
    *    여기서는 **실제 상세 주소 꼴**을 줘서 붙는 쪽을 검증한다.
    */
   describe('상세 링크에 날짜·인원이 들어갈 때', () => {
-    const detail = (i: number) =>
-      `https://accommodation.myrealtrip.com/union/products/500731${i}`;
+    const detail = (i: number) => `https://kr.trip.com/hotels/detail/?cityId=219&hotelId=500731${i}`;
 
     beforeEach(() => {
       ctx.provider.reply = (query) =>
@@ -209,7 +208,7 @@ describe('POST /api/v1/kakao/router', () => {
           name: `${query.cityName} 호텔 ${i + 1}`,
           citySlug: query.citySlug,
           sourceUrl: detail(i),
-          merchant: 'myrealtrip',
+          merchant: 'trip',
           priceFrom: 120000,
         }));
     });
@@ -229,7 +228,7 @@ describe('POST /api/v1/kakao/router', () => {
       const params = new URL(stored!.sourceUrl).searchParams;
       expect(params.get('checkIn')).toBe('2026-11-20');
       expect(params.get('checkOut')).toBe('2026-11-23');
-      expect(params.get('adultCount')).toBe('3');
+      expect(params.get('adult')).toBe('3');
     });
 
     it('말한 날짜·인원을 링크에 넣고, 넣었다고 적는다', async () => {
@@ -1013,7 +1012,8 @@ describe('POST /api/v1/kakao/router', () => {
         expect(card.header.title).toContain('오사카');
         const titles = (card.items as { title: string }[]).map((i) => i.title);
         expect(titles.join(' ')).toContain('호텔스닷컴');
-        expect(titles.join(' ')).toContain('마이리얼트립');
+        // 마이리얼트립은 링크가 차단돼 뺐다.
+        expect(titles.join(' ')).not.toContain('마이리얼트립');
 
         // ⚠️ 왜 추천이 아니라 검색 링크인지 말해야 한다. 안 그러면 품질이 갑자기
         //    나빠진 것처럼 보인다. 제휴 고지도 같이 나간다.

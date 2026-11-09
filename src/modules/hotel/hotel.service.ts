@@ -12,6 +12,7 @@ import {
   SearchTrace,
 } from '../search/search.types';
 import { hotelSearchUrls, resolveStay, stayOf, withStay } from './search-url';
+import { isBlockedSourceUrl } from './providers/openai.provider';
 import {
   HOTEL_PROVIDER,
   Hotel,
@@ -161,7 +162,10 @@ export class HotelService implements SearchDomain<Hotel> {
   }
 
   isItem(item: unknown): item is Hotel {
-    return isHotel(item);
+    // ⚠️ **차단된 제휴몰 줄은 저장된 행에서도 뺀다.** 캐시는 하루를 살아서, 여기서
+    //    안 거르면 마이리얼트립 줄이 갱신 전까지 계속 「링크 연결이 차단」으로 열린다.
+    //    페이지를 자르기 전에 걸리므로 줄 수가 모자라 보이지도 않는다.
+    return isHotel(item) && !isBlockedSourceUrl(item.sourceUrl);
   }
 
   headerTitle(meta: SearchMeta, count: number, start: number): string {

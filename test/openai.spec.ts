@@ -69,9 +69,10 @@ describe('느슨한 JSON 파싱', () => {
 });
 
 describe('예약 링크 검증', () => {
-  it('네 곳만 통과시킨다', () => {
+  it('세 곳만 통과시킨다', () => {
     expect(isAllowedSourceUrl('https://kr.trip.com/hotels/detail?id=1')).toBe(true);
-    expect(isAllowedSourceUrl('https://www.myrealtrip.com/offers/12345')).toBe(true);
+    // 마이리얼트립은 뺐다 — 제휴 링크가 「서비스 정책에 의해 링크 연결이 차단」으로 막혔다.
+    expect(isAllowedSourceUrl('https://www.myrealtrip.com/offers/12345')).toBe(false);
     expect(isAllowedSourceUrl('https://www.klook.com/ko/hotel/1-abc/')).toBe(true);
     expect(isAllowedSourceUrl('https://kr.hotels.com/ho123456/')).toBe(true);
   });
@@ -92,7 +93,8 @@ describe('예약 링크 검증', () => {
 
   it('myrealtrip.com 을 trip.com 의 서브도메인으로 착각하지 않는다', () => {
     // 접미사 비교라 'myrealtrip.com'.endsWith('.trip.com') 이 걸릴 뻔한 자리다
-    expect(merchantOf('https://www.myrealtrip.com/x')).toBe('myrealtrip');
+    // (호텔 허용 목록에서는 빠졌지만, 빠진 채로도 trip 으로 잘못 잡히면 안 된다)
+    expect(merchantOf('https://www.myrealtrip.com/x')).toBeNull();
     expect(merchantOf('https://kr.trip.com/x')).toBe('trip');
   });
 
@@ -108,13 +110,8 @@ describe('예약 링크 검증', () => {
     expect(merchantOf('https://example.com/x')).toBeNull();
   });
 
-  it('허용 목록은 네 곳이다', () => {
-    expect(ALLOWED_HOSTS).toEqual([
-      'trip.com',
-      'myrealtrip.com',
-      'klook.com',
-      'hotels.com',
-    ]);
+  it('허용 목록은 세 곳이다', () => {
+    expect(ALLOWED_HOSTS).toEqual(['trip.com', 'klook.com', 'hotels.com']);
   });
 
   it('프롬프트 문구와 허용 목록이 어긋나지 않는다', () => {
@@ -214,7 +211,6 @@ describe('한국어 예약 페이지로 돌린다', () => {
       'https://www.trip.com/hotels/x',
       'https://www.hotels.com/ho1/',
       'https://www.klook.com/en-US/hotel/1/',
-      'https://www.myrealtrip.com/offers/1',
     ]) {
       expect(isAllowedSourceUrl(toKoreanUrl(url))).toBe(true);
     }

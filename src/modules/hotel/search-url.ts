@@ -102,9 +102,17 @@ function clampAdults(asked: number | null | undefined): { adults: number; adults
   return { adults: Math.min(asked, MAX_ADULTS), adultsClamped: asked > MAX_ADULTS };
 }
 
-/** 주소를 만들 수 있는 제휴몰. **순서가 카드 줄 순서다.** */
-export const SEARCH_MERCHANTS = ['hotels', 'myrealtrip'] as const;
-export type SearchMerchant = (typeof SEARCH_MERCHANTS)[number];
+/** 검색 주소 형식을 확인한 제휴몰. */
+export type SearchMerchant = 'hotels' | 'myrealtrip';
+
+/**
+ * 검색 링크 카드(⑥)에 내놓는 제휴몰. **순서가 카드 줄 순서다.**
+ *
+ * ⚠️ **마이리얼트립은 뺐다.** 제휴 링크가 「서비스 정책에 의해 링크 연결이 차단」으로
+ *    막혔다(2026-11-09). 주소 형식은 확인해둔 것이라 `hotelSearchUrl` 에는 남겨둔다 —
+ *    풀리면 여기에 다시 넣기만 하면 된다.
+ */
+export const SEARCH_MERCHANTS: readonly SearchMerchant[] = ['hotels'];
 
 /** 화면에 적을 제휴몰 이름. */
 export const MERCHANT_LABEL: Record<SearchMerchant, string> = {

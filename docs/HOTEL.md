@@ -68,7 +68,7 @@
 | 호텔스닷컴 | `/ho{번호}/...` | `chkin` · `chkout` | **`rm1=a{N}`** (객실별로 적는다) |
 | 트립닷컴 | `/hotels/detail/` | `checkIn` · `checkOut` | `adult` · `children=0` · `crn=1` |
 | 클룩 | `/{로케일}/hotels/detail/...` | `check_in` · `check_out` | `adult_num` · `child_num=0` · `room_num=1` |
-| 마이리얼트립 | `/union/products/{번호}` | `checkIn` · `checkOut` | `adultCount` · `childCount=0` |
+| 마이리얼트립 (호텔에서 뺐다) | `/union/products/{번호}` | `checkIn` · `checkOut` | `adultCount` · `childCount=0` |
 
 - 우리가 만들 수 없는 값은 덜어냈다 — 추적 토큰(`pwa_ts`·`searchId`·`source_price_token`·`serverData`·`hoteluniquekey`), 내부 번호(`regionId`·`neighborhoodId`·`expediaPropertyId`), 호텔 주소가 이미 들고 있는 것(`hotelId`·`cityId`).
 - **호스트만 보고 붙이지 않는다.** 같은 사이트에도 상세 주소가 여러 꼴이고(`/hotels/detail/` vs `/hotels/{도시}-hotel-detail-{번호}/`), 확인하지 않은 꼴에서 파라미터가 무시되면 **카드에 적은 날짜와 열리는 날짜가 갈린다.** 확인 안 된 꼴은 맨 주소로 나가고, 그때는 카드도 조건을 말하지 않는다(`staySupported`).
@@ -209,7 +209,7 @@ link.web     /r/{clickId}  ← 애드픽이 아니라 우리 리다이렉트
 |---|---|---|
 | 평점 | `평점 9.0`, 리뷰 수까지 있으면 `평점 9.0(1,234)` | 생략 (리뷰 수만으로는 안 적는다) |
 | 지역 | `우메다` (`tags` 첫 번째) | 생략 |
-| 출처 | `트립닷컴` · `호텔스닷컴` · `마이리얼트립` · `클룩` | 생략 |
+| 출처 | `트립닷컴` · `호텔스닷컴` · `클룩` | 생략 |
 
 셋 다 없으면 **빈 줄**이고, 그 줄만 설명 없이 나간다. 출처는 맨 뒤다 — 설명이 넘치면 끝부터 잘리므로 평점·지역이 먼저 산다. 사이트별로 따로 찾기 때문에 줄마다 열리는 사이트가 다르고, 그걸 적어두지 않으면 이상해 보인다.
 
@@ -245,8 +245,8 @@ link.web     /r/{clickId}  ← 애드픽이 아니라 우리 리다이렉트
 [`OpenAiHotelProvider`](../src/modules/hotel/providers/openai.provider.ts) — gpt-5.6-luna + 웹 검색 **2단 호출**. 뼈대는 세 도메인이 [`TwoStageSearch`](../src/modules/openai/two-stage.ts) 로 공유한다.
 
 ```
-1차  사이트별 web_search 3갈래를 동시에     (구조화 JSON + 검색 출처)
-       호텔스닷컴 · 트립닷컴 · 마이리얼트립, 갈래마다 site: 검색으로 상세 페이지만
+1차  사이트별 web_search 2갈래를 동시에     (구조화 JSON + 검색 출처)
+       호텔스닷컴 · 트립닷컴, 갈래마다 site: 검색으로 상세 페이지만
      → 출처 대조 · 상세 주소 꼴 · 사이트 간 중복 제거
 2차  가격·위치·평점·특징을 비교해 20곳 선정 (번호만)
 3차  페이지 확인                            (모델 아님 — 페이지 읽기)
@@ -271,7 +271,7 @@ link.web     /r/{clickId}  ← 애드픽이 아니라 우리 리다이렉트
 
 > ⚠️ **20곳을 못 채워도 채우지 않는다.** 찾은 만큼만 낸다. 0곳이면 우리가 만든 지역 검색 링크(⑥)가 나간다.
 
-**비용:** 1차가 갈래 셋이라 검색 호출이 1회에서 3회로 늘었다. 동시에 돌아서 시간은 한 번과 비슷하다.
+**비용:** 1차가 갈래 둘이라 검색 호출이 1회에서 2회로 늘었다. 동시에 돌아서 시간은 한 번과 비슷하다.
 
 **왜 두 번 부르나** — 한 번에 시키면 모델이 검색 결과를 요약하는 데 힘을 쓰고 비교·선별은 대충 한다.
 
@@ -281,11 +281,13 @@ link.web     /r/{clickId}  ← 애드픽이 아니라 우리 리다이렉트
 
 > ⚠️ **후보가 0개면 2차를 부르지 않는다.** 빈손에서 고르라고 하면 모델이 없는 호텔을 지어낸다.
 
-### 예약 링크 — 네 곳만 인정한다 (클룩은 갈래 없이 허용만)
+### 예약 링크 — 세 곳만 인정한다 (클룩은 갈래 없이 허용만)
 
 ```
-trip.com · myrealtrip.com · klook.com · hotels.com
+trip.com · klook.com · hotels.com
 ```
+
+> ⚠️ **마이리얼트립은 뺐다** (2026-11-09). 제휴 링크를 누르면 「마이리얼트립은 서비스 정책에 의해 링크 연결이 차단되었습니다」가 떴다. 검색도 안 하고, **이미 저장된 행에서도 뺀다**(`HotelService.isItem` → `isBlockedSourceUrl`). 검색 링크 카드(⑥)도 호텔스닷컴 한 줄이다. 주소 형식은 확인해둔 것이라 코드에 남아 있다 — 풀리면 `ALLOWED_HOSTS`·`SITE_BRANCHES`·`SEARCH_MERCHANTS` 에 다시 넣으면 된다. 항공권은 별개다.
 
 모델은 없는 URL 을 그럴듯하게 만들어낸다. 그게 애드픽 변환을 타고 나가면 404 로 떨어진다. 호스트라도 걸러서 피해를 줄인다 — 목록 밖 링크(아고다·부킹닷컴)는 **버린다**.
 

@@ -105,10 +105,9 @@ describe('호텔 검색 주소', () => {
     expect(hotelSearchUrl('hotels', { placeName: '  ' }, NOW)).toBeNull();
   });
 
-  it('만들 수 있는 제휴몰만 줄로 낸다', () => {
+  it('만들 수 있는 제휴몰만 줄로 낸다 — 마이리얼트립은 링크가 차단돼 뺐다', () => {
     expect(hotelSearchUrls({ placeName: '오사카' }, NOW).map((l) => l.merchant)).toEqual([
       'hotels',
-      'myrealtrip',
     ]);
   });
 });
