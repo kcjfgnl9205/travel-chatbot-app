@@ -14,7 +14,9 @@ import { ApiBody, ApiHeader, ApiOperation, ApiResponse, ApiTags } from '@nestjs/
 import { AppConfig, CONFIG, openaiEnabled } from '../../config/app.config';
 import { AttractionService } from '../attraction/attraction.service';
 import { FlightService } from '../flight/flight.service';
+import { parseTripParams } from '../flight/trip-params';
 import { HotelService } from '../hotel/hotel.service';
+import { stayOf, stayReachesUser, staySupported, withStay } from '../hotel/search-url';
 import { IntentService } from '../intent/intent.service';
 import * as cards from '../kakao/cards';
 import * as t from '../kakao/templates';
@@ -207,13 +209,20 @@ export class DebugController {
     }
 
     // 운영과 같은 조립 코드를 태운다. 통계만 남기지 않는다.
-    const rows = await domain.rows(items.slice(0, t.MAX_LIST_ITEMS), {
+    //
+    // ⚠️ **날짜·인원도 운영과 똑같이 넘겨야 한다.** 안 넘기면 링크가 기본값으로 열려서,
+    //    "말한 날짜가 링크에 들어갔나" 를 **여기서는 영영 확인할 수 없다** — 진단하러
+    //    왔는데 진단 대상만 빠지는 꼴이다.
+    const trip = parseTripParams(utterance, new Date(started));
+    const page = items.slice(0, t.MAX_LIST_ITEMS);
+    const rows = await domain.rows(page, {
       meta,
       userId: null,
       messageId: null,
       started,
       cacheHit: false,
       persist: false,
+      trip,
     });
 
     return {
@@ -224,6 +233,27 @@ export class DebugController {
       itemCount: items.length,
       items,
       trace,
+      // ⚠️ **카드 줄은 `/r/{clickId}` 라서 최종 주소가 안 보인다.** 「날짜가 링크에
+      //    들어갔나」 를 보려면 변환 전 주소가 필요하다 — `items[].sourceUrl` 은 조건이
+      //    붙기 전 값이라 그것도 답이 못 된다. 그래서 줄마다 실제로 박은 주소를 적는다.
+      stay: kind === 'hotel' ? stayOf(trip) : null,
+      links:
+        kind === 'hotel'
+          ? page.map((item) => {
+              const url = (item as { sourceUrl?: string }).sourceUrl ?? '';
+              return {
+                sourceUrl: url,
+                // 조건이 붙은 주소. 애드픽 변환의 입력이자 사용자가 결국 보는 페이지다.
+                withStay: withStay(url, stayOf(trip), new Date(started)),
+                // false 면 **형식을 모르는 주소 꼴**이라 조건을 아예 안 붙인다.
+                staySupported: staySupported(url),
+                // ⚠️ **붙는 것과 닿는 것은 다르다.** 호텔스닷컴은 주소에 붙어도 애드픽
+                //    경유에서 쿼리가 날아간다. 이 값이 false 인 줄이 하나라도 있으면
+                //    카드 고지는 날짜를 말하지 않는다(`stayApplied`).
+                stayReachesUser: stayReachesUser(url),
+              };
+            })
+          : null,
       timing: { searchMs, totalMs: Date.now() - started },
       response: t.listCardWithNotice(
         {
