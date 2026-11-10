@@ -80,6 +80,10 @@ export const SITE_BRANCHES = [
     //    때문에 카드 전체가 날짜를 말하지 못하게 된다.
     site: '트립닷컴(kr.trip.com)',
     host: 'trip.com',
+    // ⚠️ **두 꼴을 다 보여준다.** 한동안 `?hotelId=` 꼴만 적어줬는데, 그건 그 꼴에만
+    //    날짜를 박을 수 있던 시절의 이야기다(2026-11-10 에 경로 꼴도 같은 칸을 받는 것을
+    //    확인해 `DETAIL_FORMATS` 에 넣었다). 한 꼴만 보여주면 모델이 **검색에 걸린
+    //    멀쩡한 호텔을 "쓸 수 없는 주소" 로 보고 버린다** — 줄 수만 줄어든다.
     detail:
       'https://kr.trip.com/hotels/detail/?hotelId=12345 또는 https://kr.trip.com/hotels/osaka-hotel-detail-12345/',
   },
@@ -197,11 +201,11 @@ const SEARCH_INSTRUCTIONS = [
   //    걸러진 만큼 카드가 짧아지므로 처음부터 상세를 고르게 한다.
   '**URL 은 반드시 그 호텔 한 곳의 상세 예약 페이지여야 한다.** 도시 호텔 목록·검색 결과·'
     + '지역 페이지(예: kr.trip.com/hotels/da-nang-hotels-list-1356/)는 안 된다. '
-    // ⚠️ **`?hotelId=` 꼴을 먼저 적는다.** 날짜·인원을 박을 수 있는 꼴이 이것이라
-    //    (DETAIL_FORMATS), 경로 꼴로 오면 그 줄은 조건 없이 나가고 카드도 날짜를
-    //    말하지 못한다. 둘 다 상세 페이지라 모델에게는 차이가 없어 보인다.
-    + '되도록 kr.trip.com/hotels/detail/?hotelId=… 꼴로 적는다 '
-    + '(kr.trip.com/hotels/osaka-hotel-detail-12345/ 도 상세 페이지이긴 하다).',
+    // ⚠️ **주소를 고쳐 적으라고 시키면 안 된다.** 출처 대조(`verify.ts` urlKey)는 트립닷컴
+    //    상세의 두 꼴을 **다른 페이지**로 본다 — 모델이 경로 꼴을 `?hotelId=` 꼴로 바꿔
+    //    적으면 "검색 결과에 없는 주소" 가 되어 그 호텔이 통째로 버려진다. 두 꼴 다 날짜를
+    //    받으므로(`DETAIL_FORMATS`) 바꿀 이유도 없다. 고르는 것만 시킨다.
+    + '**주소는 검색 결과에 나온 그대로 적는다.** 다른 꼴로 고쳐 적지 마라.',
   // ⚠️ 이 문단을 지우지 마라. 없으면 모델이 "검색을 진행해도 될까요?" 라고 되묻고 끝난다.
   //    상대는 사람이 아니라 프로그램이라 그 질문에 답해줄 사람이 없다.
   '**절대 되묻지 마라.** 확인을 구하거나 진행 여부를 묻지 말고 즉시 검색해서 결과만 낸다.',
@@ -237,7 +241,7 @@ export const CANDIDATE_SCHEMA = {
               description:
                 `검색 결과에 실제로 나온 **그 호텔 한 곳의 상세** 예약 페이지 URL. ` +
                 `${ALLOWED_SITES_TEXT}. 도시 목록·검색 결과 페이지는 안 된다. ` +
-                '반드시 한국어 페이지 (kr.trip.com). 되도록 /hotels/detail/?hotelId=… 꼴로',
+                '반드시 한국어 페이지 (kr.trip.com). 검색 결과에 나온 주소 그대로',
             },
             price_from: { type: ['integer', 'null'], description: '1박 최저가(원). 확인된 값만' },
             review_score: { type: ['number', 'null'], description: '10점 만점. 그 페이지에 적힌 값만' },
