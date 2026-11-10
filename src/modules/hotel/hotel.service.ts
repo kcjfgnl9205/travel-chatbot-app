@@ -11,8 +11,8 @@ import {
   SearchMeta,
   SearchTrace,
 } from '../search/search.types';
-import { hotelSearchUrls, resolveStay, stayOf, withStay } from './search-url';
-import { isBlockedSourceUrl } from './providers/openai.provider';
+import { hotelSearchUrls, resolveStay, stayOf, stayReachesUser, withStay } from './search-url';
+import { isAllowedSourceUrl } from './providers/openai.provider';
 import {
   HOTEL_PROVIDER,
   Hotel,
@@ -162,10 +162,14 @@ export class HotelService implements SearchDomain<Hotel> {
   }
 
   isItem(item: unknown): item is Hotel {
-    // ⚠️ **차단된 제휴몰 줄은 저장된 행에서도 뺀다.** 캐시는 하루를 살아서, 여기서
-    //    안 거르면 마이리얼트립 줄이 갱신 전까지 계속 「링크 연결이 차단」으로 열린다.
-    //    페이지를 자르기 전에 걸리므로 줄 수가 모자라 보이지도 않는다.
-    return isHotel(item) && !isBlockedSourceUrl(item.sourceUrl);
+    // ⚠️ **지금 안 쓰는 제휴몰 줄은 저장된 행에서도 뺀다.** 캐시는 하루를 살아서,
+    //    여기서 안 거르면 갱신 전까지 계속 나간다 — 마이리얼트립은 「링크 연결이
+    //    차단」으로 열렸고, 호텔스닷컴은 날짜가 빠진 채 열린다. 페이지를 자르기 전에
+    //    걸리므로 줄 수가 모자라 보이지도 않는다.
+    //
+    //    **허용 목록으로 판정한다**(차단 목록이 아니라). 허용에서 뺀 제휴몰은 차단
+    //    목록에 없어도 더는 내보내면 안 되는데, 두 목록을 따로 보면 그걸 놓친다.
+    return isHotel(item) && isAllowedSourceUrl(item.sourceUrl);
   }
 
   headerTitle(meta: SearchMeta, count: number, start: number): string {
@@ -210,7 +214,10 @@ export class HotelService implements SearchDomain<Hotel> {
         label: `search:${link.merchant}:${meta.placeSlug}`,
         sourceUrl: link.url,
         title: `${link.label}에서 ${meta.placeName} 호텔 보기`,
-        description: when,
+        // ⚠️ **닿지 않는 조건은 적지 않는다.** 주소에는 날짜가 들어 있어도 애드픽 경유에서
+        //    쿼리가 날아가는 제휴몰이 있다(호텔스닷컴). 그 줄에 날짜를 적어두면 카드 줄
+        //    하나가 통째로 거짓말이 된다 — 카드 고지에서 막아둔 것과 같은 실패다.
+        description: stayReachesUser(link.url) ? when : null,
         imageUrl: null,
         // 가격을 모른다. 0 이나 null 이 아니라 **없음**이 맞다.
         price: null,

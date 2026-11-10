@@ -102,15 +102,23 @@ describe('POST /api/v1/kakao/router', () => {
     expect(ctx.provider.calls).toHaveLength(1);
   });
 
+  /**
+   * ⚠️ **날짜·인원은 이제 링크에 반영된다**(트립닷컴만 쓰므로 조건이 살아서 간다).
+   *    그래서 그 둘은 「반영되지 않았어요」에서 빠지고, 예산·테마처럼 **정말로 반영하지
+   *    않는 조건만** 남는다. 반영한 조건을 반영 안 했다고 적으면 맞는 링크를 받고도
+   *    틀렸다고 읽는다.
+   */
   it('무시한 조건이 있으면 이름과 함께 알려준다', async () => {
-    const body = await askUntilCard(ctx.app, '오사카 호텔 4명 9월 22일 추천해줘');
+    const body = await askUntilCard(ctx.app, '오사카 호텔 10만원 이하 4명 9월 22일 추천해줘');
     const notice = noticeOf(body);
 
-    // ⚠️ 이 고지가 이 설계의 전제 조건이다. 날짜를 반영하지 않은 결과를 말없이 주면
+    // ⚠️ 이 고지가 이 설계의 전제 조건이다. 반영하지 않은 조건을 말없이 버리면
     //    사용자는 속았다고 느낀다.
-    expect(notice).toContain('반영되지 않았어요');
-    expect(notice).toContain('4명');
-    expect(notice).toMatch(/날짜|인원/);
+    expect(notice).toContain('예산(10만원)은 반영되지 않았어요');
+    // 날짜·인원은 링크로 간다 — 버린 조건 목록에 있으면 안 된다.
+    expect(notice).not.toContain('4명)');
+    expect(notice).toContain('9월 22일 체크인');
+    expect(notice).toContain('4명으로 열려요');
   });
 
   it('테마를 말해도 반영하지 않는다 — 그러면 그렇다고 알린다', async () => {

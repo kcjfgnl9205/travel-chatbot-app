@@ -16,7 +16,10 @@ import { OpenAiService } from '../src/modules/openai/openai.service';
  */
 describe('provider 가 죽은 예약 링크를 버린다', () => {
   const ALIVE = 'https://kr.trip.com/hotels/osaka-detail-1/';
-  const DEAD = 'https://kr.hotels.com/ho999999999/';
+  // ⚠️ **허용 호스트 안에서 죽은 주소여야 한다.** 호텔스닷컴 주소를 쓰면 호스트
+  //    필터에 먼저 걸려서(ALLOWED_HOSTS 는 트립닷컴 하나다) 죽은 링크 검사가 아예
+  //    돌지 않는다 — 테스트는 통과하는데 검사하려던 코드는 안 돌아간다.
+  const DEAD = 'https://kr.trip.com/hotels/osaka-detail-999999999/';
 
   const fakeOpenAi = {
     enabled: true,

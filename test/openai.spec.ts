@@ -69,12 +69,22 @@ describe('느슨한 JSON 파싱', () => {
 });
 
 describe('예약 링크 검증', () => {
-  it('세 곳만 통과시킨다', () => {
+  /**
+   * ⚠️ **트립닷컴 하나만 남았다**(2026-11-10). 날짜·인원이 애드픽을 거쳐도 살아서
+   *    가는 곳이 여기뿐이기 때문이다 —
+   *
+   *      호텔스닷컴    애드픽 → Partnerize 경유에서 쿼리가 날아간다 (ISSUE 문서)
+   *      마이리얼트립  제휴 링크가 「서비스 정책에 의해 차단」으로 막혔다
+   *      클룩          확인한 적 없다
+   *
+   *    날짜가 안 가는 줄이 하나라도 섞이면 그 카드는 날짜를 아예 말하지 못한다
+   *    (`stayReachesUser`). 줄 수보다 그게 비싸다.
+   */
+  it('트립닷컴만 통과시킨다', () => {
     expect(isAllowedSourceUrl('https://kr.trip.com/hotels/detail?id=1')).toBe(true);
-    // 마이리얼트립은 뺐다 — 제휴 링크가 「서비스 정책에 의해 링크 연결이 차단」으로 막혔다.
     expect(isAllowedSourceUrl('https://www.myrealtrip.com/offers/12345')).toBe(false);
-    expect(isAllowedSourceUrl('https://www.klook.com/ko/hotel/1-abc/')).toBe(true);
-    expect(isAllowedSourceUrl('https://kr.hotels.com/ho123456/')).toBe(true);
+    expect(isAllowedSourceUrl('https://www.klook.com/ko/hotel/1-abc/')).toBe(false);
+    expect(isAllowedSourceUrl('https://kr.hotels.com/ho123456/')).toBe(false);
   });
 
   it('빼기로 한 OTA 는 막는다', () => {
@@ -105,13 +115,14 @@ describe('예약 링크 검증', () => {
   });
 
   it('호스트에서 merchant 를 유추한다', () => {
-    expect(merchantOf('https://www.klook.com/x')).toBe('klook');
-    expect(merchantOf('https://kr.hotels.com/x')).toBe('hotels');
+    expect(merchantOf('https://kr.trip.com/x')).toBe('trip');
+    // 허용 목록 밖이면 null 이다 — 이름을 붙여줄 이유가 없다.
+    expect(merchantOf('https://kr.hotels.com/x')).toBeNull();
     expect(merchantOf('https://example.com/x')).toBeNull();
   });
 
-  it('허용 목록은 세 곳이다', () => {
-    expect(ALLOWED_HOSTS).toEqual(['trip.com', 'klook.com', 'hotels.com']);
+  it('허용 목록은 트립닷컴 한 곳이다', () => {
+    expect(ALLOWED_HOSTS).toEqual(['trip.com']);
   });
 
   it('프롬프트 문구와 허용 목록이 어긋나지 않는다', () => {
@@ -206,14 +217,13 @@ describe('한국어 예약 페이지로 돌린다', () => {
     expect(toKoreanUrl('정보 없음')).toBe('정보 없음');
   });
 
+  /**
+   * ⚠️ 한국어로 돌리는 규칙은 **항공권과 공유한다**([booking-url.ts](../src/common/booking-url.ts)).
+   *    그래서 호텔 허용 목록에서 빠진 사이트의 규칙도 그대로 남아 있다 — 여기서는
+   *    호텔이 실제로 쓰는 트립닷컴만 "바꾼 뒤에도 통과하는가" 를 본다.
+   */
   it('바꾼 뒤에도 허용 호스트여야 한다 — 필터에 걸려 버려지면 안 된다', () => {
-    for (const url of [
-      'https://www.trip.com/hotels/x',
-      'https://www.hotels.com/ho1/',
-      'https://www.klook.com/en-US/hotel/1/',
-    ]) {
-      expect(isAllowedSourceUrl(toKoreanUrl(url))).toBe(true);
-    }
+    expect(isAllowedSourceUrl(toKoreanUrl('https://www.trip.com/hotels/x'))).toBe(true);
   });
 
   it('스카이스캐너는 국가 도메인을 .co.kr 로 돌리고 경로는 그대로 둔다', () => {

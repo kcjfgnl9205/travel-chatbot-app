@@ -29,18 +29,28 @@ import { extractThumbnail } from '../thumbnail';
  */
 
 /**
- * 예약 링크로 인정하는 호스트.
+ * 예약 링크로 인정하는 호스트. **트립닷컴 하나다.**
  *
  * 모델은 없는 URL 을 그럴듯하게 만들어낸다. 그게 애드픽 변환을 타고 사용자에게
  * 나가면 404 로 떨어진다. 호스트라도 걸러서 피해를 줄인다.
+ *
+ * ⚠️ **왜 한 곳만 남겼나 — 날짜·인원이 살아서 가는 곳이 여기뿐이다** (2026-11-10).
+ *
+ *     트립닷컴      ⭕ 애드픽을 거쳐도 유지된다 (실측)
+ *     호텔스닷컴    ❌ 애드픽 → Partnerize 경유에서 쿼리가 통째로 날아간다
+ *                      ([ISSUE 문서](../../../../docs/ISSUE-2026-11-09-HOTELS-COM-STAY.md))
+ *     마이리얼트립  ❌ 제휴 링크가 「서비스 정책에 의해 차단」으로 막혔다 (BLOCKED_HOSTS)
+ *     클룩          ❓ 확인한 적 없다. 호텔 상세가 검색에 잘 안 걸려 갈래도 없었다
+ *
+ *    날짜가 안 가는 줄이 하나라도 섞이면 **그 카드는 날짜를 아예 말하지 못한다**
+ *    (`stayReachesUser`). 줄 수를 늘리자고 그 줄을 섞으면, 멀쩡한 트립닷컴 줄까지
+ *    "날짜는 반영되지 않았어요" 를 달고 나간다 — 남는 장사가 아니다.
  *
  * ⚠️ 여기를 바꾸면 SEARCH_INSTRUCTIONS 와 HOTEL_SCHEMA 의 안내 문구도 같이 바꿔야 한다.
  *    모델에게 A 를 찾으라고 시켜놓고 B 만 통과시키면 결과가 전부 버려진다.
  */
 export const ALLOWED_HOSTS = [
   'trip.com', // 트립닷컴
-  'klook.com', // 클룩
-  'hotels.com', // 호텔스닷컴
 ];
 
 /**
@@ -65,11 +75,9 @@ export function isBlockedSourceUrl(url: string): boolean {
  */
 export const SITE_BRANCHES = [
   {
-    site: '호텔스닷컴(kr.hotels.com)',
-    host: 'hotels.com',
-    detail: 'https://kr.hotels.com/ho123456789/호텔-이름/',
-  },
-  {
+    // ⚠️ **트립닷컴 하나다.** 날짜·인원이 애드픽을 거쳐도 살아서 가는 곳이 여기뿐이다
+    //    (ALLOWED_HOSTS 주석). 호텔스닷컴 갈래를 같이 돌리면 줄은 늘지만, 그 줄 하나
+    //    때문에 카드 전체가 날짜를 말하지 못하게 된다.
     site: '트립닷컴(kr.trip.com)',
     host: 'trip.com',
     detail:
@@ -78,8 +86,7 @@ export const SITE_BRANCHES = [
 ] as const;
 
 /** 프롬프트에 그대로 박아 넣는 표기. 목록과 문구가 어긋나지 않게 여기서 만든다. */
-export const ALLOWED_SITES_TEXT =
-  '트립닷컴(trip.com), 클룩(klook.com), 호텔스닷컴(hotels.com)';
+export const ALLOWED_SITES_TEXT = '트립닷컴(trip.com)';
 
 /** 호텔 예약 링크로 인정하는가. 호스트 규칙은 항공권과 공유한다. */
 export function isAllowedSourceUrl(url: string): boolean {
@@ -145,12 +152,12 @@ interface RawCandidate {
 const SEARCH_INSTRUCTIONS = [
   '너는 한국인 여행자를 위한 호텔 리서치 어시스턴트다.',
   '반드시 web_search 툴로 실제 웹을 검색해서 답한다. 기억에 의존하지 않는다.',
-  `예약 링크는 반드시 다음 세 곳 중 하나여야 한다: ${ALLOWED_SITES_TEXT}.`,
-  '이 세 곳이 아닌 사이트(아고다·부킹닷컴·마이리얼트립 등)의 링크는 쓸 수 없으니 적지 마라.',
+  `예약 링크는 반드시 ${ALLOWED_SITES_TEXT} 여야 한다.`,
+  '트립닷컴이 아닌 사이트(아고다·부킹닷컴·호텔스닷컴·클룩·마이리얼트립 등)의 링크는 '
+    + '쓸 수 없으니 적지 마라. 그 호텔이 트립닷컴에 없으면 다른 호텔을 골라라.',
   // 사용자는 한국인이다. 영문 페이지가 뜨면 예약까지 못 간다.
   '**반드시 한국어 페이지 주소를 골라라.** 같은 호텔이라도 영문 페이지가 아니라 '
-    + '한국어 페이지 URL 을 적는다 (예: www.trip.com 이 아니라 kr.trip.com, '
-    + 'klook 은 /ko/ 경로, hotels.com 은 kr.hotels.com).',
+    + '한국어 페이지 URL 을 적는다 (www.trip.com 이 아니라 kr.trip.com).',
   '검색 결과에 나오지 않은 URL·가격·평점·리뷰 수는 절대 지어내지 않는다. 모르면 null 로 둔다.',
   // ⚠️ 서버가 이걸 **검사한다**(groundedCandidates). 검색 도구가 돌려준 출처에 없는
   //    주소는 버려지므로, 기억으로 적은 주소는 카드까지 못 간다.
@@ -161,9 +168,12 @@ const SEARCH_INSTRUCTIONS = [
   //    사용자는 호텔을 눌렀는데 목록에 떨어진다. 서버도 거르지만(isHotelDetailUrl)
   //    걸러진 만큼 카드가 짧아지므로 처음부터 상세를 고르게 한다.
   '**URL 은 반드시 그 호텔 한 곳의 상세 예약 페이지여야 한다.** 도시 호텔 목록·검색 결과·'
-    + '지역 페이지(예: kr.trip.com/hotels/da-nang-hotels-list-1356/, klook.com/ko/destination/…)는 '
-    + '안 된다. 상세 페이지 예: kr.trip.com/hotels/detail/?hotelId=…, kr.hotels.com/ho123456/, '
-    + 'klook.com/ko/hotels/detail/….',
+    + '지역 페이지(예: kr.trip.com/hotels/da-nang-hotels-list-1356/)는 안 된다. '
+    // ⚠️ **`?hotelId=` 꼴을 먼저 적는다.** 날짜·인원을 박을 수 있는 꼴이 이것이라
+    //    (DETAIL_FORMATS), 경로 꼴로 오면 그 줄은 조건 없이 나가고 카드도 날짜를
+    //    말하지 못한다. 둘 다 상세 페이지라 모델에게는 차이가 없어 보인다.
+    + '되도록 kr.trip.com/hotels/detail/?hotelId=… 꼴로 적는다 '
+    + '(kr.trip.com/hotels/osaka-hotel-detail-12345/ 도 상세 페이지이긴 하다).',
   // ⚠️ 이 문단을 지우지 마라. 없으면 모델이 "검색을 진행해도 될까요?" 라고 되묻고 끝난다.
   //    상대는 사람이 아니라 프로그램이라 그 질문에 답해줄 사람이 없다.
   '**절대 되묻지 마라.** 확인을 구하거나 진행 여부를 묻지 말고 즉시 검색해서 결과만 낸다.',
@@ -198,8 +208,8 @@ export const CANDIDATE_SCHEMA = {
               type: 'string',
               description:
                 `검색 결과에 실제로 나온 **그 호텔 한 곳의 상세** 예약 페이지 URL. ` +
-                `${ALLOWED_SITES_TEXT} 중 하나. 도시 목록·검색 결과 페이지는 안 된다. ` +
-                '반드시 한국어 페이지 (kr.trip.com, kr.hotels.com, klook.com/ko/ 등)',
+                `${ALLOWED_SITES_TEXT}. 도시 목록·검색 결과 페이지는 안 된다. ` +
+                '반드시 한국어 페이지 (kr.trip.com). 되도록 /hotels/detail/?hotelId=… 꼴로',
             },
             price_from: { type: ['integer', 'null'], description: '1박 최저가(원). 확인된 값만' },
             review_score: { type: ['number', 'null'], description: '10점 만점. 그 페이지에 적힌 값만' },

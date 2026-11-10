@@ -46,8 +46,11 @@ export function defaultHotels(query: HotelQuery): Hotel[] {
   return Array.from({ length: 12 }, (_, i) => ({
     name: `${query.cityName} 테스트 호텔 ${i + 1}`,
     citySlug: query.citySlug,
-    sourceUrl: `https://example.com/agoda/hotel/${query.citySlug}-${i + 1}`,
-    merchant: 'agoda',
+    // ⚠️ **실제로 통과하는 주소 꼴이어야 한다.** 허용 호스트 밖 주소는 저장된 행에서도
+    //    걸러지므로(`HotelService.isItem`), example.com 을 쓰면 카드가 통째로 비어
+    //    **테스트가 엉뚱한 곳에서 깨진다.** 날짜·인원이 붙는 꼴로 둔다.
+    sourceUrl: `https://kr.trip.com/hotels/detail/?hotelId=${query.citySlug}-${i + 1}`,
+    merchant: 'trip',
     source: 'ai',
     address: `${query.cityName} 중심가`,
     starRating: 4,

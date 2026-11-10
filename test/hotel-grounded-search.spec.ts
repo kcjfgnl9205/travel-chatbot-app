@@ -116,10 +116,12 @@ describe('카드 줄 — 출처와 리뷰 수', () => {
 });
 
 describe('provider — 사이트별 검색과 검증', () => {
+  // ⚠️ **전부 트립닷컴이다.** 허용 호스트가 트립닷컴 하나라(2026-11-10) 다른 사이트
+  //    주소를 쓰면 호스트 필터에 먼저 걸려서, **검증하려던 코드가 아예 안 돌아간다.**
   const TRIP = 'https://kr.trip.com/hotels/detail/?hotelId=1';
-  const HOTELS = 'https://kr.hotels.com/ho222/b/';
-  const HOTELS_GRANVIA = 'https://kr.hotels.com/ho333/granvia/';
-  const MADE_UP = 'https://kr.hotels.com/ho999/made-up/';
+  const CROSS = 'https://kr.trip.com/hotels/detail/?hotelId=222';
+  const GRANVIA_AGAIN = 'https://kr.trip.com/hotels/detail/?hotelId=333';
+  const MADE_UP = 'https://kr.trip.com/hotels/detail/?hotelId=999';
 
   const candidate = (name: string, url: string) => ({
     name,
@@ -147,30 +149,22 @@ describe('provider — 사이트별 검색과 검증', () => {
         const searchCalls = overrides.searchCalls ?? 1;
         if (req.input.includes('트립닷컴')) {
           return {
-            text: JSON.stringify({ candidates: [candidate('그란비아 (Hotel Granvia)', TRIP)] }),
-            searchCalls,
-            sources: [TRIP],
-            status: 'completed',
-            ms: 1,
-          };
-        }
-        if (req.input.includes('호텔스닷컴')) {
-          return {
             text: JSON.stringify({
               candidates: [
-                candidate('크로스 (Cross Hotel)', HOTELS),
+                candidate('그란비아 (Hotel Granvia)', TRIP),
+                candidate('크로스 (Cross Hotel)', CROSS),
                 candidate('지어낸 호텔 (Made Up)', MADE_UP), // 출처에 없다
-                // 트립닷컴 갈래의 「그란비아」와 같은 호텔. 호텔스닷컴이 앞 갈래라 이쪽이 남는다.
-                candidate('그랑비아 (Hotel Granvia)', HOTELS_GRANVIA),
+                // 「그란비아」와 같은 호텔을 표기만 바꿔 한 번 더 준다. 먼저 온 쪽이 남는다.
+                candidate('그랑비아 (Hotel Granvia)', GRANVIA_AGAIN),
               ],
             }),
             searchCalls,
-            sources: [HOTELS, HOTELS_GRANVIA],
+            sources: [TRIP, CROSS, GRANVIA_AGAIN],
             status: 'completed',
             ms: 1,
           };
         }
-        throw new Error('openai timeout after 60000ms'); // 마이리얼트립 갈래는 실패
+        throw new Error('openai timeout after 60000ms'); // 그 밖의 갈래는 실패
       },
     } as unknown as OpenAiService;
     return { openai, inputs };
@@ -200,16 +194,17 @@ describe('provider — 사이트별 검색과 검증', () => {
       limit: 20,
     });
 
-  it('사이트마다 따로 검색하고, 출처에 없는 주소와 중복을 빼고, 실패한 갈래는 건너뛴다', async () => {
+  it('사이트별로 검색하고, 출처에 없는 주소와 중복을 뺀다', async () => {
     const { openai, inputs } = respondWith();
-    titles['https://kr.hotels.com/ho222'] = 'Cross Hotel Osaka';
-    titles[HOTELS_GRANVIA] = 'Hotel Granvia Osaka';
+    titles[CROSS] = 'Cross Hotel Osaka';
+    titles[GRANVIA_AGAIN] = 'Hotel Granvia Osaka';
 
     const { hotels, trace } = await search(openai);
 
     expect(inputs).toHaveLength(SITE_BRANCHES.length);
     expect(inputs.every((input) => input.includes('site:'))).toBe(true);
-    expect(hotels.map((h) => h.name)).toEqual(['크로스 (Cross Hotel)', '그랑비아 (Hotel Granvia)']);
+    // 「지어낸 호텔」은 출처에 없어서, 「그랑비아」는 먼저 온 「그란비아」와 같은 호텔이라 빠진다.
+    expect(hotels.map((h) => h.name)).toEqual(['그란비아 (Hotel Granvia)', '크로스 (Cross Hotel)']);
     expect(trace.ungrounded).toBe(1);
     expect(hotels[0].reviewCount).toBe(100);
   });
@@ -222,11 +217,15 @@ describe('provider — 사이트별 검색과 검증', () => {
 
   it('페이지 제목에 그 호텔 이름이 없으면 버린다', async () => {
     const { openai } = respondWith();
-    titles['https://kr.hotels.com/ho222'] = 'Cross Hotel Osaka';
-    titles[HOTELS_GRANVIA] = '오사카 호텔 추천'; // 목록 페이지였다
+    // ⚠️ **중복이 아닌 줄로 검증한다.** 「그랑비아」쪽에 어긋난 제목을 달면 같은 호텔인
+    //    「그란비아」와 겹쳐 **중복 제거에 먼저 걸리고**, 제목 검사는 돌지도 않는다.
+    titles[CROSS] = '오사카 호텔 추천'; // 목록 페이지였다
+    titles[GRANVIA_AGAIN] = 'Hotel Granvia Osaka';
 
     const { hotels, trace } = await search(openai);
-    expect(hotels.map((h) => h.name)).toEqual(['크로스 (Cross Hotel)']);
+    // 「그란비아」는 제목을 못 읽어서(빈 응답) 버리지 않는다 — 비교할 것이 없을 때
+    // 버리면 멀쩡한 줄이 사라진다. 버리는 건 **이름이 어긋난 게 확인된** 줄뿐이다.
+    expect(hotels.map((h) => h.name)).toEqual(['그란비아 (Hotel Granvia)']);
     expect(trace.nameMismatches).toBe(1);
   });
 
