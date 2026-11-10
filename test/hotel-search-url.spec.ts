@@ -297,10 +297,34 @@ describe('호텔 상세 주소', () => {
    *    거기서 파라미터가 무시되면 카드에 적은 날짜와 열리는 날짜가 갈린다. 그때는
    *    조건을 말하지 않는 쪽(`staySupported === false`)이 맞다.
    */
+  /**
+   * 트립닷컴은 **상세 주소 꼴이 둘인데 받는 칸은 같다**(2026-11-10 확인). 모델이
+   * 검색 결과에서 가져오는 건 주로 경로 꼴이라, 여기에 조건이 안 붙으면 **카드가
+   * 통째로 날짜를 말하지 못한다** — 후쿠오카가 실제로 그랬다.
+   */
+  it('트립닷컴 경로 꼴에도 같은 칸이 붙는다', () => {
+    for (const url of [
+      'https://kr.trip.com/hotels/fukuoka-hotel-detail-688242/',
+      'https://kr.trip.com/hotels/fukuoka-hotel-detail-688242/hakata-hotel',
+    ]) {
+      const p = paramsOf(withStay(url, stay, NOW));
+      expect(p.get('checkIn')).toBe('2026-11-20');
+      expect(p.get('checkOut')).toBe('2026-11-23');
+      expect(p.get('adult')).toBe('3');
+      expect(p.get('crn')).toBe('1');
+      expect(staySupported(url)).toBe(true);
+    }
+  });
+
+  /** ⚠️ 주소 꼴은 **그대로 둔다.** 출처 대조가 두 꼴을 다른 페이지로 보기 때문이다. */
+  it('꼴을 바꾸지 않는다 — 경로는 그대로고 칸만 붙는다', () => {
+    const url = 'https://kr.trip.com/hotels/fukuoka-hotel-detail-688242/';
+
+    expect(new URL(withStay(url, stay, NOW)).pathname).toBe('/hotels/fukuoka-hotel-detail-688242/');
+  });
+
   it('확인하지 않은 주소 꼴은 건드리지 않는다', () => {
     const unknown = [
-      // 트립닷컴의 다른 상세 꼴.
-      'https://kr.trip.com/hotels/osaka-hotel-detail-688242/',
       // 마이리얼트립 오퍼 페이지.
       'https://www.myrealtrip.com/offers/12345',
       // 클룩의 옛 상세 꼴.
@@ -352,8 +376,15 @@ describe('조건이 사용자에게 닿는가', () => {
     expect(stayReachesUser(hotels)).toBe(false);
   });
 
+  it('트립닷컴은 두 꼴 다 닿는다 — 카드가 날짜를 말할 수 있다', () => {
+    expect(stayReachesUser('https://kr.trip.com/hotels/fukuoka-hotel-detail-688242/')).toBe(true);
+    expect(stayReachesUser('https://kr.trip.com/hotels/fukuoka-hotel-detail-688242/hakata')).toBe(
+      true,
+    );
+  });
+
   it('조건을 못 붙이는 주소는 당연히 닿지도 않는다', () => {
-    expect(stayReachesUser('https://kr.trip.com/hotels/osaka-hotel-detail-688242/')).toBe(false);
+    expect(stayReachesUser('https://www.myrealtrip.com/offers/12345')).toBe(false);
     expect(stayReachesUser('그냥 글자')).toBe(false);
   });
 });

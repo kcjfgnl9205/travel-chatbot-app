@@ -396,6 +396,20 @@ interface DetailFormat {
  * ⚠️ **방은 늘 하나다**(`stay.rooms`). 인원을 6명에서 끊는 이유이기도 하다 — 그
  *    위는 사이트가 객실을 나누라고 요구하는데 몇 개로 쪼갤지 우리가 모른다.
  */
+/**
+ * 트립닷컴이 받는 칸. **주소 꼴 둘이 같은 칸을 쓴다** — 함수를 하나만 두어, 한쪽만
+ * 고쳐서 두 꼴이 다르게 열리는 일이 없게 한다.
+ */
+const TRIP_STAY_PARAMS: StayWriter = (stay) => ({
+  checkIn: stay.checkIn,
+  checkOut: stay.checkOut,
+  adult: String(stay.adults),
+  // 아이 수·객실 수도 같이 붙어 있었다. 한 칸을 빼면 조용히 기본값이 될 수 있다
+  // (항공권에서 한 칸을 뺐다가 인원이 1명으로 열린 적이 있다).
+  children: '0',
+  crn: String(stay.rooms),
+});
+
 const DETAIL_FORMATS: DetailFormat[] = [
   {
     // kr.hotels.com/ho1948759872/hotel-intergate-osaka-umeda-osaka-ilbon/
@@ -413,15 +427,22 @@ const DETAIL_FORMATS: DetailFormat[] = [
     // kr.trip.com/hotels/detail/?cityId=248&hotelId=49507812&checkIn=...
     domain: 'trip.com',
     path: /^\/hotels\/detail\/?$/,
-    params: (stay) => ({
-      checkIn: stay.checkIn,
-      checkOut: stay.checkOut,
-      adult: String(stay.adults),
-      // 아이 수·객실 수도 같이 붙어 있었다. 한 칸을 빼면 조용히 기본값이 될 수 있다
-      // (항공권에서 한 칸을 뺐다가 인원이 1명으로 열린 적이 있다).
-      children: '0',
-      crn: String(stay.rooms),
-    }),
+    params: TRIP_STAY_PARAMS,
+  },
+  {
+    // kr.trip.com/hotels/fukuoka-hotel-detail-688242/ · …/688242/호텔이름
+    //
+    // ⚠️ **같은 사이트인데 주소 꼴이 둘이고, 받는 칸은 같다**(2026-11-10 확인).
+    //    한동안 이 꼴에는 조건을 안 붙였는데, 모델이 검색 결과에서 가져오는 주소는
+    //    주로 이 꼴이라 **카드가 통째로 날짜를 말하지 못했다**(한 줄이라도 조건이
+    //    안 닿으면 고지에서 빠진다). 후쿠오카가 그래서 「반영되지 않았어요」였다.
+    //
+    // ⚠️ **주소를 `?hotelId=` 꼴로 고쳐 쓰지 않는다.** 출처 대조(`verify.ts` urlKey)는
+    //    두 꼴을 다른 페이지로 보기 때문에, 바꿔 적으면 "검색 결과에 없는 주소" 가
+    //    되어 그 호텔이 통째로 버려진다. 꼴은 그대로 두고 칸만 붙인다.
+    domain: 'trip.com',
+    path: /^\/hotels\/[^/]*-detail-\d+(?:\/[^/]*)?\/?$/i,
+    params: TRIP_STAY_PARAMS,
   },
   {
     // www.klook.com/ko/hotels/detail/1134329-prince-smart-inn-osaka-yodoyabashi/
@@ -474,10 +495,10 @@ function writerFor(url: string): StayWriter | null {
  * 허용 호스트라 그대로 통과했고, 사용자는 호텔을 눌렀는데 **다낭 호텔 목록**에
  * 떨어졌다 (2026-11-09). 이름은 그 호텔인데 열리는 건 검색창이다.
  *
- * ⚠️ **확인한 꼴만 받는다.** 날짜를 박을 수 있는 꼴(`DETAIL_FORMATS`)에 더해,
- *    날짜 칸은 확인 못 했지만 호텔 한 곳을 가리키는 것이 분명한 꼴을 둘 더 받는다 —
- *    트립닷컴 `/hotels/{도시}-hotel-detail-{번호}/` 와 마이리얼트립 `/offers/{번호}`.
- *    이 둘은 상세로는 열리고, 조건만 안 붙는다(`staySupported` 가 false).
+ * ⚠️ **확인한 꼴만 받는다.** 날짜를 박을 수 있는 꼴(`DETAIL_FORMATS`)이 대부분이고,
+ *    날짜 칸은 확인 못 했지만 호텔 한 곳을 가리키는 것이 분명한 꼴을 하나 더 받는다 —
+ *    마이리얼트립 `/offers/{번호}`. 상세로는 열리고 조건만 안 붙는다(`staySupported`
+ *    가 false). 트립닷컴 경로 꼴은 2026-11-10 에 칸이 확인돼 `DETAIL_FORMATS` 로 갔다.
  */
 export function isHotelDetailUrl(url: string): boolean {
   if (staySupported(url)) return true;
@@ -492,18 +513,6 @@ export function isHotelDetailUrl(url: string): boolean {
 }
 
 const EXTRA_DETAIL_PATHS: { domain: string; path: RegExp }[] = [
-  // kr.trip.com/hotels/osaka-hotel-detail-688242/
-  // kr.trip.com/hotels/kagoshima-hotel-detail-688242/shiroyama-hotel   (뒤에 이름이 붙기도 한다)
-  //
-  // ⚠️ **번호 뒤를 열어둔다.** 예전에는 번호에서 끝나는 주소만 받았는데
-  //    (`…-detail-\d+$`), 그 뒤에 호텔 이름 한 토막이 붙은 주소가 **상세 페이지인데도
-  //    목록 페이지 취급으로 버려졌다.** 그러면 그 도시는 카드가 통째로 비고
-  //    「추천 목록을 정리하지 못해…」만 나간다 — 멀쩡한 호텔을 버리는 쪽이 더 비싸다.
-  //
-  // ⚠️ 그래도 **목록 페이지가 새어 들어오지는 않는다.** 이걸 넣게 만든 사고의 주소는
-  //    `…-hotels-list-1356/` · `…/destination/…` 꼴이라 `-detail-{번호}` 를 안 가진다.
-  //    판정의 핵심은 그 조각이고, 뒤에 붙는 이름은 장식이다.
-  { domain: 'trip.com', path: /^\/hotels\/[^/]*-detail-\d+(?:\/[^/]*)?\/?$/i },
   // www.myrealtrip.com/offers/12345
   { domain: 'myrealtrip.com', path: /^\/offers\/\d+\/?$/ },
 ];
