@@ -194,11 +194,24 @@ export class SearchService {
     // 만료되면 보여주면 안 됐다. 0009 에서 관광지가 즉시 도메인이 되면서 여기까지
     // 내려오지 않으므로 예외도 같이 사라졌다.
     const stale = row ? isExpired(row) : false;
-    const usable = row && row.items.length && row.status !== 'pending';
+    // ⚠️ **지금 쓸 수 있는 줄을 센다. 저장된 줄 수가 아니라.**
+    //
+    //    저장된 항목은 **지금 기준으로 걸러진다**(`isItem` — 허용 목록 밖 제휴몰,
+    //    배포로 모양이 바뀐 행). 저장된 수만 보고 "쓸 수 있다" 고 판정하면, 전부
+    //    걸러지는 행을 들고 `respond` 로 내려가 **빈손 카드**가 나가고 — 더 나쁘게는
+    //    **다시 찾지도 않아서 TTL 동안 그 지역이 계속 빈손이 된다.**
+    //    실제로 그랬다: 호텔 허용 목록을 트립닷컴으로 좁히자, 그 전에 저장된 도시들이
+    //    하루 동안 「추천 목록을 정리하지 못해…」만 돌려줬다.
+    const valid = row ? row.items.filter((item) => domain.isItem(item)) : [];
+    const usable = row && valid.length > 0 && row.status !== 'pending';
     if (usable) {
       if (stale) void this.refresh(parsed, place, parent, from, meta, cacheKey, row, req);
-      this.logger.log(`cache ${stale ? 'stale' : 'hit'} key=${cacheKey} items=${row.items.length}`);
-      return this.respond(row.items, meta, 0, cacheKey, req, {
+      // 저장된 수와 쓸 수 있는 수를 **같이** 남긴다. 둘이 벌어지면 그 차이가 곧
+      // 필터가 버린 수다 — 한쪽만 찍으면 "왜 줄이 적지" 를 로그로 못 쫓는다.
+      this.logger.log(
+        `cache ${stale ? 'stale' : 'hit'} key=${cacheKey} items=${valid.length}/${row.items.length}`,
+      );
+      return this.respond(valid, meta, 0, cacheKey, req, {
         ignored: parsed.ignored,
         message,
         cacheHit: true,

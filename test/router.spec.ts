@@ -15,6 +15,7 @@ import {
   textOf,
 } from './helpers';
 import { MemoryStoreService } from '../src/modules/database/memory-store.service';
+import { defaultHotels } from './fake-provider';
 import { OpenAiHttpError } from '../src/modules/openai/openai.service';
 
 /**
@@ -307,6 +308,39 @@ describe('POST /api/v1/kakao/router', () => {
 
     // 관광지는 `/a/{id}` 로 바로 간다 — 제휴 변환 단계가 아예 없다.
     expect(noticeOf(body)).not.toContain('제휴 업체');
+  });
+
+  /**
+   * **저장된 줄이 지금 기준으로 전부 걸러지면 다시 찾는다.**
+   *
+   * ⚠️ 저장된 항목은 꺼낼 때 `isItem` 으로 걸러진다(허용 목록 밖 제휴몰, 배포로 모양이
+   *    바뀐 행). 예전에는 **저장된 줄 수**만 보고 "쓸 수 있다" 고 판정해서, 전부
+   *    걸러지는 행을 들고 내려가 빈손 카드를 내보냈다 — 게다가 **다시 찾지도 않아서
+   *    TTL 동안 그 지역이 계속 빈손이었다.** 호텔 허용 목록을 트립닷컴으로 좁히자
+   *    그 전에 저장된 도시들이 하루 동안 「추천 목록을 정리하지 못해…」만 돌려줬다.
+   */
+  it('저장된 줄이 지금 기준으로 전부 걸러지면 다시 찾는다 — 빈손으로 굳지 않는다', async () => {
+    // 허용 목록 밖(호텔스닷컴) 줄만 든 행. 트립닷컴으로 좁히기 전에 저장된 행이 이렇다.
+    ctx.provider.reply = (query) => [
+      {
+        name: `${query.cityName} 옛 호텔`,
+        citySlug: query.citySlug,
+        sourceUrl: 'https://kr.hotels.com/ho1180944672/old/',
+        merchant: 'hotels',
+      },
+    ];
+    await post(ctx.app, kakaoPayload('오사카 호텔 추천해줘'));
+    for (let i = 0; i < 40 && ctx.provider.calls.length < 1; i += 1) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(ctx.provider.calls).toHaveLength(1);
+
+    // 다시 물으면 그 행을 결과로 쓰지 않고 **새로 찾는다.**
+    ctx.provider.reply = defaultHotels;
+    const body = await askUntilCard(ctx.app, '오사카 호텔 추천해줘');
+
+    expect(ctx.provider.calls.length).toBeGreaterThan(1);
+    expect(listCardOf(body).header.title).toContain('오사카 호텔');
   });
 
   it('같은 지역을 다시 물으면 저장된 결과가 나간다 — AI 는 한 번만 돈다', async () => {
