@@ -15,6 +15,9 @@ describe('isHotelDetailUrl', () => {
     'https://kr.trip.com/hotels/da-nang-hotels-list-1356/?locale=ko-KR&curr=KRW',
     'https://www.klook.com/ko/destination/c74-da-nang/3-hotel/',
     'https://kr.trip.com/hotels/osaka-list',
+    // ⚠️ 번호 뒤를 열어줬어도 **목록 페이지는 여전히 안 들어온다** — 판정의 핵심은
+    //    `-detail-{번호}` 조각이고, 목록 주소에는 그게 없다.
+    'https://kr.trip.com/hotels/kagoshima-hotels-list-1356/best-hotels',
     'https://kr.hotels.com/de1234/da-nang-vietnam/',
     'https://www.myrealtrip.com/accommodations?keyword=다낭',
     'not a url',
@@ -25,6 +28,11 @@ describe('isHotelDetailUrl', () => {
   it.each([
     'https://kr.trip.com/hotels/detail/?cityId=248&hotelId=49507812',
     'https://kr.trip.com/hotels/osaka-hotel-detail-688242/',
+    // ⚠️ **번호 뒤에 이름 한 토막이 붙어도 상세다.** 예전에는 번호에서 끝나는 주소만
+    //    받아서 이런 줄이 목록 페이지 취급으로 버려졌고, 그 도시는 카드가 통째로 비었다.
+    'https://kr.trip.com/hotels/kagoshima-hotel-detail-688242/shiroyama-hotel',
+    'https://kr.trip.com/hotels/kagoshima-hotel-detail-688242/shiroyama-hotel/?locale=ko-KR',
+    'https://kr.trip.com/hotels/Kagoshima-hotel-detail-688242/',
     'https://kr.hotels.com/ho1948759872/hotel-intergate-osaka-umeda-osaka-ilbon/',
     'https://www.klook.com/ko/hotels/detail/1134329-prince-smart-inn-osaka-yodoyabashi/',
     'https://accommodation.myrealtrip.com/union/products/5007313',

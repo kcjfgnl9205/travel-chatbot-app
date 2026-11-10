@@ -493,7 +493,17 @@ export function isHotelDetailUrl(url: string): boolean {
 
 const EXTRA_DETAIL_PATHS: { domain: string; path: RegExp }[] = [
   // kr.trip.com/hotels/osaka-hotel-detail-688242/
-  { domain: 'trip.com', path: /^\/hotels\/[a-z0-9-]+-detail-\d+\/?$/ },
+  // kr.trip.com/hotels/kagoshima-hotel-detail-688242/shiroyama-hotel   (뒤에 이름이 붙기도 한다)
+  //
+  // ⚠️ **번호 뒤를 열어둔다.** 예전에는 번호에서 끝나는 주소만 받았는데
+  //    (`…-detail-\d+$`), 그 뒤에 호텔 이름 한 토막이 붙은 주소가 **상세 페이지인데도
+  //    목록 페이지 취급으로 버려졌다.** 그러면 그 도시는 카드가 통째로 비고
+  //    「추천 목록을 정리하지 못해…」만 나간다 — 멀쩡한 호텔을 버리는 쪽이 더 비싸다.
+  //
+  // ⚠️ 그래도 **목록 페이지가 새어 들어오지는 않는다.** 이걸 넣게 만든 사고의 주소는
+  //    `…-hotels-list-1356/` · `…/destination/…` 꼴이라 `-detail-{번호}` 를 안 가진다.
+  //    판정의 핵심은 그 조각이고, 뒤에 붙는 이름은 장식이다.
+  { domain: 'trip.com', path: /^\/hotels\/[^/]*-detail-\d+(?:\/[^/]*)?\/?$/i },
   // www.myrealtrip.com/offers/12345
   { domain: 'myrealtrip.com', path: /^\/offers\/\d+\/?$/ },
 ];
