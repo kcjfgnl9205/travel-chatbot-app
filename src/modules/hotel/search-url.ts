@@ -329,9 +329,41 @@ const SAMPLE_STAY: ResolvedStay = {
   adultsClamped: false,
 };
 
-/** 이 주소에 조건을 박을 수 있는가. **카드 고지가 이걸 보고 말을 고른다.** */
+/** 이 주소에 조건을 **박을 수 있는가.** 박은 것이 사용자에게 가는지는 별개다(아래). */
 export function staySupported(url: string): boolean {
   return writerFor(url) !== null;
+}
+
+/**
+ * **애드픽을 거치면 숙박 조건이 사라지는 제휴몰.**
+ *
+ * 주소에는 멀쩡히 붙고 브라우저로 직접 열면 반영되는데, **애드픽 → 제휴 네트워크
+ * 경유에서 쿼리가 통째로 날아간다.** 호텔스닷컴(Partnerize)에서 확인했다
+ * (2026-11-09, [ISSUE 문서](../../../docs/ISSUE-2026-11-09-HOTELS-COM-STAY.md)).
+ * 애드픽에서 직접 만든 링크도 같아서 **우리 코드로는 못 고친다.**
+ *
+ * ⚠️ 그래도 주소에는 계속 붙인다. 애드픽 변환이 실패하면 리다이렉트가 **원본 주소로**
+ *    보내는데([redirect.controller.ts](../redirect/redirect.controller.ts)), 그때는
+ *    조건이 그대로 살아서 간다. 붙이는 데 드는 비용도 없다.
+ */
+export const STAY_DROPPED_BY_AFFILIATE = ['hotels.com'];
+
+/**
+ * **사용자가 실제로 그 조건으로 열게 되는가.** 카드 고지는 이걸 보고 말을 고른다.
+ *
+ * `staySupported` 와 갈라놓은 이유 — 조건을 붙일 수 있다는 것과 그게 사용자에게
+ * 닿는다는 것은 다른 말이다. 둘을 같은 것으로 보고 고지를 적었더니 **「링크는 12월 2일
+ * 체크인 … 으로 열려요」라고 적어놓고 날짜가 빈 페이지를 여는** 카드가 나갔다. 사용자는
+ * 그 안내를 믿고 예약하러 간다 — 아무 말 안 하는 것보다 나쁘다.
+ */
+export function stayReachesUser(url: string): boolean {
+  if (!staySupported(url)) return false;
+  try {
+    const host = new URL(url).hostname;
+    return !STAY_DROPPED_BY_AFFILIATE.some((domain) => hostMatches(host, domain));
+  } catch {
+    return false;
+  }
 }
 
 /** 조건 → 주소에 박을 칸. **이 표 하나가 쓰기와 떼기를 다 정한다.** */

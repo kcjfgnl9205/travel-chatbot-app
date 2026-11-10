@@ -523,10 +523,11 @@ export function noticeText(opts: {
   /**
    * 호텔 전용. **이 카드의 줄들이 실제로 날짜·인원이 박힌 주소를 가리키는가.**
    *
-   * ⚠️ 형식을 확인한 제휴몰만 조건을 받는다([hotel/search-url.ts](../hotel/search-url.ts)
-   *    `withStay`). 한 줄이라도 맨 주소로 나가는 카드에 "링크는 ...으로 열려요" 를
-   *    적으면 그 줄을 누른 사람은 적힌 날짜와 다른 페이지를 본다 — 판정은 호출부가
-   *    한다(`staySupported`).
+   * ⚠️ **붙는 것과 닿는 것은 다르다.** 형식을 아는 제휴몰만 조건을 받고(`withStay`),
+   *    받았더라도 애드픽 경유에서 쿼리가 날아가는 곳이 있다(호텔스닷컴). 한 줄이라도
+   *    안 닿는 카드에 "링크는 ...으로 열려요" 를 적으면 그 줄을 누른 사람은 적힌 날짜와
+   *    다른 페이지를 보고 **그 안내를 믿고 예약하러 간다** — 판정은 호출부가 한다
+   *    ([hotel/search-url.ts](../hotel/search-url.ts) `stayReachesUser`).
    */
   stayApplied?: boolean;
 }): string {

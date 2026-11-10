@@ -4,6 +4,7 @@ import {
   hotelSearchUrls,
   resolveStay,
   stayProblem,
+  stayReachesUser,
   staySupported,
   withStay,
   withoutStay,
@@ -317,6 +318,43 @@ describe('호텔 상세 주소', () => {
   it('주소가 아니면 그대로 돌려준다', () => {
     expect(withStay('그냥 글자', stay, NOW)).toBe('그냥 글자');
     expect(staySupported('')).toBe(false);
+  });
+});
+
+/**
+ * **붙는 것과 닿는 것은 다르다.**
+ *
+ * 호텔스닷컴은 주소에 `chkin`·`chkout`·`rm1` 이 멀쩡히 붙고 브라우저로 직접 열면
+ * 반영되는데, **애드픽 → Partnerize 경유에서 쿼리가 통째로 날아간다**
+ * ([ISSUE 문서](../docs/ISSUE-2026-11-09-HOTELS-COM-STAY.md), 2026-11-09). 그런데도
+ * 「링크는 12월 2일 체크인 … 으로 열려요」를 적어놨더니 사용자는 그 안내를 믿고
+ * 날짜가 빈 페이지에서 예약하러 갔다 — 아무 말 안 하는 것보다 나쁘다.
+ *
+ * ⚠️ **지금은 호텔 검색이 트립닷컴만 쓰므로 이 갈래가 운영에서는 안 걸린다.** 그래도
+ *    판정은 남겨둔다 — 다른 사이트를 다시 켤 때 이 구분이 없으면 같은 거짓말이 그대로
+ *    돌아온다. 라우터 통합 테스트로는 더 이상 재현할 수 없어서 여기서 지킨다.
+ */
+describe('조건이 사용자에게 닿는가', () => {
+  const trip = 'https://kr.trip.com/hotels/detail/?hotelId=1';
+  const hotels = 'https://kr.hotels.com/ho1180944672/hotel-granvia/';
+  const stay = { checkIn: '2026-11-20', checkOut: '2026-11-23', nights: null, adults: 3 };
+
+  it('트립닷컴은 닿는다 — 애드픽을 거쳐도 유지되는 것을 확인했다 (2026-11-10)', () => {
+    expect(staySupported(trip)).toBe(true);
+    expect(stayReachesUser(trip)).toBe(true);
+  });
+
+  it('호텔스닷컴은 붙지만 닿지 않는다', () => {
+    // 주소에는 붙는다 — 애드픽 변환이 실패하면 원본으로 가고, 그때는 살아서 간다.
+    expect(staySupported(hotels)).toBe(true);
+    expect(new URL(withStay(hotels, stay, NOW)).searchParams.get('chkin')).toBe('2026-11-20');
+    // 하지만 카드는 날짜를 말하면 안 된다.
+    expect(stayReachesUser(hotels)).toBe(false);
+  });
+
+  it('조건을 못 붙이는 주소는 당연히 닿지도 않는다', () => {
+    expect(stayReachesUser('https://kr.trip.com/hotels/osaka-hotel-detail-688242/')).toBe(false);
+    expect(stayReachesUser('그냥 글자')).toBe(false);
   });
 });
 

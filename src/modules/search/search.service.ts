@@ -9,7 +9,7 @@ import { routeProblem } from '../flight/airports';
 import { FlightService } from '../flight/flight.service';
 import { parseTripParams, withoutUsed } from '../flight/trip-params';
 import { HotelService } from '../hotel/hotel.service';
-import { stayProblem, staySupported } from '../hotel/search-url';
+import { stayProblem, stayReachesUser } from '../hotel/search-url';
 import { ParsedIntent } from '../intent/intent.types';
 import * as cards from '../kakao/cards';
 import { isCredentialError } from '../openai/openai.service';
@@ -474,12 +474,13 @@ export class SearchService {
     const rows = await domain.rows(page, render);
     if (!rows.length) return await this.emptyResponse(meta, req);
 
-    // ⚠️ **한 줄이라도 맨 주소로 나가면 조건을 말하지 않는다.** 상세 페이지에 날짜를
-    //    박을 수 있는 제휴몰만 받기 때문이다([hotel/search-url.ts](../hotel/search-url.ts)
-    //    `withStay`). 섞인 카드에 "링크는 11월 10일 체크인으로 열려요" 를 적으면,
-    //    안 받은 줄을 누른 사람은 적힌 것과 다른 페이지를 본다.
+    // ⚠️ **한 줄이라도 조건이 안 닿으면 조건을 말하지 않는다.** 두 가지 이유로 안 닿는다 —
+    //    상세 주소 꼴을 모르거나(`staySupported`), **애드픽 경유에서 쿼리가 날아가거나**
+    //    (호텔스닷컴, [ISSUE 문서](../../../docs/ISSUE-2026-11-09-HOTELS-COM-STAY.md)).
+    //    섞인 카드에 "링크는 11월 10일 체크인으로 열려요" 를 적으면 그 줄을 누른 사람은
+    //    적힌 것과 다른 페이지를 보고, **그 안내를 믿고 예약하러 간다.**
     const stayApplied =
-      meta.kind === 'hotel' && page.every((item) => staySupported(sourceUrlOf(item)));
+      meta.kind === 'hotel' && page.every((item) => stayReachesUser(sourceUrlOf(item)));
     const reflectsConditions = meta.kind === 'hotel' ? stayApplied : true;
 
     const buttons: t.Json[] = [];
