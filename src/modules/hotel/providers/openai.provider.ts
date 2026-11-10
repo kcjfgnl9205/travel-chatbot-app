@@ -85,6 +85,22 @@ export const SITE_BRANCHES = [
   },
 ] as const;
 
+/**
+ * 한 갈래에 시킬 후보 수의 **상한**.
+ *
+ * ⚠️ **많이 시킬수록 좋은 게 아니다.** 갈래가 둘일 때는 갈래마다 15곳이었는데
+ *    (`OPENAI_CANDIDATE_COUNT` 30 을 갈래 수로 나눈다), 트립닷컴 하나로 좁히면서
+ *    **한 갈래가 30곳을 떠안았다.** 한 사이트에 상세 페이지가 그만큼 없는 도시
+ *    (가고시마 같은 소도시)에서는 모델이 **개수를 채우려고 도시 목록 페이지를 긁어
+ *    온다** — 그건 서버가 전부 버리므로(`isHotelDetailUrl`) 카드가 통째로 빈다.
+ *    시즈오카가 31곳 전부 목록 페이지였던 사고와 같은 모양이다.
+ *
+ * ⚠️ **대신 2차의 "고르기" 가 사실상 사라진다.** 후보 10곳에서 `RESULT_MAX_ITEMS`(20)
+ *    개를 고르라고 하면 전부 고르게 된다. 그래도 2차는 남겨둔다 — 거기서 출처 대조와
+ *    이름 검증이 돌고, 그게 지어낸 호텔을 거르는 자리다.
+ */
+export const MAX_CANDIDATES_PER_BRANCH = 10;
+
 /** 프롬프트에 그대로 박아 넣는 표기. 목록과 문구가 어긋나지 않게 여기서 만든다. */
 export const ALLOWED_SITES_TEXT = '트립닷컴(trip.com)';
 
@@ -107,6 +123,18 @@ export { chooseUrl, toKoreanUrl } from '../../../common/booking-url';
  * 건너뛴 사실(`searchCalls=0`)이 로그에만 있었다. 이제 응답에 실린다.
  */
 export interface SearchTrace extends TwoStageTrace {
+  /**
+   * **2차가 고른 뒤 정규화가 버린 수**, 이유별로.
+   *
+   * ⚠️ 로그에만 있던 값이다. 그런데 「호텔이 하나도 안 나온다」를 짚을 때 가장 먼저
+   *    봐야 하는 숫자가 이거다 — `picks` 는 있는데 `kept` 가 0 이면 전부 여기서
+   *    버려진 것이고, **무엇 때문인지에 따라 고칠 데가 전혀 다르다.**
+   *
+   *      listing  상세가 아닌 주소 (도시 목록·검색 결과). 주소 꼴 판정이나 프롬프트
+   *      host     허용 목록 밖 사이트. 모델이 시킨 사이트를 안 쓴 것이다
+   *      empty    이름이나 주소가 비었다
+   */
+  dropped: { listing: number; host: number; empty: number };
   /** 404·410 이라 버린 예약 링크 수. 모델이 주소를 지어낸 정도를 보여준다. */
   deadLinks: number;
   /** 페이지 제목에 호텔 이름이 없어서 버린 수. 다른 호텔·목록 페이지를 가리킨 것이다. */
@@ -285,7 +313,10 @@ export class OpenAiHotelProvider
    * 호텔 하나짜리 페이지를 찾는다. 셋을 동시에 돌리므로 걸리는 시간은 한 번과 비슷하다.
    */
   protected override searchInputs(query: HotelQuery, wanted: number): string[] {
-    const per = Math.max(5, Math.ceil(wanted / SITE_BRANCHES.length));
+    const per = Math.min(
+      MAX_CANDIDATES_PER_BRANCH,
+      Math.max(5, Math.ceil(wanted / SITE_BRANCHES.length)),
+    );
     const guests = query.guests ? `${query.guests}명이 묵을 예정이다.` : '';
     return SITE_BRANCHES.map((branch) =>
       [
@@ -374,6 +405,7 @@ export class OpenAiHotelProvider
   async searchTraced(query: HotelQuery): Promise<TracedSearch> {
     const trace: SearchTrace = {
       ...newTwoStageTrace(),
+      dropped: { listing: 0, host: 0, empty: 0 },
       deadLinks: 0,
       nameMismatches: 0,
       namesVerified: 0,
@@ -396,7 +428,7 @@ export class OpenAiHotelProvider
     if (!candidates) return done([], null);
 
     const picks = await this.rank<RawCandidate>(query, candidates, trace);
-    const normalized = this.toHotels(picks, query);
+    const normalized = this.toHotels(picks, query, trace);
     const alive = await this.dropDeadLinks(normalized, trace, query);
 
     return done(
@@ -406,7 +438,7 @@ export class OpenAiHotelProvider
   }
 
   // ------------------------------------------------------------ 정규화
-  private toHotels(picks: RawCandidate[], query: HotelQuery): Hotel[] {
+  private toHotels(picks: RawCandidate[], query: HotelQuery, trace?: SearchTrace): Hotel[] {
     const hotels: Hotel[] = [];
     /** 어느 호스트에서 몇 개가 떨어졌나. 한 줄 요약에 쓴다. */
     const droppedHosts: Record<string, number> = {};
@@ -474,6 +506,12 @@ export class OpenAiHotelProvider
     //    곳이 떨어지면 스무 줄을 세어봐야 "몇 개가 왜 없어졌는지" 를 알 수 있다.
     //    `picks=20 kept=1` 은 그 자체로 답이고, hosts= 가 어느 사이트를 허용 목록에
     //    넣어야 하는지까지 알려준다 — 운영에서 실제로 여기서 열아홉 개가 떨어졌다.
+    const droppedHost = picks.length - hotels.length - droppedEmpty - droppedListing;
+    // ⚠️ **로그에만 두지 않는다.** 「호텔이 하나도 안 나온다」를 짚을 때 가장 먼저 봐야
+    //    하는 숫자인데, 로그를 못 보는 자리에서는 응답만 보고 아무것도 알 수 없었다
+    //    — `/debug/search` 의 trace 가 있는 이유가 그것이다.
+    if (trace) trace.dropped = { listing: droppedListing, host: droppedHost, empty: droppedEmpty };
+
     if (picks.length !== hotels.length) {
       const hosts = Object.entries(droppedHosts)
         .map(([host, n]) => `${host}:${n}`)
@@ -481,7 +519,7 @@ export class OpenAiHotelProvider
       this.logger.warn(
         `hotel normalize ${this.subjectOf(query)} picks=${picks.length} kept=${hotels.length} ` +
           `droppedEmpty=${droppedEmpty} droppedListing=${droppedListing} ` +
-          `droppedHost=${picks.length - hotels.length - droppedEmpty - droppedListing}` +
+          `droppedHost=${droppedHost}` +
           (hosts ? ` hosts=${hosts}` : ''),
       );
     }

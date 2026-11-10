@@ -1,6 +1,6 @@
 import { loadConfig } from '../src/config/app.config';
 import { Hotel, listDescription } from '../src/modules/hotel/hotel.types';
-import { OpenAiHotelProvider, SITE_BRANCHES } from '../src/modules/hotel/providers/openai.provider';
+import { MAX_CANDIDATES_PER_BRANCH, OpenAiHotelProvider, SITE_BRANCHES } from '../src/modules/hotel/providers/openai.provider';
 import {
   isGrounded,
   nameKey,
@@ -203,6 +203,10 @@ describe('provider — 사이트별 검색과 검증', () => {
 
     expect(inputs).toHaveLength(SITE_BRANCHES.length);
     expect(inputs.every((input) => input.includes('site:'))).toBe(true);
+    // ⚠️ **갈래 하나에 30곳을 시키지 않는다.** 상세 페이지가 그만큼 없는 소도시에서는
+    //    모델이 개수를 채우려고 도시 목록 페이지를 긁어 오고, 그건 전부 버려져 카드가
+    //    통째로 빈다.
+    expect(inputs.every((input) => input.includes(`최대 ${MAX_CANDIDATES_PER_BRANCH}곳`))).toBe(true);
     // 「지어낸 호텔」은 출처에 없어서, 「그랑비아」는 먼저 온 「그란비아」와 같은 호텔이라 빠진다.
     expect(hotels.map((h) => h.name)).toEqual(['그란비아 (Hotel Granvia)', '크로스 (Cross Hotel)']);
     expect(trace.ungrounded).toBe(1);
