@@ -46,8 +46,8 @@ export const HELP_RESPONSE_EXAMPLE = {
     outputs: [
       {
         textCard: {
-          title: '🤔 어떤 여행을 찾으시나요?',
-          description: '요청하신 내용을 정확히 이해하지 못했어요.\n아래 예시를 참고해 다시 말씀해 주세요!',
+          title: '어떤 여행 정보를 찾으세요?',
+          description: '지금은 요청하신 내용을 안내해 드리지 못했어요.\n도시 이름과 찾으시는 항목을 함께 말씀해 주세요.',
           buttons: [{ label: '도움말', action: 'guide' }],
         },
       },
@@ -118,7 +118,11 @@ export const SEARCH_STARTED_EXAMPLE = {
   version: '2.0',
   template: {
     outputs: [
-      { simpleText: { text: '오사카 호텔을 찾고 있어요 🔍\n30초쯤 뒤에 다시 물어봐 주세요!' } },
+      {
+        simpleText: {
+          text: '오사카 호텔을 찾고 있어요 🔍\n정리가 끝나면 바로 보여드릴게요. 잠시 뒤 다시 물어봐 주세요!',
+        },
+      },
       // ⚠️ **퀵리플라이 자리를 대신하는 말풍선이다.** 팀채팅 챗봇은 QuickReplies 를
       // 지원하지 않아서(그룹 챗봇 beta 가이드 표 3) 단톡방에서는 아무것도 안 보였다.
       // 누르면 입력창에 `@봇이름` 이 들어간다 — 멘션이 없으면 봇이 아예 못 듣는다.

@@ -39,6 +39,19 @@ export function withObjectParticle(word: string): string {
   return `${word}${hasFinalConsonant ? '을' : '를'}`;
 }
 
+/**
+ * "이 나라의 어느 도시냐" 를 묻는 말. **도메인마다 다르게 묻는다.**
+ *
+ * 「일본 어느 도시의 항공권을 찾을까요?」는 틀린 말은 아니지만, 묻는 사람은
+ * 항공권을 고르는 게 아니라 **갈 곳**을 고르는 중이다. 하는 일에 맞춰 물어야
+ * 도시 이름이 바로 떠오른다.
+ */
+export const CITY_QUESTION: Record<SearchKind, (country: string) => string> = {
+  hotel: (c) => `${c}의 어느 도시에서 머무르시나요?`,
+  flight: (c) => `${c}의 어느 도시로 가시나요?`,
+  attraction: (c) => `${c}의 어느 도시를 둘러보고 싶으세요?`,
+};
+
 export const KIND_LABEL: Record<SearchKind, string> = {
   hotel: '호텔',
   flight: '항공권',
@@ -77,8 +90,12 @@ export function exampleUtterance(place: string, kind: SearchKind): string {
 export function notUnderstoodCard(botName: string | null): t.Json {
   return t.skillResponse([
     t.textCard({
-      title: '🤔 어떤 여행을 찾으시나요?',
-      description: '요청하신 내용을 정확히 이해하지 못했어요.\n아래 예시를 참고해 다시 말씀해 주세요!',
+      title: '어떤 여행 정보를 찾으세요?',
+      // ⚠️ **사용자 탓으로 읽히면 안 된다.** 이 분기에는 못 알아들은 발화뿐 아니라
+      //    **서버 오류도 떨어진다.** 「정확히 이해하지 못했어요」는 우리가 고장 난
+      //    경우에도 사용자가 자기 문장을 의심하게 만든다 — 그 사람은 같은 말을
+      //    바꿔 치며 헤매고, 바꿔도 결과는 같다.
+      description: '지금은 요청하신 내용을 안내해 드리지 못했어요.\n도시 이름과 찾으시는 항목을 함께 말씀해 주세요.',
       buttons: [t.guideButton()],
     }),
     t.mentionCard(botName),
@@ -115,7 +132,7 @@ export function slowText(botName: string | null): t.Json {
 export function helpCard(botName: string | null): t.Json {
   return t.listCard(
     {
-      headerTitle: '가자고가 도와드릴 수 있는 것',
+      headerTitle: '가자고에게 이렇게 물어보세요',
       items: [
         t.listItem({ title: '🏨 호텔 찾기', description: '오사카 호텔 추천해줘', messageText: '오사카 호텔 추천해줘' }),
         t.listItem({ title: '✈️ 항공권 찾기', description: '오사카 항공권 찾아줘', messageText: '오사카 항공권 찾아줘' }),
@@ -145,8 +162,6 @@ export function askCityInCountry(
   // 도시를 못 구했으면(모델 실패) 일반 되묻기로 떨어진다 — 예시라도 주는 게 낫다.
   if (!cities.length) return askPlaceCard(kind, botName);
 
-  const label = KIND_LABEL[kind];
-
   // ⚠️ **줄을 누르면 완성된 문장이 그대로 전송된다.** message 버튼은 누르는 즉시
   //    전송되는데, 이 자리에서는 그게 정확히 원하는 동작이다 — 도시와 의도를 모두
   //    박아두면 그 발화가 라우터로 돌아와 평소 경로를 탄다.
@@ -155,7 +170,7 @@ export function askCityInCountry(
   //    멘션이 빠져 **봇이 아예 듣지 못한다** — 눌러서 보내는 길이 있어야 하는 이유다.
   const card: t.Json = {
     listCard: {
-      header: { title: t.cut(`${country} 어느 도시의 ${withObjectParticle(label)} 찾을까요?`, t.MAX_LIST_HEADER_TITLE) },
+      header: { title: t.cut(CITY_QUESTION[kind](country), t.MAX_LIST_HEADER_TITLE) },
       items: cities.slice(0, t.MAX_LIST_ITEMS).map((city) => ({
         title: t.cut(city.name, t.MAX_LIST_ITEM_TITLE),
         // 처음 가는 사람은 도시 이름만 보고 못 고른다. "신주쿠 · 시부야" 한 줄이면 고른다.
@@ -245,7 +260,9 @@ export function askPlaceNameOnly(
   botName: string | null,
 ): t.Json {
   const label = KIND_LABEL[kind];
-  const where = country ? `${country} 어디로 가세요?` : `어느 도시 ${withObjectParticle(label)} 찾으세요?`;
+  const where = country
+    ? CITY_QUESTION[kind](country)
+    : `어느 도시의 ${withObjectParticle(label)} 찾으세요?`;
 
   // ⚠️ **멘션을 빼먹으면 봇이 아예 못 듣는다.** 단톡방에서는 봇을 멘션한 메시지만
   //    서버로 온다. 버튼이 그 멘션을 넣어주므로, 글은 **그 뒤에 뭘 치면 되는지**만
@@ -259,7 +276,7 @@ export function askPlaceNameOnly(
 export function askPlaceCard(kind: SearchKind, botName: string | null): t.Json {
   const label = KIND_LABEL[kind];
   return t.simpleTextWithMention(
-    `어느 지역 ${withObjectParticle(label)} 찾으세요?\n` +
+    `어느 도시의 ${withObjectParticle(label)} 찾으세요?\n` +
       `아래 버튼을 누르고 「${exampleUtterance(EXAMPLE_PLACE, kind)}」처럼 보내주세요.`,
     botName,
   );
@@ -533,9 +550,14 @@ export function noticeText(opts: {
 }): string {
   const lines: string[] = [];
 
+  // ⚠️ **관광지만 "추천 목록에" 를 붙인다.** 관광지는 조건을 넣을 링크 자체가 없어
+  //    목록에 못 넣은 것이 맞지만, 호텔·항공권의 이 목록에는 **애초에 어디에도 안 쓰는
+  //    것**(예산·테마)이 섞여 있다. 거기에 「링크에 못 넣었어요」를 붙이면 링크만
+  //    고치면 예산이 반영될 것처럼 들린다 — 예산은 고쳐도 안 쓴다.
   const ignored = (opts.ignored ?? []).filter(Boolean);
   if (ignored.length) {
-    lines.push(`${conditionLabel(ignored)}(${ignored.join(', ')})은 반영되지 않았어요.`);
+    const where = opts.meta?.kind === 'attraction' ? '추천 목록에 반영되지 않았어요' : '반영되지 않았어요';
+    lines.push(`${conditionLabel(ignored)}(${ignored.join(', ')})은 ${where}.`);
   }
 
   // ⚠️ **링크가 어떤 조건으로 열리는지 반드시 말한다.** 우리가 날짜·인원을 넣어
@@ -545,21 +567,45 @@ export function noticeText(opts: {
   if (opts.meta?.kind === 'flight') {
     const tripType = opts.meta.tripType === 'ow' ? 'oneway' : 'round';
     const resolved = resolveTrip(tripType, opts.trip, opts.now ?? new Date());
-    // 카드에 가격이 없으므로 "확정 운임이 아니다" 같은 고지는 할 말이 없다.
-    lines.push(`링크는 ${tripText(resolved)}으로 검색돼요.`);
-    if (resolved.adultsClamped) lines.push(adultsClampedText(FLIGHT_MAX_ADULTS));
+    // ⚠️ **실시간 항공편·요금을 찾아준 것이 아니다.** 우리가 하는 일은 예약 사이트의
+    //    검색 화면을 조건까지 채워서 여는 것뿐이다. 이 줄이 없으면 카드 제목
+    //    (「서울→오사카 항공권」)만 보고 **좌석과 운임을 확인해 준 줄 안다.**
+    lines.push('아래 예약 사이트에서 항공편과 요금을 확인해 주세요.');
+    lines.push(`링크는 ${tripText(resolved)} 기준으로 검색돼요.`);
+    if (resolved.adultsClamped) {
+      lines.push(flightAdultsClampedText(resolved.adultsAsked, FLIGHT_MAX_ADULTS));
+    }
   }
 
   // ⚠️ **호텔은 추천 목록과 링크가 다른 조건이다.** AI 목록은 지역으로만 찾고(캐시를
   //    지역으로 가른다) 날짜·인원은 **링크에만** 들어간다. 그래서 "검색돼요" 가 아니라
   //    "열려요" 다 — 목록까지 그 날짜로 고른 줄 알면 예약 가능 여부를 오해한다.
-  if (opts.meta?.kind === 'hotel' && opts.stayApplied) {
-    const stay = resolveStay(stayOf(opts.trip), opts.now ?? new Date());
-    lines.push(
-      `링크는 ${dayText(stay.checkIn)} 체크인 · ${dayText(stay.checkOut)} 체크아웃 · ` +
-        `${stay.adults}명으로 열려요.`,
-    );
-    if (stay.adultsClamped) lines.push(adultsClampedText(HOTEL_MAX_ADULTS));
+  if (opts.meta?.kind === 'hotel') {
+    // ⚠️ **방금 찾은 요금도, 예약 가능한 객실도 아니다.** 목록은 하루를 사는 캐시이고
+    //    (`search_results`) 요금은 카드에 아예 안 적는다. 그 사실을 말하지 않으면
+    //    사용자는 카드에 보이는 호텔이 그 날짜에 비어 있다고 읽는다.
+    lines.push('예약 가능 여부와 최종 요금은 예약 사이트에서 확인해 주세요.');
+
+    // ⚠️ **조건이 링크에 안 닿았을 때만 이 줄을 붙인다** (H06). `stayApplied` 가 false
+    //    인 카드는 상세 주소 꼴을 모르거나 애드픽 경유에서 쿼리가 날아간 줄이 섞인
+    //    경우다. 그 사람은 링크를 열어 날짜를 **직접 다시 넣어야** 하는데, 위의
+    //    「반영되지 않았어요」만으로는 거기서 뭘 해야 하는지가 안 보인다.
+    if (!opts.stayApplied) {
+      lines.push('예약 사이트에서 날짜와 인원을 다시 확인해 주세요.');
+    }
+
+    if (opts.stayApplied) {
+      const stay = resolveStay(stayOf(opts.trip), opts.now ?? new Date());
+      lines.push(
+        `링크는 ${dayText(stay.checkIn)} 체크인 · ${dayText(stay.checkOut)} 체크아웃 · ` +
+          `${stay.adults}명 · 객실 1개 기준으로 열려요.`,
+      );
+      // ⚠️ **이 한 줄이 이 카드에서 가장 중요한 고지다.** 위 줄만 읽으면 "이 날짜로
+      //    고른 호텔" 로 읽히는데, 목록은 지역으로만 고른다. 조건에 맞는 호텔을
+      //    선별해 준 것처럼 두면 그 날짜에 못 묵는 호텔을 추천으로 받는다.
+      lines.push('추천 목록은 날짜·인원에 따라 달라지지 않아요.');
+      if (stay.adultsClamped) lines.push(hotelAdultsClampedText(stay.adultsAsked, HOTEL_MAX_ADULTS));
+    }
   }
 
   // 출발지를 추측했으면 반드시 알려준다. 부산에서 가려던 사람이 고쳐 말할 유일한 단서다.
@@ -585,7 +631,7 @@ export function noticeText(opts: {
  *    로 꽉 차서, 하나 더 얹으면 멘션 버튼이 조용히 잘린다
  *    ([templates.ts](./templates.ts)). 기존 고지에 한 줄로 합친다.
  */
-export const AFFILIATE_NOTICE = '본 검색 결과에는 제휴 업체가 포함되어 있습니다.';
+export const AFFILIATE_NOTICE = '아래 링크에는 제휴 링크가 포함되어 있어요.';
 
 /**
  * '10월 20일 출발 · 24일 귀국 · 4인'.
@@ -597,8 +643,10 @@ function tripText(resolved: ResolvedTrip): string {
   const { depart, back, adults } = resolved;
   const parts = [`${dayText(depart)} 출발`];
   if (back) parts.push(`${dayText(back)} 귀국`);
-  else parts.push('편도');
-  parts.push(`${adults}인`);
+  parts.push(`${adults}명`);
+  // ⚠️ **왕복·편도를 글자로 박는다.** 귀국일이 있고 없고로 구분하게 두면, 날짜를
+  //    안 말해 기본값이 들어간 사람은 두 날짜만 보고 그게 자기가 고른 일정인 줄 안다.
+  parts.push(back ? '왕복' : '편도');
   return parts.join(' · ');
 }
 
@@ -608,8 +656,24 @@ function tripText(resolved: ResolvedTrip): string {
  * ⚠️ **말풍선을 새로 만들지 않는다.** 카드 + 고지 + 멘션 버튼이 이미 MAX_OUTPUTS(3)
  *    으로 꽉 차서 하나 더 얹으면 멘션 버튼이 조용히 잘린다. 기존 고지에 한 줄로 붙인다.
  */
-function adultsClampedText(max: number): string {
-  return `인원은 ${max}명까지만 넣을 수 있어 ${max}명으로 맞췄어요.`;
+function flightAdultsClampedText(asked: number | null, max: number): string {
+  const head = asked ? `요청하신 ${asked}명 대신 ` : '';
+  return `${head}${max}명으로 검색돼요. 링크에는 ${max}명까지만 넣을 수 있어요.`;
+}
+
+/**
+ * 호텔판. **객실 수까지 말해야 한다.**
+ *
+ * 6명은 「객실 1개에 넣을 수 있는 최대」지 「우리가 찾아준 인원」이 아니다. 8명이라고
+ * 말한 사람에게 숫자만 6으로 바꿔 주면 8명이 묵을 방을 찾아준 줄 알고 예약하러 간다 —
+ * 방을 몇 개로 쪼갤지는 우리가 알 수 없으므로 **거기서 다시 고르라고** 말한다.
+ */
+function hotelAdultsClampedText(asked: number | null, max: number): string {
+  const head = asked ? `요청하신 ${asked}명 대신 ` : '';
+  return (
+    `${head}객실 1개·${max}명으로 열려요.\n` +
+    '예약 사이트에서 전체 인원과 객실 수를 다시 설정해 주세요.'
+  );
 }
 
 /** '2026-10-20' → '10월 20일'. 연도는 적지 않는다 — 카드 한 줄이 좁다. */
@@ -639,8 +703,12 @@ function conditionLabel(ignored: string[]): string {
 
 /** 다른 사람이 먼저 같은 걸 물어 검색이 돌고 있는 경우. */
 export function busyText(meta: SearchMeta, botName: string | null): t.Json {
+  // ⚠️ **"완료되면 보내드릴게요" 라고 하면 안 된다.** 콜백은 먼저 선점한 요청 하나에만
+  //    달려 있어서, 이 사람에게는 아무것도 안 온다. 다시 물어야 저장된 결과를 받는다 —
+  //    그래서 **무엇이라고 다시 말하면 되는지**까지 적는다.
   return t.simpleTextWithMention(
-    `${withObjectParticle(subject(meta))} 먼저 찾고 있어요 🔍\n잠시 뒤 다시 물어봐 주세요!`,
+    `${subject(meta)} 정보를 이미 찾고 있어요 🔍\n` +
+      `잠시 후 「${exampleUtterance(meta.placeName, meta.kind)}」라고 다시 말씀해 주세요.`,
     botName,
   );
 }
@@ -652,8 +720,11 @@ export function busyText(meta: SearchMeta, botName: string | null): t.Json {
  * 콜백 없이 20초를 기다리게 할 방법이 없어서 둔 차선책이다.
  */
 export function searchStartedText(meta: SearchMeta, botName: string | null): t.Json {
+  // ⚠️ **걸리는 시간을 숫자로 약속하지 않는다.** 「30초쯤」이라고 적었는데 실제로는
+  //    7초에 끝나기도 하고 50초를 넘기기도 한다. 30초에 다시 물어 또 "찾고 있어요" 를
+  //    받은 사람은 봇이 고장 났다고 읽는다.
   return t.simpleTextWithMention(
-    `${withObjectParticle(subject(meta))} 찾고 있어요 🔍\n30초쯤 뒤에 다시 물어봐 주세요!`,
+    `${withObjectParticle(subject(meta))} 찾고 있어요 🔍\n정리가 끝나면 바로 보여드릴게요. 잠시 뒤 다시 물어봐 주세요!`,
     botName,
   );
 }
@@ -672,23 +743,29 @@ export function searchStartedText(meta: SearchMeta, botName: string | null): t.J
  *    무엇을 바꿔 말하면 되는지를 적는다.
  */
 export function flightRouteText(problem: RouteProblem, botName: string | null): t.Json {
+  // ⚠️ **"공항이 없어요" 라고 단정하지 않는다.** 우리가 아는 것은 「그 지명으로는
+  //    링크를 못 만든다」 뿐이고, 그건 공항이 없어서일 수도 있고 우리 대조표에 없어서일
+  //    수도 있다. 지리를 단정하면 공항이 있는 도시에까지 틀린 말을 하게 된다 —
+  //    사용자가 할 수 있는 일(다른 도시로 말하기)은 어느 쪽이든 같으므로, **현재
+  //    지원 범위**만 말한다.
   let text: string;
   if (problem.kind === 'same') {
     text = problem.originAssumed
-      ? `${problem.name} 출발 기준이라 출발지와 도착지가 같아요.\n` +
-        `「부산에서 ${problem.name} 항공권」처럼 출발지를 같이 알려주세요.`
-      : `출발지와 도착지가 같아요 (${problem.name}).\n` +
-        `「부산에서 ${problem.name} 항공권」처럼 다시 알려주세요.`;
+      ? `출발지를 말씀하지 않아 ${problem.name} 기준으로 보니 도착지와 같아요.\n` +
+        `「부산에서 ${problem.name} 항공권」처럼 출발지를 함께 말씀해 주세요.`
+      : `출발지와 도착지가 모두 ${problem.name}으로 되어 있어요.\n` +
+        `서로 다른 출발 도시와 도착 도시를 알려주세요.`;
   } else if (problem.kind === 'no-origin-airport') {
     text = problem.isCountry
-      ? `출발지가 나라(${problem.name})라서 공항을 정할 수 없어요.\n` +
-        `「서울에서 ${problem.dest} 항공권」처럼 출발 도시를 알려주세요.`
-      : `${problem.name}에는 공항이 없어 출발지로 쓸 수 없어요.\n` +
-        `가까운 공항 도시를 출발지로 알려주세요. 예) 「서울에서 ${problem.dest} 항공권」`;
+      ? `${problem.name}의 어느 도시에서 출발하시나요?\n` +
+        `「서울에서 ${problem.dest} 항공권」처럼 출발 도시를 포함해 다시 말씀해 주세요.`
+      : `현재 ${problem.name} 출발 항공권 링크는 제공하지 않아요.\n` +
+        `이용하실 공항이 있는 도시를 출발지로 넣어 다시 말씀해 주세요.\n` +
+        `예) 「서울에서 ${problem.dest} 항공권」`;
   } else {
     text =
-      `${problem.name}에는 공항이 없어 항공권 링크를 만들 수 없어요.\n` +
-      `가까운 공항이 있는 도시 이름으로 다시 물어봐 주세요.`;
+      `현재 ${problem.name} 도착 항공권 링크는 제공하지 않아요.\n` +
+      `이용하실 공항이 있는 도시를 도착지로 알려주세요.`;
   }
   return t.simpleTextWithMention(text, botName);
 }
@@ -733,7 +810,7 @@ function narrowerHint(meta: SearchMeta): string {
  * **그 지역 호텔 검색 결과**는 우리가 열어줄 수 있다.
  */
 export function emptyFallbackHeader(meta: SearchMeta): string {
-  return `${meta.placeName} ${KIND_LABEL[meta.kind]} 검색 결과 바로가기`;
+  return `${meta.placeName} ${KIND_LABEL[meta.kind]} 직접 찾아보기`;
 }
 
 /**
@@ -743,7 +820,12 @@ export function emptyFallbackHeader(meta: SearchMeta): string {
  * 추천 품질이 갑자기 나빠진 것처럼 보인다.
  */
 export const EMPTY_FALLBACK_NOTICE =
-  '지금은 추천 목록을 정리하지 못해 검색 결과를 바로 열어드려요.';
+  '지금은 추천할 목록을 정리하지 못했어요.\n' +
+  '아래 링크에서 직접 확인해 주세요.\n' +
+  // ⚠️ **이 줄을 빼면 안 된다.** 이 카드의 링크는 제휴 경유에서 날짜·인원이
+  //    날아가는 제휴몰이다(호텔스닷컴). 평소 카드처럼 「링크는 … 으로 열려요」가
+  //    붙지 않는 이유이고, 그 침묵만으로는 사용자가 알 길이 없다.
+  '날짜와 인원은 예약 사이트에서 다시 확인해 주세요.';
 
 /**
  * 검색을 **아예 할 수 없는 상태** (provider 에 키가 없다 등).
@@ -753,8 +835,11 @@ export const EMPTY_FALLBACK_NOTICE =
  *    /health 의 openai 필드와 서버 로그가 신호다.
  */
 export function unavailableText(meta: SearchMeta, botName: string | null): t.Json {
+  // ⚠️ **"고쳐두는 대로 다시 알려드릴게요" 는 지킬 수 없는 약속이었다.** 복구를 감지해
+  //    먼저 말을 거는 경로가 우리에게 없다. 콜백은 그 요청 하나에 5분·1회로 묶여 있고
+  //    선톡은 별도 심사다. 기다리라고 해놓고 영영 안 오면 그게 가장 나쁜 실패다.
   return t.simpleTextWithMention(
-    `지금은 ${subject(meta)} 검색이 안 되고 있어요 🙏\n고쳐두는 대로 다시 알려드릴게요.`,
+    `지금은 ${subject(meta)} 정보를 불러올 수 없어요 🙏\n잠시 후 다시 요청해 주세요.`,
     botName,
   );
 }

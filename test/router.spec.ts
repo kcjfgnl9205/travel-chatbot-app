@@ -45,7 +45,7 @@ describe('POST /api/v1/kakao/router', () => {
 
     expect(res.status).toBe(201);
     const card = notUnderstoodCardOf(res.body);
-    expect(card.title).toBe('🤔 어떤 여행을 찾으시나요?');
+    expect(card.title).toBe('어떤 여행 정보를 찾으세요?');
     // 예시는 챗봇 설정의 도움말이 가진다 — 카드에는 그걸 여는 버튼 하나뿐이다.
     expect(card.buttons).toEqual([{ label: '도움말', action: 'guide' }]);
     // ⚠️ 오류 문구를 쓰지 않는다. 인사말까지 오류로 취급하면 단톡방이 딱딱해진다.
@@ -58,7 +58,7 @@ describe('POST /api/v1/kakao/router', () => {
   it('여행 신호는 있는데 지역이 없으면 되묻는다', async () => {
     const res = await post(ctx.app, kakaoPayload('호텔 추천해줘'));
 
-    expect(textOf(res.body)).toContain('어느 지역');
+    expect(textOf(res.body)).toContain('어느 도시의');
     // ⚠️ **누를 것이 같이 나가야 한다.** 되묻는 말만 있고 누를 게 없으면 거기서
     //    대화가 끊긴다 — 단톡방에서는 멘션 없는 답장이 봇에게 오지 않기 때문이다.
     expect(mentionCardOf(res.body)).toBeDefined();
@@ -119,7 +119,7 @@ describe('POST /api/v1/kakao/router', () => {
     // 날짜·인원은 링크로 간다 — 버린 조건 목록에 있으면 안 된다.
     expect(notice).not.toContain('4명)');
     expect(notice).toContain('9월 22일 체크인');
-    expect(notice).toContain('4명으로 열려요');
+    expect(notice).toContain('4명 · 객실 1개 기준으로 열려요');
   });
 
   it('테마를 말해도 반영하지 않는다 — 그러면 그렇다고 알린다', async () => {
@@ -260,15 +260,17 @@ describe('POST /api/v1/kakao/router', () => {
       const tomorrow = new Date(Date.now() + 86_400_000);
       const day = `${tomorrow.getMonth() + 1}월 ${tomorrow.getDate()}일`;
       expect(notice).toContain(`${day} 체크인`);
-      expect(notice).toContain('2명으로 열려요');
+      expect(notice).toContain('2명 · 객실 1개 기준으로 열려요');
     });
 
     it('6명을 넘으면 6명으로 맞추고 맞췄다고 알린다', async () => {
       const body = await askUntilCard(ctx.app, '오사카 호텔 8명');
       const notice = noticeOf(body);
 
-      expect(notice).toContain('6명으로 열려요');
-      expect(notice).toContain('인원은 6명까지만 넣을 수 있어 6명으로 맞췄어요.');
+      expect(notice).toContain('6명 · 객실 1개 기준으로 열려요');
+      // 몇 명이라고 말했는지를 빼면 사용자는 자기 요청이 어떻게 처리됐는지 못 잇는다.
+      expect(notice).toContain('요청하신 8명 대신');
+      expect(notice).toContain('객실 1개·6명으로 열려요');
       // ⚠️ **말풍선을 새로 만들면 안 된다.** 셋이 한계라, 넘기면 멘션 버튼이 조용히
       //    잘린다. 이 안내는 기존 고지에 한 줄로 붙는다.
       expect(body.template.outputs.length).toBeLessThanOrEqual(3);
@@ -297,7 +299,7 @@ describe('POST /api/v1/kakao/router', () => {
 
     // 줄 링크는 우리 리다이렉트를 거쳐 애드픽 커미션 링크로 간다. 사용자는 그 사실을
     // 알 길이 없으므로 **카드 아래에 적는다.**
-    expect(noticeOf(body)).toContain('본 검색 결과에는 제휴 업체가 포함되어 있습니다.');
+    expect(noticeOf(body)).toContain('아래 링크에는 제휴 링크가 포함되어 있어요.');
     // ⚠️ 말풍선은 셋을 못 넘는다. 넘기면 멘션 버튼이 조용히 잘린다.
     expect(body.template.outputs).toHaveLength(3);
     expect(mentionCardOf(body)).toBeDefined();
@@ -307,7 +309,7 @@ describe('POST /api/v1/kakao/router', () => {
     const body = await askUntilCard(ctx.app, '오사카 관광지 추천해줘');
 
     // 관광지는 `/a/{id}` 로 바로 간다 — 제휴 변환 단계가 아예 없다.
-    expect(noticeOf(body)).not.toContain('제휴 업체');
+    expect(noticeOf(body)).not.toContain('제휴 링크가 포함');
   });
 
   /**
@@ -370,7 +372,9 @@ describe('POST /api/v1/kakao/router', () => {
 
     const second = await post(ctx.app, kakaoPayload('도쿄 호텔 추천해줘', { userKey: 'u2' }));
 
-    expect(textOf(second.body)).toContain('먼저 찾고 있어요');
+    expect(textOf(second.body)).toContain('이미 찾고 있어요');
+    // ⚠️ 이 사람에게는 콜백이 안 간다. **무엇이라고 다시 말하면 되는지**까지 줘야 한다.
+    expect(textOf(second.body)).toContain('다시 말씀해 주세요');
     expect(ctx.provider.calls).toHaveLength(1);
   });
 
@@ -474,7 +478,7 @@ describe('POST /api/v1/kakao/router', () => {
 
     const res = await post(ctx.app, kakaoPayload('다른 도시'));
 
-    expect(textOf(res.body)).toContain('베트남 어디로 가세요?');
+    expect(textOf(res.body)).toContain('베트남의 어느 도시에서 머무르시나요?');
     expect(ctx.provider.calls).toHaveLength(0);
   });
 
@@ -537,7 +541,7 @@ describe('POST /api/v1/kakao/router', () => {
     const notice = noticeOf(body);
     expect(notice).toContain('10월 20일 출발');
     expect(notice).toContain('24일 귀국');
-    expect(notice).toContain('4인');
+    expect(notice).toContain('4명');
     expect(notice).not.toContain('반영되지 않았어요');
   });
 
@@ -614,7 +618,7 @@ describe('POST /api/v1/kakao/router', () => {
 
       // 예문을 그대로 보내면 되묻기가 아니라 평소 경로를 타야 한다.
       const again = await post(ctx.app, kakaoPayload(example));
-      expect(JSON.stringify(again.body)).not.toContain('어떤 여행을 찾으시나요');
+      expect(JSON.stringify(again.body)).not.toContain('어떤 여행 정보를 찾으세요');
       expect(JSON.stringify(again.body)).not.toContain('빨라요');
     });
 
@@ -627,7 +631,7 @@ describe('POST /api/v1/kakao/router', () => {
 
       const items = listCardOf(res.body).items as { messageText: string }[];
       const again = await post(ctx.app, kakaoPayload(items[0].messageText));
-      expect(JSON.stringify(again.body)).not.toContain('어떤 여행을 찾으시나요');
+      expect(JSON.stringify(again.body)).not.toContain('어떤 여행 정보를 찾으세요');
       expect(JSON.stringify(again.body)).not.toContain('빨라요');
     });
 
@@ -660,21 +664,21 @@ describe('POST /api/v1/kakao/router', () => {
   it('출발지와 도착지가 같으면 링크 대신 출발지를 묻는다 — "서울 항공권"', async () => {
     const res = await post(ctx.app, kakaoPayload('서울 항공권 찾아줘'));
 
-    expect(textOf(res.body)).toContain('서울 출발 기준이라 출발지와 도착지가 같아요');
+    expect(textOf(res.body)).toContain('서울 기준으로 보니 도착지와 같아요');
     expect(textOf(res.body)).toContain('「부산에서 서울 항공권」');
   });
 
   it('공항 없는 출발지는 서울로 바꾸지 않고 다시 묻는다 — "강릉에서 제주"', async () => {
     const res = await post(ctx.app, kakaoPayload('강릉에서 제주 항공권 찾아줘'));
 
-    expect(textOf(res.body)).toContain('강릉에는 공항이 없어 출발지로 쓸 수 없어요');
+    expect(textOf(res.body)).toContain('현재 강릉 출발 항공권 링크는 제공하지 않아요');
     expect(JSON.stringify(res.body)).not.toContain('listCard');
   });
 
   it('공항 없는 도착지는 "다시 물어봐 주세요" 가 아니라 무엇을 바꿀지 알려준다', async () => {
     const res = await post(ctx.app, kakaoPayload('유후인 항공권 찾아줘'));
 
-    expect(textOf(res.body)).toContain('유후인에는 공항이 없어 항공권 링크를 만들 수 없어요');
+    expect(textOf(res.body)).toContain('현재 유후인 도착 항공권 링크는 제공하지 않아요');
     expect(textOf(res.body)).not.toContain('잠시 뒤');
   });
 
@@ -741,7 +745,7 @@ describe('POST /api/v1/kakao/router', () => {
     const res = await post(ctx.app, kakaoPayload('베트남 여행지 추천해줘'));
     const card = listCardOf(res.body);
 
-    expect(card.header.title).toBe('베트남 어느 도시의 관광지를 찾을까요?');
+    expect(card.header.title).toBe('베트남의 어느 도시를 둘러보고 싶으세요?');
     // ⚠️ 예전에는 베트남을 물어도 오사카·도쿄·후쿠오카를 권했다. 딴소리였다.
     expect(card.items.map((i: any) => i.title)).toEqual(['다낭', '하노이', '호치민', '나트랑']);
     // 처음 가는 사람은 도시 이름만 보고 못 고른다.
@@ -814,7 +818,7 @@ describe('POST /api/v1/kakao/router', () => {
   it('사전에 있는 나라는 의도도 지역도 모델 없이 판정한다', async () => {
     const res = await post(ctx.app, kakaoPayload('일본 호텔 추천해줘'));
 
-    expect(listCardOf(res.body).header.title).toContain('일본 어느 도시');
+    expect(listCardOf(res.body).header.title).toContain('일본의 어느 도시');
     // ⚠️ 모델에 맡겼더니 같은 "독일" 을 어떤 때는 나라로, 어떤 때는 도시로 봤다.
     //    그때마다 나라가 지역 하나로 검색돼 뭉개진 결과가 나갔다. 사전이 그 흔들림을 없앤다.
     const parsing = ctx.openai.calls.filter((c) =>
@@ -869,7 +873,7 @@ describe('POST /api/v1/kakao/router', () => {
 
     const res = await post(ctx.app, kakaoPayload('일본여행지'));
 
-    expect(listCardOf(res.body).header.title).toBe('일본 어느 도시의 관광지를 찾을까요?');
+    expect(listCardOf(res.body).header.title).toBe('일본의 어느 도시를 둘러보고 싶으세요?');
   });
 
   it('되묻기 상태여도 지명 같지 않은 말은 받지 않는다', async () => {
@@ -955,7 +959,9 @@ describe('POST /api/v1/kakao/router', () => {
       await post(ctx.app, kakaoPayload('나고야 호텔 추천해줘', { callbackUrl: receiver.url }));
 
       const text = textOf(await receiver.received);
-      expect(text).toContain('안 되고 있어요');
+      expect(text).toContain('불러올 수 없어요');
+      // ⚠️ 복구를 감지해 먼저 말을 거는 경로가 없다. 알려주겠다고 하면 영영 안 온다.
+      expect(text).not.toContain('알려드릴게요');
       // "잠시 뒤 다시 시도해 주세요" — 키를 고치기 전엔 영영 안 되는 안내다.
       expect(text).not.toContain('잠시 뒤');
     } finally {
@@ -971,7 +977,7 @@ describe('POST /api/v1/kakao/router', () => {
 
       // ⚠️ "30초쯤 뒤에 다시 물어봐 주세요" 는 결과가 영원히 안 오는데 기다리게 하는 말이다.
       expect(textOf(res.body)).not.toContain('30초');
-      expect(textOf(res.body)).toContain('안 되고 있어요');
+      expect(textOf(res.body)).toContain('불러올 수 없어요');
       // 검색을 시도하지도, 실패 행을 남기지도 않는다 — 키를 꽂으면 바로 살아나야 한다.
       expect(ctx.provider.calls).toHaveLength(0);
     } finally {
@@ -1060,8 +1066,10 @@ describe('POST /api/v1/kakao/router', () => {
         // ⚠️ 왜 추천이 아니라 검색 링크인지 말해야 한다. 안 그러면 품질이 갑자기
         //    나빠진 것처럼 보인다. 제휴 고지도 같이 나간다.
         const notice = noticeOf(res.body);
-        expect(notice).toContain('추천 목록을 정리하지 못해');
-        expect(notice).toContain('제휴 업체');
+        expect(notice).toContain('추천할 목록을 정리하지 못했어요');
+        // ⚠️ 이 카드의 링크는 제휴 경유에서 날짜·인원이 날아간다. 그 침묵은 거짓말이 된다.
+        expect(notice).toContain('날짜와 인원은 예약 사이트에서 다시 확인해 주세요');
+        expect(notice).toContain('제휴 링크가 포함');
 
         // 줄 링크는 우리 리다이렉트를 거쳐야 클릭이 집계되고 수수료가 붙는다.
         for (const item of card.items as { link?: { web: string } }[]) {
@@ -1172,7 +1180,7 @@ describe('POST /api/v1/kakao/router', () => {
         // ⚠️ **"어떤 여행을 찾으시나요?" 를 쓰면 안 된다.** 질문은 멀쩡했고 우리가
         //    늦었을 뿐인데, 그 문구는 사용자에게 자기 문장이 틀렸다고 읽힌다 —
         //    실제로 멀쩡한 질문을 다르게 바꿔 치며 헤매게 만들었다.
-        expect(text).not.toContain('어떤 여행을 찾으시나요');
+        expect(text).not.toContain('어떤 여행 정보를 찾으세요');
         expect(text).toContain('정리 중');
         // ⚠️ 탓하지 않는다. 늦은 건 서버 사정이고 질문은 멀쩡했다.
         expect(text).not.toMatch(/잘못|오류|실패/);
@@ -1191,12 +1199,12 @@ describe('POST /api/v1/kakao/router', () => {
           expect(res.status).toBe(201);
           // 지금 줄 수 있는 건 "기다려" 뿐이고, 진짜 답은 콜백으로 간다.
           expect(res.body.useCallback).toBe(true);
-          expect(JSON.stringify(res.body)).not.toContain('어떤 여행을 찾으시나요');
+          expect(JSON.stringify(res.body)).not.toContain('어떤 여행 정보를 찾으세요');
 
           // ⚠️ **콜백 URL 은 1회용이다.** 예산 가드와 백그라운드 검색이 각자 쏘면
           //    하나는 버려진다. 밀린 것이 "못 알아들었다" 가 아니어야 한다.
           const pushed = await receiver.received;
-          expect(JSON.stringify(pushed)).not.toContain('어떤 여행을 찾으시나요');
+          expect(JSON.stringify(pushed)).not.toContain('어떤 여행 정보를 찾으세요');
         });
       } finally {
         await receiver.close();
@@ -1208,7 +1216,7 @@ describe('POST /api/v1/kakao/router', () => {
         const res = await post(ctx.app, kakaoPayload('@가자고 오사카 호텔 추천해줘'));
 
         expect(res.status).toBe(201);
-        expect(JSON.stringify(res.body)).not.toContain('어떤 여행을 찾으시나요');
+        expect(JSON.stringify(res.body)).not.toContain('어떤 여행 정보를 찾으세요');
       });
     });
 
@@ -1236,7 +1244,7 @@ describe('POST /api/v1/kakao/router', () => {
         const res = await post(ctx.app, kakaoPayload('@가자고 오사카 호텔 추천해줘'));
 
         expect(res.status).toBe(201);
-        expect(JSON.stringify(res.body)).not.toContain('어떤 여행을 찾으시나요');
+        expect(JSON.stringify(res.body)).not.toContain('어떤 여행 정보를 찾으세요');
       });
     });
   });

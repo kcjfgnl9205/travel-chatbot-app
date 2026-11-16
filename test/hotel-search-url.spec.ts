@@ -121,6 +121,7 @@ describe('숙박 조건 기본값', () => {
       adults: 2,
       rooms: 1,
       adultsClamped: false,
+      adultsAsked: null,
     });
   });
 

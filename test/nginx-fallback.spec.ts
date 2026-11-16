@@ -14,7 +14,7 @@ import { simpleText } from '../src/modules/kakao/templates';
  * 그래서 설정 파일을 **코드가 직접 읽어서** 검사한다. nginx 를 띄우지 않고 할 수 있는
  * 검사는 여기까지다 — 문법은 서버에서 `nginx -t` 가 본다.
  */
-describe('nginx 점검 중 응답', () => {
+describe('nginx 폴백 응답', () => {
   const conf = readFileSync(
     join(__dirname, '..', 'deploy', 'nginx', 'bot-nolmoa.conf'),
     'utf8',
@@ -61,5 +61,23 @@ describe('nginx 점검 중 응답', () => {
    */
   it('앱이 낸 오류까지 덮지 않는다', () => {
     expect(conf).not.toMatch(/proxy_intercept_errors\s+on/);
+  });
+
+  /**
+   * ⚠️ **nginx 는 왜 못 붙었는지 모른다.** 배포 중 재시작(계획된 것)과 프로세스
+   *    사망(계획되지 않은 것)이 똑같이 502 로 온다. 장애를 "점검" 이라고 부르면
+   *    **우리가 알고 있고 곧 끝난다**는 뜻이 되는데, 아무도 모르는 사이 몇 시간
+   *    죽어 있을 수 있다.
+   */
+  it('장애를 "점검" 이라고 단정하지 않는다', () => {
+    expect(body).not.toContain('점검');
+  });
+
+  /**
+   * ⚠️ **끝나는 시각을 약속하지 않는다.** "1분 뒤에" 를 믿고 다시 물은 사람이 같은
+   *    말풍선을 받으면, 그 뒤로는 봇이 고장 났다고 읽고 다시 오지 않는다.
+   */
+  it('복구 시각을 약속하지 않는다', () => {
+    expect(body).not.toMatch(/\d+\s*(분|초|시간)\s*(뒤|후)/);
   });
 });

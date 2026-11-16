@@ -122,14 +122,17 @@ describe('클릭 리다이렉트', () => {
     expect(sent.redirect).toBe('https://db/1');
   });
 
-  it('둘 다 없으면 만료 안내 — 목적지를 모른 채 보낼 수는 없다', async () => {
+  it('둘 다 없으면 안내를 띄운다 — 목적지를 모른 채 보낼 수는 없다', async () => {
     const { controller } = build(null);
     const { res, sent } = fakeRes();
 
     await controller.redirect('없는키', res as never);
 
     expect(sent.status).toBe(404);
-    expect(sent.html).toContain('만료');
+    // ⚠️ **"만료" 라고 하지 않는다.** 이 링크에는 시간 유효기간이 없다 — 기록이
+    //    지워졌거나 조회에 실패했을 뿐이라, 늦어서 놓쳤다고 읽히면 안 된다.
+    expect(sent.html).toContain('불러오지 못했어요');
+    expect(sent.html).not.toContain('만료');
     // 호텔·항공권 링크가 같은 페이지를 쓴다. 한쪽 이름을 박으면 다른 쪽에서 딴소리가 된다.
     expect(sent.html).not.toContain('호텔');
     expect(sent.redirect).toBeUndefined();

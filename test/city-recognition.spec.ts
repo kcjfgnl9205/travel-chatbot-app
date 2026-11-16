@@ -69,7 +69,7 @@ describe('지역 인식 (모델 없이)', () => {
     it('지역이 정말 없으면 되묻는다', async () => {
       const res = await post(ctx.app, kakaoPayload('여행지 추천해줘')).expect(201);
 
-      expect(textOf(res.body)).toContain('어느 지역');
+      expect(textOf(res.body)).toContain('어느 도시');
     });
   });
 });

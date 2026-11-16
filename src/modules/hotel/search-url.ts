@@ -54,6 +54,15 @@ export interface ResolvedStay {
    * 줄 알고 예약하러 간다.
    */
   adultsClamped: boolean;
+  /**
+   * **사용자가 말한 인원 그대로.** 안 말했으면 null.
+   *
+   * ⚠️ `adults` 와 따로 들고 있어야 한다. 고지에 「요청하신 8명 대신 6명으로」를
+   *    적으려면 줄이기 **전** 값이 필요한데, 줄인 뒤에는 어디에도 안 남는다.
+   *    몇 명으로 열리는지만 알려주고 **몇 명이라고 말했는지는 빼면**, 사용자는
+   *    자기 요청이 어떻게 처리됐는지 잇지 못한다.
+   */
+  adultsAsked: number | null;
 }
 
 /**
@@ -93,7 +102,7 @@ export function resolveStay(stay: HotelStay | null | undefined, now: Date): Reso
   // ⚠️ 같은 날도 안 된다 — 호텔은 **1박 이상**이어야 검색이 된다(항공권과 다르다).
   if (checkOut <= checkIn) checkOut = fallbackOut;
   const { adults, adultsClamped } = clampAdults(stay?.adults);
-  return { checkIn, checkOut, adults, rooms: 1, adultsClamped };
+  return { checkIn, checkOut, adults, rooms: 1, adultsClamped, adultsAsked: stay?.adults ?? null };
 }
 
 /** 6명을 넘으면 6명으로 맞춘다. **줄였다는 사실을 같이 돌려준다** — 고지가 그걸 읽는다. */
@@ -327,6 +336,7 @@ const SAMPLE_STAY: ResolvedStay = {
   adults: 1,
   rooms: 1,
   adultsClamped: false,
+  adultsAsked: null,
 };
 
 /** 이 주소에 조건을 **박을 수 있는가.** 박은 것이 사용자에게 가는지는 별개다(아래). */

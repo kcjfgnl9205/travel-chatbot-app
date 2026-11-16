@@ -244,6 +244,7 @@ describe('기본값 채우기', () => {
       back: '2026-10-22',
       adults: 1,
       adultsClamped: false,
+      adultsAsked: null,
     });
   });
 

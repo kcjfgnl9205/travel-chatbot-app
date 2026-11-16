@@ -120,6 +120,13 @@ export interface ResolvedTrip {
    * 줄 알고 예약하러 간다.
    */
   adultsClamped: boolean;
+  /**
+   * **사용자가 말한 인원 그대로.** 안 말했으면 null.
+   *
+   * ⚠️ `adults` 와 따로 들고 있어야 한다. 고지에 「요청하신 10명 대신 9명으로」를
+   *    적으려면 줄이기 **전** 값이 필요한데, 줄인 뒤에는 어디에도 안 남는다.
+   */
+  adultsAsked: number | null;
 }
 
 /**
@@ -164,6 +171,7 @@ export function resolveTrip(
     back,
     adults: asked ? Math.min(asked, MAX_ADULTS) : 1,
     adultsClamped: Boolean(asked && asked > MAX_ADULTS),
+    adultsAsked: asked ?? null,
   };
 }
 

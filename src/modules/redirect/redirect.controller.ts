@@ -41,13 +41,19 @@ import { RecommendationItemsRepository } from '../database/repositories/recommen
  * 모르는 채로 보낼 수는 없기 때문이다. DB 왕복은 그때도 **한 번**이다 —
  * register_click() 이 조회·증가·목적지 반환을 동시에 한다.
  */
+/**
+ * ⚠️ **"만료" 라고 하지 않는다.** 이 링크에는 **시간 유효기간이 없다** — clickId 는
+ *    기록이 지워졌거나 조회에 실패했을 때만 안 풀린다. 「기간이 지나 만료되었어요」는
+ *    사용자에게 **자기가 늦어서 놓쳤다**고 읽히고, 그러면 다시 열어볼 생각을 안 한다.
+ *    외부 예약 사이트의 장애·매진으로 단정해서도 안 된다 — 우리는 거기까지 모른다.
+ */
 const EXPIRED_HTML = `<!doctype html>
 <html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>링크를 찾을 수 없어요</title></head>
+<title>링크 정보를 불러오지 못했어요</title></head>
 <body style="font-family:-apple-system,sans-serif;padding:48px 24px;text-align:center">
-<h2>링크가 만료되었어요</h2>
-<p>챗봇에서 다시 추천받아 주세요.</p>
+<h2>링크 정보를 불러오지 못했어요</h2>
+<p>잠시 후 다시 열어보시거나, 가자고에게 같은 내용을 다시 요청해 주세요.</p>
 </body></html>`;
 
 /** 관광지 쪽 문구. 지워진 곳이라 "만료" 가 아니다 — 다시 물어도 그 줄은 없다. */
