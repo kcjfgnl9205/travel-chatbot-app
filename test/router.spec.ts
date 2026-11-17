@@ -15,6 +15,8 @@ import {
   textOf,
 } from './helpers';
 import { MemoryStoreService } from '../src/modules/database/memory-store.service';
+import { seoulDate } from '../src/modules/flight/search-url';
+import { CHECKIN_AFTER_DAYS } from '../src/modules/hotel/search-url';
 import { defaultHotels } from './fake-provider';
 import { OpenAiHttpError } from '../src/modules/openai/openai.service';
 
@@ -257,8 +259,15 @@ describe('POST /api/v1/kakao/router', () => {
     it('아무 말 없으면 내일 체크인 · 1박 · 2명으로 적는다', async () => {
       const notice = noticeOf(await askUntilCard(ctx.app, '오사카 호텔 추천해줘'));
 
-      const tomorrow = new Date(Date.now() + 86_400_000);
-      const day = `${tomorrow.getMonth() + 1}월 ${tomorrow.getDate()}일`;
+      // ⚠️ **서울 날짜로 센다. 기계의 로컬 날짜로 세면 안 된다.** `new Date().getDate()`
+      //    는 실행하는 기계의 시간대를 따르는데, 코드는 늘 서울 기준으로 센다
+      //    (`seoulDate`). 둘이 갈리는 창이 하루에 9시간 있다 — UTC 15시~24시면 서울은
+      //    이미 다음 날이다. CI 는 UTC 라 그 사이에 돌면 코드가 멀쩡해도 이 줄만 깨졌다.
+      //
+      //    기본값 상수도 코드에서 가져온다. 여기에 1 을 박아두면 체크인 기본값을
+      //    바꿨을 때 테스트가 **틀린 채로 통과한다.**
+      const checkIn = seoulDate(new Date(), CHECKIN_AFTER_DAYS);
+      const day = `${Number(checkIn.slice(5, 7))}월 ${Number(checkIn.slice(8, 10))}일`;
       expect(notice).toContain(`${day} 체크인`);
       expect(notice).toContain('2명 · 객실 1개 기준으로 열려요');
     });
