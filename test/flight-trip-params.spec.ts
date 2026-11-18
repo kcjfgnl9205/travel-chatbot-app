@@ -245,6 +245,7 @@ describe('기본값 채우기', () => {
       adults: 1,
       adultsClamped: false,
       adultsAsked: null,
+      datesAsked: false,
     });
   });
 

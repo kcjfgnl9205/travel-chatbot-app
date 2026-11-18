@@ -127,6 +127,14 @@ export interface ResolvedTrip {
    *    적으려면 줄이기 **전** 값이 필요한데, 줄인 뒤에는 어디에도 안 남는다.
    */
   adultsAsked: number | null;
+  /**
+   * **사용자가 날짜를 말했는가.**
+   *
+   * ⚠️ 기본값으로 채운 날짜를 말한 날짜처럼 적으면 안 된다. 「링크는 11월 19일 출발
+   *    기준으로 열려요」를 받은 사람은 자기가 그 날짜를 고른 줄 알고 그대로 예약하러
+   *    간다 — 우리가 고른 값이면 **고른 값이라고** 적어야 고쳐 말할 수 있다.
+   */
+  datesAsked: boolean;
 }
 
 /**
@@ -169,6 +177,7 @@ export function resolveTrip(
   return {
     depart,
     back,
+    datesAsked: Boolean(trip?.departDate ?? trip?.returnDate ?? trip?.nights),
     adults: asked ? Math.min(asked, MAX_ADULTS) : 1,
     adultsClamped: Boolean(asked && asked > MAX_ADULTS),
     adultsAsked: asked ?? null,

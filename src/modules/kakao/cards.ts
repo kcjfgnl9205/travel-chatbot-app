@@ -64,6 +64,25 @@ function mentionButtonText(botName: string | null): string {
   return name ? `아래 @${name} 버튼` : '아래 버튼';
 }
 
+/**
+ * 나라도 모를 때 묻는 말. **도메인마다 다르게 묻는다.**
+ *
+ * 항공권은 「어느 도시의 항공권」이 아니라 **어디로 가는지**를 묻는다. 고르는 것이
+ * 항공권이 아니라 목적지라서, 그렇게 물어야 도시 이름이 바로 떠오른다.
+ */
+const PLACE_QUESTION: Record<SearchKind, string> = {
+  hotel: '어느 도시의 호텔을 찾으세요?',
+  flight: '어느 도시로 가는 항공권을 찾으세요?',
+  attraction: '어느 도시의 관광지를 찾으세요?',
+};
+
+/** 되묻기를 짧게 갈 때 붙이는 한 줄. 항공권은 출발지와 헷갈리지 않게 못 박는다. */
+const CITY_NAME_PROMPT: Record<SearchKind, string> = {
+  hotel: '도시 이름을 말씀해 주세요.',
+  flight: '도착할 도시 이름을 말씀해 주세요.',
+  attraction: '도시 이름을 말씀해 주세요.',
+};
+
 export const KIND_LABEL: Record<SearchKind, string> = {
   hotel: '호텔',
   flight: '항공권',
@@ -228,12 +247,28 @@ function otherCityCard(
 /**
  * 줄을 눌렀을 때 전송될 문장.
  *
- * 항공권은 **출발지까지 박는다.** 그러면 카드 아래 "서울 출발 기준이에요" 안내가
- * 필요 없어지고, 부산에서 가려는 사람은 그 문장을 고쳐 보내면 된다.
+ * 항공권은 **출발지까지 박는다.** 그러면 카드 아래 출발지 추측 고지가 필요 없어지고,
+ * 부산에서 가려는 사람은 그 문장을 고쳐 보내면 된다.
  */
 function pickUtterance(city: string, kind: SearchKind, origin: string): string {
-  if (kind === 'flight') return `${origin}에서 ${city} 항공권 찾아줘`;
+  if (kind === 'flight') return flightExample(city, origin);
   return exampleUtterance(city, kind);
+}
+
+/**
+ * 항공권 예문. **출발지를 빼지 않는다.**
+ *
+ * 「오사카 항공권 찾아줘」로 보내면 서울 출발로 굳는데, 예문이 그 꼴이면 다른 데서
+ * 출발하는 사람은 **고쳐 말할 꼴을 끝내 못 본다.** 「찾아줘」는 뺐다 — 없어도
+ * '항공권' 이 여행 신호(TRAVEL_HINT)라 그대로 보내면 통한다.
+ */
+function flightExample(dest: string, origin: string): string {
+  return `${origin}에서 ${dest} 항공권`;
+}
+
+/** 「다른 곳에서 출발하시면」 예문에 쓸 출발지. 도착지와 같으면 딴 데를 든다. */
+function otherOrigin(dest: string): string {
+  return dest === '부산' ? '제주' : '부산';
 }
 
 /**
@@ -248,6 +283,32 @@ function otherCityExample(country: string): string {
 
 /** 사전에 없는 나라. 도시를 지어내느니 도시를 빼고 말한다. */
 const NO_CITY_EXAMPLE = '그 도시';
+
+/**
+ * 나라별 **출발지 예시 도시.** 공항이 있고 사전에 있는 대표 도시로 고른다
+ * ([city-table.ts](../places/city-table.ts)).
+ *
+ * ⚠️ `OTHER_CITY_EXAMPLE` 과 다른 목록이다. 저건 「대표 4곳에 없는 도시」를 찾는
+ *    사람에게 드는 예시고, 여기는 **그 나라에서 비행기가 뜨는 곳**이어야 한다.
+ */
+const COUNTRY_DEPARTURE_EXAMPLE: Record<string, string> = {
+  일본: '도쿄',
+  베트남: '하노이',
+  태국: '방콕',
+  중국: '베이징',
+  대만: '타이베이',
+  필리핀: '마닐라',
+  미국: '뉴욕',
+  프랑스: '파리',
+  이탈리아: '로마',
+  스페인: '마드리드',
+  독일: '베를린',
+};
+
+/** 되묻기 예문. 항공권은 기본 출발지를 넣어 그대로 보내도 통하게 만든다. */
+function askExample(city: string, kind: SearchKind): string {
+  return kind === 'flight' ? flightExample(city, '서울') : exampleUtterance(city, kind);
+}
 
 /** 나라별 "목록에 없는" 예시 도시. 대표 4곳에 안 들어가는 곳으로 고른다. */
 const OTHER_CITY_EXAMPLE: Record<string, string> = {
@@ -277,14 +338,13 @@ export function askPlaceNameOnly(
   botName: string | null,
   opts: { again?: boolean } = {},
 ): t.Json {
-  const label = KIND_LABEL[kind];
-  const generic = `어느 도시의 ${withObjectParticle(label)} 찾으세요?`;
+  const generic = PLACE_QUESTION[kind];
 
   // ⚠️ **두 번째 되묻기에는 예문을 다시 깔지 않는다.** 나라를 또 말한 사람은 첫 되묻기에서
   //    같은 안내를 이미 봤다. 토씨 하나 안 틀리고 반복하면 봇이 자기 말을 못 들은 줄 안다 —
   //    물어야 할 것 하나만 남기는 쪽이 무엇을 치면 되는지가 더 선명하다.
   if (opts.again) {
-    return t.simpleTextWithMention(`${generic}\n도시 이름을 말씀해 주세요.`, botName);
+    return t.simpleTextWithMention(`${generic}\n${CITY_NAME_PROMPT[kind]}`, botName);
   }
 
   const where = country ? CITY_QUESTION[kind](country) : generic;
@@ -297,7 +357,7 @@ export function askPlaceNameOnly(
   const city = country ? otherCityExample(country) : null;
   const how =
     city && city !== NO_CITY_EXAMPLE
-      ? `${mentionButtonText(botName)}을 누르고 ‘${exampleUtterance(city, kind)}’처럼 ` +
+      ? `${mentionButtonText(botName)}을 누르고 ‘${askExample(city, kind)}’처럼 ` +
         '도시 이름을 함께 말씀해 주세요.'
       : `${mentionButtonText(botName)}을 누르고 도시 이름을 말씀해 주세요.`;
 
@@ -306,11 +366,13 @@ export function askPlaceNameOnly(
 
 /** 무엇을 묻는지는 알겠는데 지역이 없다. 되묻되 예시로 답을 쉽게 만든다. */
 export function askPlaceCard(kind: SearchKind, botName: string | null): t.Json {
-  const label = KIND_LABEL[kind];
+  const example =
+    kind === 'flight'
+      ? flightExample(EXAMPLE_PLACE, otherOrigin(EXAMPLE_PLACE))
+      : exampleUtterance(EXAMPLE_PLACE, kind);
   return t.simpleTextWithMention(
-    `어느 도시의 ${withObjectParticle(label)} 찾으세요?\n` +
-      `${mentionButtonText(botName)}을 누르고 ` +
-      `‘${exampleUtterance(EXAMPLE_PLACE, kind)}’처럼 말씀해 주세요.`,
+    `${PLACE_QUESTION[kind]}\n` +
+      `${mentionButtonText(botName)}을 누르고 ‘${example}’처럼 말씀해 주세요.`,
     botName,
   );
 }
@@ -349,11 +411,14 @@ export function fixDatesCard(
   //    보여주고 넘치면 「…」로 자른다. 「귀국일(11월 20일)이 출발일(11월 23일)보다
   //    빨라요」는 핵심인 뒤쪽 날짜와 '빨라요' 가 잘려서, 무엇이 틀렸는지가 안 보였다.
   //    말풍선은 줄바꿈되므로 이유를 온전히 싣고, 헤더는 할 일만 짧게 적는다.
+  // ⚠️ **연도를 적는다.** 12월에 「1월 5일」만 보면 올해인지 내년인지 모른다 — 지난
+  //    날짜라고 되묻는 자리에서 연도를 빼면 무엇이 지났다는 건지가 안 보인다.
   const reason =
     problem.kind === 'past'
-      ? `${fullDayText(problem.date)}은 이미 지난 날짜예요.`
-      : `귀국일(${dayText(problem.back)})이 출발일(${dayText(problem.depart)})보다 빨라요.`;
-  const header = '날짜를 다시 골라주세요';
+      ? `${fullDayText(problem.date)}은 이미 지난 날짜예요.\n아래에서 새로운 여행 날짜를 선택해 주세요.`
+      : `귀국일(${fullDayText(problem.back)})이 출발일(${fullDayText(problem.depart)})보다 빨라요.\n` +
+        '아래에서 여행 날짜를 다시 선택해 주세요.';
+  const header = '여행 날짜를 확인해 주세요';
 
   // ⚠️ **예문에는 연도를 안 쓴다.** 버튼(messageText)과 달리 이건 한 해가 지나도
   //    그대로 남는 글이라, 연도를 박으면 지난 날짜를 예문으로 권하게 된다. 연도가
@@ -366,13 +431,13 @@ export function fixDatesCard(
 
   const items = choicesFor(problem, trip).map((choice) => ({
     title: t.cut(choice.label, t.MAX_LIST_ITEM_TITLE),
-    description: t.cut('이 날짜로 찾기', t.MAX_LIST_ITEM_DESC),
+    description: t.cut('이 일정으로 링크 보기', t.MAX_LIST_ITEM_DESC),
     action: 'message',
     messageText: say(choice.depart, choice.back),
   }));
 
   return t.skillResponse([
-    { simpleText: { text: `${reason}\n아래에서 날짜를 고르시면 바로 찾아드려요.` } },
+    { simpleText: { text: reason } },
     {
       listCard: {
         header: { title: t.cut(header, t.MAX_LIST_HEADER_TITLE) },
@@ -386,8 +451,8 @@ export function fixDatesCard(
       //    로 떨어졌다 — **시킨 대로 보낸 사람이 이해 못 했다는 답을 받았다.**
       //    출발지·도착지·'항공권' 까지 들어간 예문을 보여준다.
       description:
-        `다른 날짜로 찾으시려면 ${mentionButtonText(botName)}을 누르고\n` +
-        `‘${example}’\n처럼 출발지까지 함께 말씀해 주세요.`,
+        `다른 일정이라면 ${mentionButtonText(botName)}을 누르고\n` +
+        `‘${example}’처럼 출발지와 날짜를 함께 말씀해 주세요.`,
       buttons: [t.mentionButton(botName)],
     }),
   ]);
@@ -412,19 +477,27 @@ function choicesFor(
     const depart = plusYear(trip.departDate ?? problem.date);
     const back = trip.returnDate ? plusYear(trip.returnDate) : null;
     const label = back
-      ? `${fullDayText(depart)} 출발 · ${dayText(back)} 귀국`
-      : `${fullDayText(depart)}로 바꾸기`;
+      ? `${fullDayText(depart)} 출발 · ${fullDayText(back)} 귀국`
+      : `${fullDayText(depart)} 출발 · 편도`;
     return [{ label, depart, back }];
   }
 
   // 거꾸로 선 일정. 두 날짜를 **바꿔 끼우는 것**이 가장 흔한 의도다
   // (11월 23일 출발 11월 20일 귀국 → 11월 20일 출발 11월 23일 귀국).
-  const swapped = { label: `${dayText(problem.back)} 출발 · ${dayText(problem.depart)} 귀국`, depart: problem.back, back: problem.depart };
+  const swapped = {
+    label: `${fullDayText(problem.back)} 출발 · ${fullDayText(problem.depart)} 귀국`,
+    depart: problem.back,
+    back: problem.depart,
+  };
   // 출발일을 그대로 두고 싶은 사람도 있다. 3박이 가장 흔한 일정이다.
   const later = addDays(problem.depart, 3);
   return [
     swapped,
-    { label: `${dayText(problem.depart)} 출발 · ${dayText(later)} 귀국`, depart: problem.depart, back: later },
+    {
+      label: `${fullDayText(problem.depart)} 출발 · ${fullDayText(later)} 귀국`,
+      depart: problem.depart,
+      back: later,
+    },
   ];
 }
 
@@ -615,15 +688,15 @@ export function noticeText(opts: {
     //    검색 화면을 조건까지 채워서 여는 것뿐이다. 이 줄이 없으면 카드 제목
     //    (「서울→오사카 항공권」)만 보고 **좌석과 운임을 확인해 준 줄 안다.**
     lines.push('아래 예약 사이트에서 항공편과 요금을 확인해 주세요.');
-    lines.push(`링크는 ${tripText(resolved)} 기준으로 검색돼요.`);
+    lines.push(tripNoticeText(resolved));
     if (resolved.adultsClamped) {
       lines.push(flightAdultsClampedText(resolved.adultsAsked, FLIGHT_MAX_ADULTS));
     }
   }
 
   // ⚠️ **호텔은 추천 목록과 링크가 다른 조건이다.** AI 목록은 지역으로만 찾고(캐시를
-  //    지역으로 가른다) 날짜·인원은 **링크에만** 들어간다. 그래서 "검색돼요" 가 아니라
-  //    "열려요" 다 — 목록까지 그 날짜로 고른 줄 알면 예약 가능 여부를 오해한다.
+  //    지역으로 가른다) 날짜·인원은 **링크에만** 들어간다 — 목록까지 그 날짜로 고른 줄
+  //    알면 예약 가능 여부를 오해한다.
   if (opts.meta?.kind === 'hotel') {
     // ⚠️ **방금 찾은 요금도, 예약 가능한 객실도 아니다.** 목록은 하루를 사는 캐시이고
     //    (`search_results`) 요금은 카드에 아예 안 적는다. 그 사실을 말하지 않으면
@@ -652,14 +725,21 @@ export function noticeText(opts: {
     }
   }
 
-  // 출발지를 추측했으면 반드시 알려준다. 부산에서 가려던 사람이 고쳐 말할 유일한 단서다.
-  if (opts.meta?.originAssumed && opts.meta.fromName) {
-    lines.push(`${opts.meta.fromName} 출발 기준이에요. 다른 곳이면 "부산에서 출발" 처럼 알려주세요.`);
-  }
-
-  // ⚠️ **맨 아래에 둔다.** 사용자가 고쳐 말할 수 있는 정보(반영 안 된 조건·출발지)가
-  //    먼저고, 이건 읽고 끝나는 고지다. 위에 두면 행동할 정보를 밀어낸다.
   if (opts.affiliate) lines.push(AFFILIATE_NOTICE);
+
+  // 출발지를 추측했으면 반드시 알려준다. 부산에서 가려던 사람이 고쳐 말할 유일한 단서다.
+  //
+  // ⚠️ **맨 아래로 내렸다 (2026-11-18).** 그 전에는 제휴 고지가 맨 아래였다 — 행동할
+  //    정보를 먼저 보여준다는 이유였는데, 이 고지는 두 줄이고 끝이 「이렇게 말씀해
+  //    주세요」라서 마지막 자리가 더 세게 읽힌다.
+  if (opts.meta?.kind === 'flight' && opts.meta.originAssumed && opts.meta.fromName) {
+    const from = opts.meta.fromName;
+    lines.push(`출발지를 말씀하지 않아 ${from}${AIRPORT_OF[from] ? `(${AIRPORT_OF[from]})` : ''} 기준으로 안내했어요.`);
+    lines.push(
+      `다른 곳에서 출발하시면 ‘${flightExample(opts.meta.placeName, otherOrigin(opts.meta.placeName))}’처럼 ` +
+        '출발지와 도착지를 함께 말씀해 주세요.',
+    );
+  }
 
   return lines.join('\n');
 }
@@ -675,18 +755,43 @@ export function noticeText(opts: {
  *    로 꽉 차서, 하나 더 얹으면 멘션 버튼이 조용히 잘린다
  *    ([templates.ts](./templates.ts)). 기존 고지에 한 줄로 합친다.
  */
-export const AFFILIATE_NOTICE = '아래 링크에는 제휴 링크가 포함되어 있어요.';
+export const AFFILIATE_NOTICE = '아래 예약 사이트 링크에는 제휴 링크가 포함되어 있어요.';
 
 /**
- * '10월 20일 출발 · 24일 귀국 · 4인'.
+ * 기본 출발지에 붙여줄 공항 이름.
+ *
+ * ⚠️ **「서울 기준」만으로는 어느 공항인지 모른다.** 인천과 김포는 가는 길이 다르다.
+ *    기본 출발지는 설정값(`FLIGHT_DEFAULT_ORIGIN_NAME`)이라 바뀔 수 있으므로, 아는
+ *    이름에만 붙이고 모르면 도시 이름만 적는다.
+ */
+const AIRPORT_OF: Record<string, string> = { 서울: '인천' };
+
+/**
+ * '2026년 10월 20일 출발 · 2026년 10월 24일 귀국 · 4명 · 왕복'.
  *
  * ⚠️ **링크를 만드는 함수와 같은 곳에서 값을 받아 적는다** (`resolveTrip`). 여기서
  *    기본값을 따로 쓰면 "내일 출발" 이라고 적어놓고 다른 날로 여는 카드가 나온다.
  */
+/**
+ * 링크가 어떤 조건으로 열리는지 한 줄.
+ *
+ * ⚠️ **우리가 채운 값은 채웠다고 말한다.** 날짜·인원을 말하지 않은 사람에게
+ *    「링크는 11월 19일 출발 … 기준으로 열려요」만 보여주면 그 날짜를 자기가 고른
+ *    줄 알고 그대로 예약하러 간다. 무엇을 우리가 골랐는지 적어야 고쳐 말할 수 있다.
+ */
+function tripNoticeText(resolved: ResolvedTrip): string {
+  const missing: string[] = [];
+  if (!resolved.datesAsked) missing.push('날짜');
+  if (resolved.adultsAsked === null) missing.push('인원');
+  if (!missing.length) return `링크는 ${tripText(resolved)} 기준으로 열려요.`;
+  return `${withObjectParticle(missing.join('와 '))} 말씀하지 않아 ${tripText(resolved)} 기준으로 안내했어요.`;
+}
+
 function tripText(resolved: ResolvedTrip): string {
   const { depart, back, adults } = resolved;
-  const parts = [`${dayText(depart)} 출발`];
-  if (back) parts.push(`${dayText(back)} 귀국`);
+  // ⚠️ **연도를 적는다.** 12월에 「1월 5일 출발」만 보면 올해인지 내년인지 모른다.
+  const parts = [`${fullDayText(depart)} 출발`];
+  if (back) parts.push(`${fullDayText(back)} 귀국`);
   parts.push(`${adults}명`);
   // ⚠️ **왕복·편도를 글자로 박는다.** 귀국일이 있고 없고로 구분하게 두면, 날짜를
   //    안 말해 기본값이 들어간 사람은 두 날짜만 보고 그게 자기가 고른 일정인 줄 안다.
@@ -702,7 +807,7 @@ function tripText(resolved: ResolvedTrip): string {
  */
 function flightAdultsClampedText(asked: number | null, max: number): string {
   const head = asked ? `요청하신 ${asked}명 대신 ` : '';
-  return `${head}${max}명으로 검색돼요. 링크에는 ${max}명까지만 넣을 수 있어요.`;
+  return `${head}${max}명으로 열려요. 링크에는 ${max}명까지만 넣을 수 있어요.`;
 }
 
 /**
@@ -827,12 +932,17 @@ export function flightRouteText(problem: RouteProblem, botName: string | null): 
       : `출발지와 도착지가 모두 ${problem.name}으로 되어 있어요.\n` +
         `서로 다른 출발 도시와 도착 도시를 알려주세요.`;
   } else if (problem.kind === 'no-origin-airport') {
+    // ⚠️ **예문의 출발지는 물어본 나라에서 고른다.** 「서울에서 서울 항공권」을 권한
+    //    적이 있다 — 도착지가 서울일 때 예문이 출발지·도착지가 같은 문장이 됐다.
+    //    사전에 없는 나라면 예문 없이 묻는다. 지어낸 도시보다 낫다.
+    const from = COUNTRY_DEPARTURE_EXAMPLE[problem.name];
     text = problem.isCountry
       ? `${problem.name}의 어느 도시에서 출발하시나요?\n` +
-        `‘서울에서 ${problem.dest} 항공권’처럼 출발 도시를 포함해 다시 말씀해 주세요.`
+        (from
+          ? `‘${flightExample(problem.dest, from)}’처럼 출발 도시를 포함해 다시 말씀해 주세요.`
+          : '출발 도시를 포함해 다시 말씀해 주세요.')
       : `현재 ${problem.name} 출발 항공권 링크는 제공하지 않아요.\n` +
-        `이용하실 공항이 있는 도시를 출발지로 넣어 다시 말씀해 주세요.\n` +
-        `예) ‘서울에서 ${problem.dest} 항공권’`;
+        '이용하실 공항이 있는 도시를 출발지로 넣어 다시 말씀해 주세요.';
   } else {
     text =
       `현재 ${problem.name} 도착 항공권 링크는 제공하지 않아요.\n` +

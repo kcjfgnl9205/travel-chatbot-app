@@ -265,7 +265,10 @@ export class RouterController {
         // "어느 도시 호텔을 찾으세요?" 보다 맥락이 산다.
         const country = waiting?.country ?? null;
         this.pending.remember(req.userKey, { kind, country });
-        return cards.askPlaceNameOnly(kind, country, req.botName);
+        // ⚠️ **되묻던 중이었으면 짧게 간다**(`again`). 이 사람은 바로 앞 턴에서 예문까지
+        //    달린 안내를 봤고, 거기에 "다른 도시" 라고 답한 것이다. 같은 글을 그대로 또
+        //    내보내면 자기 말이 안 들린 줄 안다.
+        return cards.askPlaceNameOnly(kind, country, req.botName, { again: Boolean(waiting) });
       }
     }
 

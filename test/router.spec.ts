@@ -319,7 +319,7 @@ describe('POST /api/v1/kakao/router', () => {
 
     // 줄 링크는 우리 리다이렉트를 거쳐 애드픽 커미션 링크로 간다. 사용자는 그 사실을
     // 알 길이 없으므로 **카드 아래에 적는다.**
-    expect(noticeOf(body)).toContain('아래 링크에는 제휴 링크가 포함되어 있어요.');
+    expect(noticeOf(body)).toContain('아래 예약 사이트 링크에는 제휴 링크가 포함되어 있어요.');
     // ⚠️ 말풍선은 셋을 못 넘는다. 넘기면 멘션 버튼이 조용히 잘린다.
     expect(body.template.outputs).toHaveLength(3);
     expect(mentionCardOf(body)).toBeDefined();
@@ -498,7 +498,8 @@ describe('POST /api/v1/kakao/router', () => {
 
     const res = await post(ctx.app, kakaoPayload('다른 도시'));
 
-    expect(textOf(res.body)).toContain('베트남의 어느 도시에서 머무르시나요?');
+    // ⚠️ 되묻던 중에 온 대답이라 **짧게** 간다. 바로 앞 턴에서 예문까지 달린 안내를 봤다.
+    expect(textOf(res.body)).toBe('어느 도시의 호텔을 찾으세요?\n도시 이름을 말씀해 주세요.');
     expect(ctx.provider.calls).toHaveLength(0);
   });
 
@@ -536,7 +537,10 @@ describe('POST /api/v1/kakao/router', () => {
   it('출발지를 말하지 않으면 서울 출발로 보고 그 사실을 적는다', async () => {
     const body = await askUntilCard(ctx.app, '오사카 항공권 찾아줘');
 
-    expect(noticeOf(body)).toContain('서울 출발 기준');
+    // ⚠️ 어느 공항인지까지 적는다 — 인천과 김포는 가는 길이 다르다.
+    expect(noticeOf(body)).toContain('출발지를 말씀하지 않아 서울(인천) 기준으로 안내했어요.');
+    // 고쳐 말할 꼴을 같이 준다. 안 주면 "다른 곳" 이 무슨 말인지 모른다.
+    expect(noticeOf(body)).toContain('‘부산에서 오사카 항공권’처럼');
     expect(listCardOf(body).header.title).toContain('서울→오사카');
   });
 
@@ -548,7 +552,7 @@ describe('POST /api/v1/kakao/router', () => {
     const body = await askUntilCard(ctx.app, '부산 하노이 항공권 찾아줘');
 
     expect(listCardOf(body).header.title).toContain('부산→하노이');
-    expect(noticeOf(body)).not.toContain('출발 기준');
+    expect(noticeOf(body)).not.toContain('출발지를 말씀하지 않아');
   });
 
   /**
@@ -563,6 +567,36 @@ describe('POST /api/v1/kakao/router', () => {
     expect(notice).toContain('24일 귀국');
     expect(notice).toContain('4명');
     expect(notice).not.toContain('반영되지 않았어요');
+  });
+
+  /**
+   * ⚠️ **우리가 채운 값을 사용자가 고른 값처럼 적으면 안 된다.** 「링크는 11월 19일
+   *    출발 … 기준으로 열려요」만 보면 그 날짜를 자기가 고른 줄 알고 그대로 예약하러
+   *    간다. 무엇을 우리가 골랐는지 적어야 고쳐 말할 수 있다.
+   */
+  it('날짜·인원을 안 말했으면 우리가 채웠다고 적는다', async () => {
+    const notice = noticeOf(await askUntilCard(ctx.app, '오사카 항공권 찾아줘'));
+
+    expect(notice).toContain('날짜와 인원을 말씀하지 않아');
+    expect(notice).toContain('기준으로 안내했어요');
+    expect(notice).not.toContain('링크는');
+  });
+
+  it('인원만 안 말했으면 인원만 짚는다', async () => {
+    const notice = noticeOf(await askUntilCard(ctx.app, '오사카 항공권 12월 1일 출발 12월 5일 귀국'));
+
+    expect(notice).toContain('인원을 말씀하지 않아');
+    expect(notice).not.toContain('날짜와 인원');
+  });
+
+  /** ⚠️ 12월에 「1월 5일 출발」만 보면 올해인지 내년인지 모른다. */
+  it('고지의 날짜에는 연도를 적는다', async () => {
+    const notice = noticeOf(await askUntilCard(ctx.app, '오사카 항공권 12월 1일 출발 12월 5일 귀국 2명'));
+
+    // 연도 숫자를 박으면 해가 바뀔 때 멀쩡한 코드에서 테스트만 깨진다. 꼴만 본다.
+    expect(notice).toMatch(
+      /링크는 \d{4}년 12월 1일 출발 · \d{4}년 12월 5일 귀국 · 2명 · 왕복 기준으로 열려요\./,
+    );
   });
 
   it('편도는 귀국일 없이 연다', async () => {
@@ -589,11 +623,12 @@ describe('POST /api/v1/kakao/router', () => {
       );
 
       // 이유는 말풍선에 온전히 싣는다. 리스트 헤더는 카카오가 한 줄만 보여주고 「…」로 자른다.
-      expect(res.body.template.outputs[0].simpleText.text).toContain(
-        '귀국일(11월 20일)이 출발일(11월 23일)보다 빨라요',
+      // ⚠️ **연도까지 적는다.** 12월에 「1월 5일」만 보면 올해인지 내년인지 모른다.
+      expect(res.body.template.outputs[0].simpleText.text).toMatch(
+        /귀국일\(\d{4}년 11월 20일\)이 출발일\(\d{4}년 11월 23일\)보다 빨라요/,
       );
       const card = listCardOf(res.body);
-      expect(card.header.title).toBe('날짜를 다시 골라주세요');
+      expect(card.header.title).toBe('여행 날짜를 확인해 주세요');
       // ⚠️ **링크를 주면 안 된다.** 날짜에 동의하기 전이다.
       expect(JSON.stringify(res.body)).not.toContain('/r/');
       // 멋대로 고른 날짜(출발일 + 7일 = 11월 30일)가 결과처럼 나가서도 안 된다.
@@ -664,7 +699,7 @@ describe('POST /api/v1/kakao/router', () => {
       const reason = res.body.template.outputs[0].simpleText.text as string;
       expect(reason).toContain('지난 날짜');
       expect(reason).toContain('2020년');
-      expect(listCardOf(res.body).header.title).toBe('날짜를 다시 골라주세요');
+      expect(listCardOf(res.body).header.title).toBe('여행 날짜를 확인해 주세요');
       expect(JSON.stringify(res.body)).not.toContain('/r/');
     });
 
@@ -693,6 +728,19 @@ describe('POST /api/v1/kakao/router', () => {
 
     expect(textOf(res.body)).toContain('현재 강릉 출발 항공권 링크는 제공하지 않아요');
     expect(JSON.stringify(res.body)).not.toContain('listCard');
+  });
+
+  /**
+   * ⚠️ **예문이 「서울에서 서울 항공권」이던 자리다.** 도착지가 서울이면 예문의
+   *    출발지·도착지가 같아져서, 시킨 대로 보낸 사람이 또 같은 되묻기를 받는다.
+   */
+  it('나라에서 출발한다고 하면 그 나라 도시를 예로 든다', async () => {
+    const res = await post(ctx.app, kakaoPayload('일본에서 서울 항공권 찾아줘'));
+    const text = textOf(res.body);
+
+    expect(text).toContain('일본의 어느 도시에서 출발하시나요?');
+    expect(text).toContain('‘도쿄에서 서울 항공권’처럼');
+    expect(text).not.toContain('서울에서 서울');
   });
 
   it('공항 없는 도착지는 "다시 물어봐 주세요" 가 아니라 무엇을 바꿀지 알려준다', async () => {
@@ -800,7 +848,7 @@ describe('POST /api/v1/kakao/router', () => {
   it('항공권은 줄에 출발지까지 박는다 — 누르면 되묻기가 또 생기지 않는다', async () => {
     const res = await post(ctx.app, kakaoPayload('베트남 항공권 찾아줘'));
 
-    expect(listCardOf(res.body).items[0].messageText).toBe('서울에서 다낭 항공권 찾아줘');
+    expect(listCardOf(res.body).items[0].messageText).toBe('서울에서 다낭 항공권');
   });
 
   it('줄을 누르면 그대로 그 도시 검색이 된다', async () => {
@@ -878,7 +926,8 @@ describe('POST /api/v1/kakao/router', () => {
   it('되묻기 예문은 물어본 나라의 도시로 든다', async () => {
     await post(ctx.app, kakaoPayload('태국 관광지 추천해줘', { userKey: 'th' }));
 
-    const res = await post(ctx.app, kakaoPayload('다른 도시', { userKey: 'th' }));
+    // 멘션 버튼만 눌러 빈 발화가 온 경우. 아직 아무 말도 안 했으므로 예문까지 다시 준다.
+    const res = await post(ctx.app, kakaoPayload('@가자고', { userKey: 'th' }));
     const text = textOf(res.body);
 
     expect(text).toContain('태국의 어느 도시를 찾으세요?');
