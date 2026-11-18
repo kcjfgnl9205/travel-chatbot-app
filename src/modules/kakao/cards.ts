@@ -17,6 +17,7 @@ import {
 } from '../flight/search-url';
 import {
   MAX_ADULTS as HOTEL_MAX_ADULTS,
+  ResolvedStay,
   StayDateProblem,
   resolveStay,
   stayOf,
@@ -526,13 +527,15 @@ export function fixStayDatesCard(
   //    넘치면 「…」로 잘려서, 무엇이 틀렸는지가 통째로 사라진다 (항공권에서 겪었다).
   let reason: string;
   if (problem.kind === 'past') {
-    reason = `${fullDayText(problem.date)}은 이미 지난 날짜예요.`;
+    reason = `${fullDayText(problem.date)}은 이미 지난 날짜예요.\n아래에서 새로운 숙박 날짜를 선택해 주세요.`;
   } else if (problem.kind === 'reversed') {
-    reason = `체크아웃(${dayText(problem.back)})이 체크인(${dayText(problem.depart)})보다 빨라요.`;
+    reason =
+      `체크아웃(${fullDayText(problem.back)})이 체크인(${fullDayText(problem.depart)})보다 빨라요.\n` +
+      '아래에서 숙박 일정을 다시 선택해 주세요.';
   } else {
     reason =
-      `체크인과 체크아웃이 ${dayText(problem.date)}로 같아요.\n` +
-      '호텔은 1박 이상이어야 찾을 수 있어요.';
+      `체크인과 체크아웃이 ${fullDayText(problem.date)}로 같아요.\n` +
+      '호텔 검색은 1박 이상 일정으로 도와드릴 수 있어요. 아래에서 숙박 기간을 선택해 주세요.';
   }
 
   // ⚠️ **예문에는 연도를 안 쓴다.** 버튼과 달리 한 해가 지나도 그대로 남는 글이라,
@@ -542,23 +545,23 @@ export function fixStayDatesCard(
 
   const items = stayChoicesFor(problem, trip).map((choice) => ({
     title: t.cut(choice.label, t.MAX_LIST_ITEM_TITLE),
-    description: t.cut('이 날짜로 찾기', t.MAX_LIST_ITEM_DESC),
+    description: t.cut('이 일정으로 링크 보기', t.MAX_LIST_ITEM_DESC),
     action: 'message',
     messageText: say(choice.checkIn, choice.checkOut),
   }));
 
   return t.skillResponse([
-    { simpleText: { text: `${reason}\n아래에서 날짜를 고르시면 바로 찾아드려요.` } },
+    { simpleText: { text: reason } },
     {
       listCard: {
-        header: { title: t.cut('날짜를 다시 골라주세요', t.MAX_LIST_HEADER_TITLE) },
+        header: { title: t.cut('숙박 날짜를 확인해 주세요', t.MAX_LIST_HEADER_TITLE) },
         items: items.slice(0, t.MAX_LIST_ITEMS),
       },
     },
     t.textCard({
       description:
-        `다른 날짜로 찾으시려면 ${mentionButtonText(botName)}을 누르고\n` +
-        `‘${example}’\n처럼 말씀해 주세요.`,
+        `다른 일정이라면 ${mentionButtonText(botName)}을 누르고\n` +
+        `‘${example}’처럼 날짜를 함께 말씀해 주세요.`,
       buttons: [t.mentionButton(botName)],
     }),
   ]);
@@ -575,7 +578,7 @@ function stayChoicesFor(
   trip: TripParams,
 ): { label: string; checkIn: string; checkOut: string }[] {
   const label = (checkIn: string, checkOut: string): string =>
-    `${dayText(checkIn)} 체크인 · ${dayText(checkOut)} 체크아웃`;
+    `${fullDayText(checkIn)} 체크인 · ${fullDayText(checkOut)} 체크아웃`;
 
   if (problem.kind === 'past') {
     // 연도만 한 해 민다. **달·일은 사용자가 적은 그대로 둔다** — 거기까지 고치면
@@ -583,7 +586,7 @@ function stayChoicesFor(
     const checkIn = plusYear(trip.departDate ?? problem.date);
     // 체크아웃을 안 말했으면 1박. 안 민 채로 두면 **지난 날짜가 그대로 남는다.**
     const checkOut = trip.returnDate ? plusYear(trip.returnDate) : addDays(checkIn, 1);
-    return [{ label: `${fullDayText(checkIn)} 체크인 · ${dayText(checkOut)} 체크아웃`, checkIn, checkOut }];
+    return [{ label: label(checkIn, checkOut), checkIn, checkOut }];
   }
 
   if (problem.kind === 'reversed') {
@@ -692,6 +695,7 @@ export function noticeText(opts: {
     if (resolved.adultsClamped) {
       lines.push(flightAdultsClampedText(resolved.adultsAsked, FLIGHT_MAX_ADULTS));
     }
+    if (opts.affiliate) lines.push(affiliateNotice('flight'));
   }
 
   // ⚠️ **호텔은 추천 목록과 링크가 다른 조건이다.** AI 목록은 지역으로만 찾고(캐시를
@@ -701,31 +705,44 @@ export function noticeText(opts: {
     // ⚠️ **방금 찾은 요금도, 예약 가능한 객실도 아니다.** 목록은 하루를 사는 캐시이고
     //    (`search_results`) 요금은 카드에 아예 안 적는다. 그 사실을 말하지 않으면
     //    사용자는 카드에 보이는 호텔이 그 날짜에 비어 있다고 읽는다.
-    lines.push('예약 가능 여부와 최종 요금은 예약 사이트에서 확인해 주세요.');
-
-    // ⚠️ **조건이 링크에 안 닿았을 때만 이 줄을 붙인다** (H06). `stayApplied` 가 false
-    //    인 카드는 상세 주소 꼴을 모르거나 애드픽 경유에서 쿼리가 날아간 줄이 섞인
-    //    경우다. 그 사람은 링크를 열어 날짜를 **직접 다시 넣어야** 하는데, 위의
-    //    「반영되지 않았어요」만으로는 거기서 뭘 해야 하는지가 안 보인다.
-    if (!opts.stayApplied) {
+    //
+    // ⚠️ **사이트 이름을 대는 건 `stayApplied` 쪽뿐이다.** 새로 찾은 목록은 트립닷컴만
+    //    남지만(openai.provider `ALLOWED_HOSTS`), 조건이 안 닿는 카드는 그 전에 저장된
+    //    다른 제휴몰 줄이 섞인 경우다. 거기에 「트립닷컴으로 이동해요」를 적으면
+    //    누른 사람이 다른 사이트를 보게 된다.
+    if (opts.stayApplied) {
+      lines.push('호텔을 누르면 트립닷컴 상세 페이지로 이동해요.');
+      lines.push('예약 가능 여부와 최종 요금은 트립닷컴에서 확인해 주세요.');
+    } else {
+      lines.push('예약 가능 여부와 최종 요금은 예약 사이트에서 확인해 주세요.');
+      // ⚠️ **조건이 링크에 안 닿았을 때만 붙인다** (H06). 그 사람은 링크를 열어 날짜를
+      //    **직접 다시 넣어야** 하는데, 위의 「반영되지 않았어요」만으로는 거기서 뭘
+      //    해야 하는지가 안 보인다.
       lines.push('예약 사이트에서 날짜와 인원을 다시 확인해 주세요.');
     }
 
+    if (opts.affiliate) lines.push(affiliateNotice('hotel'));
+
     if (opts.stayApplied) {
       const stay = resolveStay(stayOf(opts.trip), opts.now ?? new Date());
-      lines.push(
-        `링크는 ${dayText(stay.checkIn)} 체크인 · ${dayText(stay.checkOut)} 체크아웃 · ` +
-          `${stay.adults}명 · 객실 1개 기준으로 열려요.`,
-      );
+      // 인원을 줄였으면 **몇 명으로 열리는지보다 먼저** 말한다. 숫자만 보고 지나가면
+      // 8명이 묵을 방을 찾아준 줄 안다.
+      if (stay.adultsClamped) {
+        lines.push(`호텔 링크에는 객실 ${stay.rooms}개·최대 ${HOTEL_MAX_ADULTS}명까지만 넣을 수 있어요.`);
+        lines.push(hotelAdultsClampedText(stay.adultsAsked, HOTEL_MAX_ADULTS));
+      }
+      lines.push(stayNoticeText(stay));
       // ⚠️ **이 한 줄이 이 카드에서 가장 중요한 고지다.** 위 줄만 읽으면 "이 날짜로
       //    고른 호텔" 로 읽히는데, 목록은 지역으로만 고른다. 조건에 맞는 호텔을
       //    선별해 준 것처럼 두면 그 날짜에 못 묵는 호텔을 추천으로 받는다.
-      lines.push('추천 목록은 날짜·인원에 따라 달라지지 않아요.');
-      if (stay.adultsClamped) lines.push(hotelAdultsClampedText(stay.adultsAsked, HOTEL_MAX_ADULTS));
+      //
+      // 아무 조건도 말하지 않은 사람에게는 붙이지 않는다 — 거르는 조건을 준 적이
+      // 없으니 목록이 걸러진 줄 오해할 일도 없다.
+      if (stay.datesAsked || stay.adultsAsked !== null) {
+        lines.push('추천 목록 자체는 날짜와 인원에 따라 달라지지 않아요.');
+      }
     }
   }
-
-  if (opts.affiliate) lines.push(AFFILIATE_NOTICE);
 
   // 출발지를 추측했으면 반드시 알려준다. 부산에서 가려던 사람이 고쳐 말할 유일한 단서다.
   //
@@ -755,7 +772,20 @@ export function noticeText(opts: {
  *    로 꽉 차서, 하나 더 얹으면 멘션 버튼이 조용히 잘린다
  *    ([templates.ts](./templates.ts)). 기존 고지에 한 줄로 합친다.
  */
-export const AFFILIATE_NOTICE = '아래 예약 사이트 링크에는 제휴 링크가 포함되어 있어요.';
+export const AFFILIATE_NOTICE = '아래 링크에는 제휴 링크가 포함되어 있어요.';
+
+/**
+ * 제휴 고지. **무엇을 누르는 링크인지에 따라 말이 다르다.**
+ *
+ * 호텔 카드의 줄은 호텔 하나하나로 가고, 항공권 카드의 줄은 예약 사이트의 검색
+ * 화면으로 간다. 「아래 링크」라고만 하면 어느 링크를 말하는지가 안 보인다 —
+ * 빈손 카드(`emptyFallbackNotice`)처럼 둘 다 아닌 자리에는 `AFFILIATE_NOTICE` 를 쓴다.
+ */
+function affiliateNotice(kind: SearchKind | undefined): string {
+  if (kind === 'hotel') return '아래 호텔 링크에는 제휴 링크가 포함되어 있어요.';
+  if (kind === 'flight') return '아래 예약 사이트 링크에는 제휴 링크가 포함되어 있어요.';
+  return AFFILIATE_NOTICE;
+}
 
 /**
  * 기본 출발지에 붙여줄 공항 이름.
@@ -779,6 +809,25 @@ const AIRPORT_OF: Record<string, string> = { 서울: '인천' };
  *    「링크는 11월 19일 출발 … 기준으로 열려요」만 보여주면 그 날짜를 자기가 고른
  *    줄 알고 그대로 예약하러 간다. 무엇을 우리가 골랐는지 적어야 고쳐 말할 수 있다.
  */
+function stayNoticeText(stay: ResolvedStay): string {
+  // 「2박」이라고 말한 사람에게는 그 말이 그대로 보여야 한다. 체크아웃만 적으면
+  // 우리가 센 날이 맞는지 확인할 길이 없다.
+  const when = stay.nightsAsked
+    ? `${fullDayText(stay.checkIn)}부터 ${stay.nightsAsked}박 · ${fullDayText(stay.checkOut)} 체크아웃`
+    : `${fullDayText(stay.checkIn)} 체크인 · ${fullDayText(stay.checkOut)} 체크아웃`;
+  const where = `${when} · ${stay.adults}명 · 객실 ${stay.rooms}개`;
+
+  // ⚠️ **한쪽만 빠졌으면 그쪽만 짚는다** — 항공권(`tripNoticeText`)과 같은 규칙이다.
+  //    「2박」만 말한 사람에게 「날짜와 인원을 말씀하지 않아」라고 하면 자기가 말한 것을
+  //    못 들은 게 되고, 반대로 뭉뚱그려 「열려요」라고만 하면 우리가 고른 인원을 자기가
+  //    고른 줄 안다.
+  const missing: string[] = [];
+  if (!stay.datesAsked) missing.push('날짜');
+  if (stay.adultsAsked === null) missing.push('인원');
+  if (!missing.length) return `링크는 ${where} 기준으로 열려요.`;
+  return `${withObjectParticle(missing.join('와 '))} 말씀하지 않아 ${where} 기준으로 안내했어요.`;
+}
+
 function tripNoticeText(resolved: ResolvedTrip): string {
   const missing: string[] = [];
   if (!resolved.datesAsked) missing.push('날짜');
@@ -819,10 +868,7 @@ function flightAdultsClampedText(asked: number | null, max: number): string {
  */
 function hotelAdultsClampedText(asked: number | null, max: number): string {
   const head = asked ? `요청하신 ${asked}명 대신 ` : '';
-  return (
-    `${head}객실 1개·${max}명으로 열려요.\n` +
-    '예약 사이트에서 전체 인원과 객실 수를 다시 설정해 주세요.'
-  );
+  return `${head}${max}명으로 열리니, 예약 사이트에서 전체 인원과 객실 수를 다시 설정해 주세요.`;
 }
 
 /** '2026-10-20' → '10월 20일'. 연도는 적지 않는다 — 카드 한 줄이 좁다. */
@@ -1000,13 +1046,16 @@ export function emptyFallbackHeader(meta: SearchMeta): string {
  * 평소 카드는 "우리가 고른 다섯 곳" 인데 이건 "직접 보시라" 라서, 말 안 하면
  * 추천 품질이 갑자기 나빠진 것처럼 보인다.
  */
-export const EMPTY_FALLBACK_NOTICE =
-  '지금은 추천할 목록을 정리하지 못했어요.\n' +
-  '아래 링크에서 직접 확인해 주세요.\n' +
+export function emptyFallbackNotice(meta: SearchMeta): string {
+  return (
+    `지금은 추천할 ${KIND_LABEL[meta.kind]} 목록을 정리하지 못했어요.\n` +
+    `아래 링크에서 ${meta.placeName} ${withObjectParticle(KIND_LABEL[meta.kind])} 직접 확인해 주세요.\n` +
   // ⚠️ **이 줄을 빼면 안 된다.** 이 카드의 링크는 제휴 경유에서 날짜·인원이
   //    날아가는 제휴몰이다(호텔스닷컴). 평소 카드처럼 「링크는 … 으로 열려요」가
   //    붙지 않는 이유이고, 그 침묵만으로는 사용자가 알 길이 없다.
-  '날짜와 인원은 예약 사이트에서 다시 확인해 주세요.';
+    '날짜와 인원은 예약 사이트에서 다시 확인해 주세요.'
+  );
+}
 
 /**
  * 검색을 **아예 할 수 없는 상태** (provider 에 키가 없다 등).

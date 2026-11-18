@@ -63,6 +63,21 @@ export interface ResolvedStay {
    *    자기 요청이 어떻게 처리됐는지 잇지 못한다.
    */
   adultsAsked: number | null;
+  /**
+   * **사용자가 날짜를 말했는가.** 체크인·체크아웃·박수 중 하나라도 말했으면 true.
+   *
+   * ⚠️ 우리가 채운 날짜를 말한 날짜처럼 적으면 안 된다. 「링크는 11월 19일 체크인
+   *    기준으로 열려요」를 받은 사람은 자기가 그 날짜를 고른 줄 알고 예약하러 간다.
+   */
+  datesAsked: boolean;
+  /**
+   * **「2박」처럼 박수로만 말했을 때의 박수.** 체크아웃 날짜를 말했으면 null —
+   * 그때는 그 날짜를 그대로 적는 것이 사용자가 말한 것과 같다.
+   *
+   * 「11월 11일부터 2박」처럼 적어주면 자기가 말한 말이 그대로 보여서, 우리가 센
+   * 체크아웃이 맞는지 한눈에 확인된다.
+   */
+  nightsAsked: number | null;
 }
 
 /**
@@ -102,7 +117,16 @@ export function resolveStay(stay: HotelStay | null | undefined, now: Date): Reso
   // ⚠️ 같은 날도 안 된다 — 호텔은 **1박 이상**이어야 검색이 된다(항공권과 다르다).
   if (checkOut <= checkIn) checkOut = fallbackOut;
   const { adults, adultsClamped } = clampAdults(stay?.adults);
-  return { checkIn, checkOut, adults, rooms: 1, adultsClamped, adultsAsked: stay?.adults ?? null };
+  return {
+    checkIn,
+    checkOut,
+    adults,
+    rooms: 1,
+    adultsClamped,
+    adultsAsked: stay?.adults ?? null,
+    datesAsked: Boolean(stay?.checkIn ?? stay?.checkOut ?? stay?.nights),
+    nightsAsked: stay?.checkOut ? null : (stay?.nights ?? null),
+  };
 }
 
 /** 6명을 넘으면 6명으로 맞춘다. **줄였다는 사실을 같이 돌려준다** — 고지가 그걸 읽는다. */
@@ -336,6 +360,8 @@ const SAMPLE_STAY: ResolvedStay = {
   adults: 1,
   rooms: 1,
   adultsClamped: false,
+  datesAsked: false,
+  nightsAsked: null,
   adultsAsked: null,
 };
 

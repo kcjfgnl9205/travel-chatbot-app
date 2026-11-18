@@ -162,7 +162,7 @@ describe('POST /api/v1/kakao/router', () => {
 
       // 이유는 말풍선에 온전히 싣는다 — 리스트 헤더는 한 줄만 보이고 「…」로 잘린다.
       expect(res.body.template.outputs[0].simpleText.text).toContain('1박 이상');
-      expect(listCardOf(res.body).header.title).toBe('날짜를 다시 골라주세요');
+      expect(listCardOf(res.body).header.title).toBe('숙박 날짜를 확인해 주세요');
       // ⚠️ **링크를 주면 안 된다.** 날짜에 동의하기 전이다.
       expect(JSON.stringify(res.body)).not.toContain('/r/');
       // AI 도 부르지 않는다 — 되물을 일에 7~30초짜리 검색을 태울 이유가 없다.
@@ -175,8 +175,9 @@ describe('POST /api/v1/kakao/router', () => {
         kakaoPayload('오사카 호텔 11월 23일 체크인 11월 20일 체크아웃'),
       );
 
-      expect(res.body.template.outputs[0].simpleText.text).toContain(
-        '체크아웃(11월 20일)이 체크인(11월 23일)보다 빨라요',
+      // 연도 숫자를 박으면 해가 바뀔 때 멀쩡한 코드에서 테스트만 깨진다. 꼴만 본다.
+      expect(res.body.template.outputs[0].simpleText.text).toMatch(
+        /체크아웃\(\d{4}년 11월 20일\)이 체크인\(\d{4}년 11월 23일\)보다 빨라요/,
       );
       expect(JSON.stringify(res.body)).not.toContain('/r/');
     });
@@ -278,19 +279,40 @@ describe('POST /api/v1/kakao/router', () => {
       //    기본값 상수도 코드에서 가져온다. 여기에 1 을 박아두면 체크인 기본값을
       //    바꿨을 때 테스트가 **틀린 채로 통과한다.**
       const checkIn = seoulDate(new Date(), CHECKIN_AFTER_DAYS);
-      const day = `${Number(checkIn.slice(5, 7))}월 ${Number(checkIn.slice(8, 10))}일`;
+      const day = `${checkIn.slice(0, 4)}년 ${Number(checkIn.slice(5, 7))}월 ${Number(checkIn.slice(8, 10))}일`;
       expect(notice).toContain(`${day} 체크인`);
-      expect(notice).toContain('2명 · 객실 1개 기준으로 열려요');
+      // ⚠️ **우리가 채운 값을 고른 값처럼 적으면 안 된다.** 그 날짜로 그냥 예약하러 간다.
+      expect(notice).toContain('날짜와 인원을 말씀하지 않아');
+      expect(notice).toContain('2명 · 객실 1개 기준으로 안내했어요');
+      // 거를 조건을 준 적이 없으니 목록이 걸러진 줄 오해할 일도 없다.
+      expect(notice).not.toContain('추천 목록 자체는');
+    });
+
+    /**
+     * ⚠️ **「2박」이라고 말한 사람에게는 그 말이 그대로 보여야 한다.** 체크아웃 날짜만
+     *    적으면 우리가 센 날이 맞는지 확인할 길이 없다.
+     */
+    it('박수만 말하면 「…부터 2박」으로 적는다', async () => {
+      const notice = noticeOf(await askUntilCard(ctx.app, '오사카 호텔 2박'));
+
+      expect(notice).toMatch(/\d{4}년 \d+월 \d+일부터 2박 · \d{4}년 \d+월 \d+일 체크아웃/);
+      // 날짜는 말했고 인원은 안 말했다 — 빠진 쪽만 짚는다.
+      expect(notice).toContain('인원을 말씀하지 않아');
+      expect(notice).not.toContain('날짜와 인원을');
+      // 조건을 하나라도 말했으면 목록이 걸러진 줄 오해할 수 있다.
+      expect(notice).toContain('추천 목록 자체는 날짜와 인원에 따라 달라지지 않아요.');
     });
 
     it('6명을 넘으면 6명으로 맞추고 맞췄다고 알린다', async () => {
       const body = await askUntilCard(ctx.app, '오사카 호텔 8명');
       const notice = noticeOf(body);
 
-      expect(notice).toContain('6명 · 객실 1개 기준으로 열려요');
+      // 인원은 말했고 날짜는 안 말했다 — 빠진 쪽만 짚는다.
+      expect(notice).toContain('날짜를 말씀하지 않아');
+      expect(notice).toContain('6명 · 객실 1개 기준으로 안내했어요');
       // 몇 명이라고 말했는지를 빼면 사용자는 자기 요청이 어떻게 처리됐는지 못 잇는다.
-      expect(notice).toContain('요청하신 8명 대신');
-      expect(notice).toContain('객실 1개·6명으로 열려요');
+      expect(notice).toContain('호텔 링크에는 객실 1개·최대 6명까지만 넣을 수 있어요.');
+      expect(notice).toContain('요청하신 8명 대신 6명으로 열리니');
       // ⚠️ **말풍선을 새로 만들면 안 된다.** 셋이 한계라, 넘기면 멘션 버튼이 조용히
       //    잘린다. 이 안내는 기존 고지에 한 줄로 붙는다.
       expect(body.template.outputs.length).toBeLessThanOrEqual(3);
@@ -314,12 +336,29 @@ describe('POST /api/v1/kakao/router', () => {
     });
   });
 
+  /**
+   * ⚠️ **어디로 가는 링크인지 먼저 말한다.** 「예약 사이트」라고만 하면 어느 사이트인지
+   *    모르고, 제휴 고지는 **누르기 전에** 봐야 하므로 조건 줄보다 위에 둔다.
+   */
+  it('호텔 카드는 어디로 가는 링크인지부터 말한다', async () => {
+    const notice = noticeOf(
+      await askUntilCard(ctx.app, '오사카 호텔 11월 20일 체크인 11월 23일 체크아웃 3명'),
+    );
+    const lines = notice.split('\n');
+
+    expect(lines[0]).toBe('호텔을 누르면 트립닷컴 상세 페이지로 이동해요.');
+    expect(lines[1]).toBe('예약 가능 여부와 최종 요금은 트립닷컴에서 확인해 주세요.');
+    expect(notice.indexOf('제휴 링크가 포함')).toBeLessThan(notice.indexOf('링크는 '));
+    expect(notice).toContain('추천 목록 자체는 날짜와 인원에 따라 달라지지 않아요.');
+  });
+
   it('호텔 카드에는 제휴 고지가 붙는다 — 누르기 전에 알아야 한다', async () => {
     const body = await askUntilCard(ctx.app, '오사카 호텔 추천해줘');
 
     // 줄 링크는 우리 리다이렉트를 거쳐 애드픽 커미션 링크로 간다. 사용자는 그 사실을
     // 알 길이 없으므로 **카드 아래에 적는다.**
-    expect(noticeOf(body)).toContain('아래 예약 사이트 링크에는 제휴 링크가 포함되어 있어요.');
+    // 호텔 줄은 호텔 하나하나로 간다 — 「아래 링크」만으로는 어느 링크인지 안 보인다.
+    expect(noticeOf(body)).toContain('아래 호텔 링크에는 제휴 링크가 포함되어 있어요.');
     // ⚠️ 말풍선은 셋을 못 넘는다. 넘기면 멘션 버튼이 조용히 잘린다.
     expect(body.template.outputs).toHaveLength(3);
     expect(mentionCardOf(body)).toBeDefined();
@@ -1166,7 +1205,9 @@ describe('POST /api/v1/kakao/router', () => {
         // ⚠️ 왜 추천이 아니라 검색 링크인지 말해야 한다. 안 그러면 품질이 갑자기
         //    나빠진 것처럼 보인다. 제휴 고지도 같이 나간다.
         const notice = noticeOf(res.body);
-        expect(notice).toContain('추천할 목록을 정리하지 못했어요');
+        // 어느 도메인·어느 도시 목록인지 적는다. 「목록」만으로는 무엇이 비었는지 모른다.
+        expect(notice).toContain('지금은 추천할 호텔 목록을 정리하지 못했어요');
+        expect(notice).toContain('아래 링크에서 오사카 호텔을 직접 확인해 주세요');
         // ⚠️ 이 카드의 링크는 제휴 경유에서 날짜·인원이 날아간다. 그 침묵은 거짓말이 된다.
         expect(notice).toContain('날짜와 인원은 예약 사이트에서 다시 확인해 주세요');
         expect(notice).toContain('제휴 링크가 포함');

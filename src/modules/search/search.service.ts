@@ -633,7 +633,7 @@ export class SearchService {
       },
       // ⚠️ 왜 추천이 아니라 검색 링크인지 반드시 말한다. 안 그러면 추천 품질이
       //    갑자기 나빠진 것처럼 보인다. 제휴 고지는 이 줄들도 제휴를 타므로 같이.
-      [cards.EMPTY_FALLBACK_NOTICE, cards.AFFILIATE_NOTICE].join('\n'),
+      [cards.emptyFallbackNotice(meta), cards.AFFILIATE_NOTICE].join('\n'),
       req.botName,
     );
   }
