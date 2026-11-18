@@ -49,8 +49,20 @@ export function withObjectParticle(word: string): string {
 export const CITY_QUESTION: Record<SearchKind, (country: string) => string> = {
   hotel: (c) => `${c}의 어느 도시에서 머무르시나요?`,
   flight: (c) => `${c}의 어느 도시로 가시나요?`,
-  attraction: (c) => `${c}의 어느 도시를 둘러보고 싶으세요?`,
+  attraction: (c) => `${c}의 어느 도시를 찾으세요?`,
 };
+
+/**
+ * 글에서 멘션 버튼을 가리키는 말.
+ *
+ * ⚠️ **버튼 라벨과 똑같이 적어야 한다.** 버튼에 박히는 글자는 `@봇이름` 이고, 봇 이름을
+ *    모를 때는 「챗봇 멘션하기」다([templates.ts](./templates.ts) `mentionButton`).
+ *    글에만 「@가자고」라고 적어두면 그런 버튼이 없는 화면에서 찾다가 대화가 끊긴다.
+ */
+function mentionButtonText(botName: string | null): string {
+  const name = botName?.trim();
+  return name ? `아래 @${name} 버튼` : '아래 버튼';
+}
 
 export const KIND_LABEL: Record<SearchKind, string> = {
   hotel: '호텔',
@@ -116,7 +128,7 @@ export function notUnderstoodCard(botName: string | null): t.Json {
  */
 export function slowText(botName: string | null): t.Json {
   return t.simpleTextWithMention(
-    '아직 정리 중이에요 🔍\n잠시 뒤 같은 질문을 다시 보내주시면 바로 보여드릴게요!',
+    '아직 정리 중이에요.\n잠시 뒤 같은 질문을 다시 말씀해 주시면 바로 보여드릴게요.',
     botName,
   );
 }
@@ -206,7 +218,9 @@ function otherCityCard(
   const example = pickUtterance(otherCityExample(country), kind, origin);
 
   return t.textCard({
-    description: `다른 도시를 찾고 있나요?\n아래 버튼을 누르고 「${example}」처럼 보내주세요.`,
+    description:
+      `찾으시는 도시가 없나요?\n` +
+      `${mentionButtonText(botName)}을 누르고 ‘${example}’처럼 말씀해 주세요.`,
     buttons: [t.mentionButton(botName)],
   });
 }
@@ -229,8 +243,11 @@ function pickUtterance(city: string, kind: SearchKind, origin: string): string {
  * 딴소리가 된다. 사전에 있는 그 나라 도시 하나를 고르고, 없으면 도시를 빼고 말한다.
  */
 function otherCityExample(country: string): string {
-  return OTHER_CITY_EXAMPLE[country] ?? '그 도시';
+  return OTHER_CITY_EXAMPLE[country] ?? NO_CITY_EXAMPLE;
 }
+
+/** 사전에 없는 나라. 도시를 지어내느니 도시를 빼고 말한다. */
+const NO_CITY_EXAMPLE = '그 도시';
 
 /** 나라별 "목록에 없는" 예시 도시. 대표 4곳에 안 들어가는 곳으로 고른다. */
 const OTHER_CITY_EXAMPLE: Record<string, string> = {
@@ -258,16 +275,31 @@ export function askPlaceNameOnly(
   kind: SearchKind,
   country: string | null,
   botName: string | null,
+  opts: { again?: boolean } = {},
 ): t.Json {
   const label = KIND_LABEL[kind];
-  const where = country
-    ? CITY_QUESTION[kind](country)
-    : `어느 도시의 ${withObjectParticle(label)} 찾으세요?`;
+  const generic = `어느 도시의 ${withObjectParticle(label)} 찾으세요?`;
 
-  // ⚠️ **멘션을 빼먹으면 봇이 아예 못 듣는다.** 단톡방에서는 봇을 멘션한 메시지만
-  //    서버로 온다. 버튼이 그 멘션을 넣어주므로, 글은 **그 뒤에 뭘 치면 되는지**만
-  //    말하면 된다 — 버튼이 없던 때는 "@봇이름 부터 치세요" 를 글로 설명해야 했다.
-  const how = '아래 버튼을 누르고 도시 이름을 보내주세요. 예) 다낭';
+  // ⚠️ **두 번째 되묻기에는 예문을 다시 깔지 않는다.** 나라를 또 말한 사람은 첫 되묻기에서
+  //    같은 안내를 이미 봤다. 토씨 하나 안 틀리고 반복하면 봇이 자기 말을 못 들은 줄 안다 —
+  //    물어야 할 것 하나만 남기는 쪽이 무엇을 치면 되는지가 더 선명하다.
+  if (opts.again) {
+    return t.simpleTextWithMention(`${generic}\n도시 이름을 말씀해 주세요.`, botName);
+  }
+
+  const where = country ? CITY_QUESTION[kind](country) : generic;
+
+  // ⚠️ **예시 도시는 그 나라에서 고른다.** 예전에는 나라와 상관없이 「예) 다낭」이 고정으로
+  //    붙어서, 태국·일본을 묻는 사람에게 베트남 도시를 권했다 — 되묻기가 아니라 딴소리다.
+  //
+  // ⚠️ **예문에 `@봇이름` 을 넣지 않는다.** 멘션은 버튼이 넣어준다. 글에도 적어두면
+  //    버튼을 누른 사람 입력창에 멘션이 두 번 들어간다.
+  const city = country ? otherCityExample(country) : null;
+  const how =
+    city && city !== NO_CITY_EXAMPLE
+      ? `${mentionButtonText(botName)}을 누르고 ‘${exampleUtterance(city, kind)}’처럼 ` +
+        '도시 이름을 함께 말씀해 주세요.'
+      : `${mentionButtonText(botName)}을 누르고 도시 이름을 말씀해 주세요.`;
 
   return t.simpleTextWithMention(`${where}\n${how}`, botName);
 }
@@ -277,7 +309,8 @@ export function askPlaceCard(kind: SearchKind, botName: string | null): t.Json {
   const label = KIND_LABEL[kind];
   return t.simpleTextWithMention(
     `어느 도시의 ${withObjectParticle(label)} 찾으세요?\n` +
-      `아래 버튼을 누르고 「${exampleUtterance(EXAMPLE_PLACE, kind)}」처럼 보내주세요.`,
+      `${mentionButtonText(botName)}을 누르고 ` +
+      `‘${exampleUtterance(EXAMPLE_PLACE, kind)}’처럼 말씀해 주세요.`,
     botName,
   );
 }
@@ -353,7 +386,8 @@ export function fixDatesCard(
       //    로 떨어졌다 — **시킨 대로 보낸 사람이 이해 못 했다는 답을 받았다.**
       //    출발지·도착지·'항공권' 까지 들어간 예문을 보여준다.
       description:
-        `다른 날짜로 찾으시려면 아래 버튼을 누르고\n「${example}」\n처럼 출발지까지 함께 보내주세요.`,
+        `다른 날짜로 찾으시려면 ${mentionButtonText(botName)}을 누르고\n` +
+        `‘${example}’\n처럼 출발지까지 함께 말씀해 주세요.`,
       buttons: [t.mentionButton(botName)],
     }),
   ]);
@@ -449,7 +483,9 @@ export function fixStayDatesCard(
       },
     },
     t.textCard({
-      description: `다른 날짜로 찾으시려면 아래 버튼을 누르고\n「${example}」\n처럼 보내주세요.`,
+      description:
+        `다른 날짜로 찾으시려면 ${mentionButtonText(botName)}을 누르고\n` +
+        `‘${example}’\n처럼 말씀해 주세요.`,
       buttons: [t.mentionButton(botName)],
     }),
   ]);
@@ -550,14 +586,22 @@ export function noticeText(opts: {
 }): string {
   const lines: string[] = [];
 
-  // ⚠️ **관광지만 "추천 목록에" 를 붙인다.** 관광지는 조건을 넣을 링크 자체가 없어
+  // ⚠️ **관광지만 "관광지 목록에" 를 붙인다.** 관광지는 조건을 넣을 링크 자체가 없어
   //    목록에 못 넣은 것이 맞지만, 호텔·항공권의 이 목록에는 **애초에 어디에도 안 쓰는
   //    것**(예산·테마)이 섞여 있다. 거기에 「링크에 못 넣었어요」를 붙이면 링크만
   //    고치면 예산이 반영될 것처럼 들린다 — 예산은 고쳐도 안 쓴다.
-  const ignored = (opts.ignored ?? []).filter(Boolean);
+  //
+  // ⚠️ **관광지는 이름표를 안 붙인다.** 관광지에는 날짜·인원·예산·테마가 뒤섞여 걸리는데,
+  //    이름표를 앞에 세우면 「날짜·인원(아이랑, 11월 20일)」처럼 괄호 안과 짝이 안 맞는
+  //    줄이 나온다. 괄호에 **사용자가 말한 표현이 그대로** 들어 있으므로 이름표가 없어도
+  //    자기 말과 이을 수 있다.
+  const ignored = sortConditions((opts.ignored ?? []).filter(Boolean));
   if (ignored.length) {
-    const where = opts.meta?.kind === 'attraction' ? '추천 목록에 반영되지 않았어요' : '반영되지 않았어요';
-    lines.push(`${conditionLabel(ignored)}(${ignored.join(', ')})은 ${where}.`);
+    lines.push(
+      opts.meta?.kind === 'attraction'
+        ? `요청하신 조건(${ignored.join(', ')})은 관광지 목록에 반영되지 않았어요.`
+        : `${conditionLabel(ignored)}(${ignored.join(', ')})은 반영되지 않았어요.`,
+    );
   }
 
   // ⚠️ **링크가 어떤 조건으로 열리는지 반드시 말한다.** 우리가 날짜·인원을 넣어
@@ -681,24 +725,47 @@ function dayText(iso: string): string {
   return `${Number(iso.slice(5, 7))}월 ${Number(iso.slice(8, 10))}일`;
 }
 
+const DATE_RE = /\d+\s*(월|일|\/)|내일|모레|주말|다음\s*주|다음주|담주|이번주|다음\s*달|다음달/;
+const ADULTS_RE = /\d+\s*(명|인)/;
+// ⚠️ **"1박" 은 날짜가 아니라 가격 기준이다.** "1박 10만원 이하" 의 1박은 머무는
+//    기간이 아니라 **하루치 가격**을 말한다. 날짜로 분류하면 "날짜는 반영되지
+//    않았어요" 가 붙는데, 날짜를 반영하는 지금은 그게 거짓말이 된다.
+const BUDGET_RE = /만원|\d+\s*박/;
+// 동행·분위기. "아이랑" 을 '인원' 이라고 하면 틀린 이름이고, 이름이 틀리면
+// 사용자는 자기가 말한 것과 고지된 것을 못 잇는다.
+const THEME_RE = /아이|애기|애들|아기|가족|부모님|친구|연인|커플|혼자|야경|일몰|노을|실내|조용한|한적한|이색|힐링/;
+
 /** ["4명", "9/22~24"] → '날짜·인원'. 무엇을 버렸는지 이름을 붙여준다. */
 function conditionLabel(ignored: string[]): string {
   const labels: string[] = [];
   const joined = ignored.join(' ');
-  if (/\d+\s*(월|일|\/)|내일|모레|주말|다음\s*주|다음주|담주|이번주|다음\s*달|다음달/.test(joined)) {
-    labels.push('날짜');
-  }
-  if (/\d+\s*(명|인)/.test(joined)) labels.push('인원');
-  // ⚠️ **"1박" 은 날짜가 아니라 가격 기준이다.** "1박 10만원 이하" 의 1박은 머무는
-  //    기간이 아니라 **하루치 가격**을 말한다. 날짜로 분류하면 "날짜는 반영되지
-  //    않았어요" 가 붙는데, 날짜를 반영하는 지금은 그게 거짓말이 된다.
-  if (/만원|\d+\s*박/.test(joined)) labels.push('예산');
-  // 동행·분위기. "아이랑" 을 '인원' 이라고 하면 틀린 이름이고, 이름이 틀리면
-  // 사용자는 자기가 말한 것과 고지된 것을 못 잇는다.
-  if (/아이|애기|애들|아기|가족|부모님|친구|연인|커플|혼자|야경|일몰|노을|실내|조용한|한적한|이색|힐링/.test(joined)) {
-    labels.push('테마');
-  }
+  if (DATE_RE.test(joined)) labels.push('날짜');
+  if (ADULTS_RE.test(joined)) labels.push('인원');
+  if (BUDGET_RE.test(joined)) labels.push('예산');
+  if (THEME_RE.test(joined)) labels.push('테마');
   return labels.length ? labels.join('·') : '일부 조건';
+}
+
+/**
+ * 괄호 안 조건을 **이름표와 같은 순서로** 세운다 — 날짜 · 인원 · 예산 · 테마.
+ *
+ * ⚠️ **들어온 순서는 사용자가 말한 순서가 아니다.** 발화에서 조건을 긁는 정규식이
+ *    인원(`\d+명`)부터 돌기 때문에([intent.types.ts](../intent/intent.types.ts)
+ *    `CONDITION_PATTERNS`) "11월 20일 3명" 이라고 말해도 `['3명', '11월 20일']` 로
+ *    온다. 그대로 적으면 「날짜·인원(3명, 11월 20일)」처럼 이름표와 괄호가 엇갈린다.
+ */
+function sortConditions(ignored: string[]): string[] {
+  return [...ignored].sort((a, b) => conditionOrder(a) - conditionOrder(b));
+}
+
+/** 조건 하나를 날짜(0)·인원(1)·예산(2)·테마(3)·그 밖(4) 중 하나로 매긴다. */
+function conditionOrder(text: string): number {
+  // ⚠️ **예산을 먼저 본다.** "1박 2일" 은 날짜 정규식의 "일" 에도 걸리지만 가격 기준이다.
+  if (BUDGET_RE.test(text)) return 2;
+  if (DATE_RE.test(text)) return 0;
+  if (ADULTS_RE.test(text)) return 1;
+  if (THEME_RE.test(text)) return 3;
+  return 4;
 }
 
 /** 다른 사람이 먼저 같은 걸 물어 검색이 돌고 있는 경우. */
@@ -707,8 +774,8 @@ export function busyText(meta: SearchMeta, botName: string | null): t.Json {
   //    달려 있어서, 이 사람에게는 아무것도 안 온다. 다시 물어야 저장된 결과를 받는다 —
   //    그래서 **무엇이라고 다시 말하면 되는지**까지 적는다.
   return t.simpleTextWithMention(
-    `${subject(meta)} 정보를 이미 찾고 있어요 🔍\n` +
-      `잠시 후 「${exampleUtterance(meta.placeName, meta.kind)}」라고 다시 말씀해 주세요.`,
+    `${subject(meta)} 정보를 이미 찾고 있어요.\n` +
+      `잠시 후 ‘${exampleUtterance(meta.placeName, meta.kind)}’라고 다시 말씀해 주세요.`,
     botName,
   );
 }
@@ -724,7 +791,8 @@ export function searchStartedText(meta: SearchMeta, botName: string | null): t.J
   //    7초에 끝나기도 하고 50초를 넘기기도 한다. 30초에 다시 물어 또 "찾고 있어요" 를
   //    받은 사람은 봇이 고장 났다고 읽는다.
   return t.simpleTextWithMention(
-    `${withObjectParticle(subject(meta))} 찾고 있어요 🔍\n정리가 끝나면 바로 보여드릴게요. 잠시 뒤 다시 물어봐 주세요!`,
+    `${withObjectParticle(subject(meta))} 찾고 있어요.\n` +
+      '정리가 끝나면 바로 보여드릴게요. 잠시 뒤 다시 말씀해 주세요.',
     botName,
   );
 }
@@ -732,9 +800,12 @@ export function searchStartedText(meta: SearchMeta, botName: string | null): t.J
 /**
  * 결과가 비었을 때.
  *
- * ⚠️ **"도시 이름을 다시 확인해주세요" 라고 하지 않는다.** 지역은 제대로 알아들었는데
- *    검색이 실패한 경우가 대부분이라, 그렇게 말하면 사용자는 자기가 틀린 줄 알고
- *    같은 질문을 다르게 쓰며 헤맨다. 원인이 다르면 문구도 달라야 한다.
+ * ⚠️ **"도시나 지역 이름을 확인해 다시 말씀해 주세요" 로 바꿨다 (2026-11-18).** 그 전에는
+ *    "잠시 뒤 다시 물어봐 주세요" 였다 — 지역은 제대로 알아들었는데 검색만 실패한 경우가
+ *    대부분이라, 사용자를 틀린 쪽으로 몰면 안 된다고 봤기 때문이다. 다만 빈손은
+ *    `FAILED_TTL_MINUTES` 동안 굳어서 **같은 말을 다시 하면 같은 문구만 돌아온다.**
+ *    기다리라고만 하면 거기서 막다른 길이고, 말을 바꾸면 캐시 키가 달라져 실제로 길이
+ *    열린다. 바로 아래 `narrowerHint` 가 같은 이유로 붙어 있다.
  */
 /**
  * 항공권 링크를 만들 수 없는 노선 ([airports.ts](../flight/airports.ts) routeProblem).
@@ -752,16 +823,16 @@ export function flightRouteText(problem: RouteProblem, botName: string | null): 
   if (problem.kind === 'same') {
     text = problem.originAssumed
       ? `출발지를 말씀하지 않아 ${problem.name} 기준으로 보니 도착지와 같아요.\n` +
-        `「부산에서 ${problem.name} 항공권」처럼 출발지를 함께 말씀해 주세요.`
+        `‘부산에서 ${problem.name} 항공권’처럼 출발지를 함께 말씀해 주세요.`
       : `출발지와 도착지가 모두 ${problem.name}으로 되어 있어요.\n` +
         `서로 다른 출발 도시와 도착 도시를 알려주세요.`;
   } else if (problem.kind === 'no-origin-airport') {
     text = problem.isCountry
       ? `${problem.name}의 어느 도시에서 출발하시나요?\n` +
-        `「서울에서 ${problem.dest} 항공권」처럼 출발 도시를 포함해 다시 말씀해 주세요.`
+        `‘서울에서 ${problem.dest} 항공권’처럼 출발 도시를 포함해 다시 말씀해 주세요.`
       : `현재 ${problem.name} 출발 항공권 링크는 제공하지 않아요.\n` +
         `이용하실 공항이 있는 도시를 출발지로 넣어 다시 말씀해 주세요.\n` +
-        `예) 「서울에서 ${problem.dest} 항공권」`;
+        `예) ‘서울에서 ${problem.dest} 항공권’`;
   } else {
     text =
       `현재 ${problem.name} 도착 항공권 링크는 제공하지 않아요.\n` +
@@ -775,8 +846,8 @@ export function emptyText(meta: SearchMeta, botName: string | null): t.Json {
   //    힌트가 빈 문자열이면 문장 끝에 공백이 남았다.
   const hint = narrowerHint(meta);
   return t.simpleTextWithMention(
-    `${subject(meta)} 정보를 지금은 정리하지 못했어요 🙏\n` +
-      ['잠시 뒤 다시 물어봐 주세요.', hint].filter(Boolean).join(' '),
+    `지금은 ${subject(meta)} 정보를 정리하지 못했어요.\n` +
+      ['도시나 지역 이름을 확인해 다시 말씀해 주세요.', hint].filter(Boolean).join(' '),
     botName,
   );
 }
@@ -839,7 +910,7 @@ export function unavailableText(meta: SearchMeta, botName: string | null): t.Jso
   //    먼저 말을 거는 경로가 우리에게 없다. 콜백은 그 요청 하나에 5분·1회로 묶여 있고
   //    선톡은 별도 심사다. 기다리라고 해놓고 영영 안 오면 그게 가장 나쁜 실패다.
   return t.simpleTextWithMention(
-    `지금은 ${subject(meta)} 정보를 불러올 수 없어요 🙏\n잠시 후 다시 요청해 주세요.`,
+    `지금은 ${subject(meta)} 정보를 불러올 수 없어요.\n잠시 후 다시 요청해 주세요.`,
     botName,
   );
 }
@@ -847,7 +918,7 @@ export function unavailableText(meta: SearchMeta, botName: string | null): t.Jso
 /** 검색 자체가 실패했을 때 (모델 오류·타임아웃). */
 export function failedText(meta: SearchMeta, botName: string | null): t.Json {
   return t.simpleTextWithMention(
-    `${withObjectParticle(subject(meta))} 불러오지 못했어요 🙏\n잠시 뒤 다시 시도해 주세요.`,
+    `${withObjectParticle(subject(meta))} 불러오지 못했어요.\n잠시 뒤 다시 시도해 주세요.`,
     botName,
   );
 }

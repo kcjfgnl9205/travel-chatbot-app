@@ -263,7 +263,7 @@ export class SearchService {
       this.logger.warn('callbackUrl 없음 — 오픈빌더에서 폴백 블록의 [콜백 사용] 이 꺼져 있다');
       return cards.searchStartedText(meta, req.botName);
     }
-    return t.callbackAck(`${cards.withObjectParticle(cards.subject(meta))} 찾고 있어요. 잠시만요 🔍`);
+    return t.callbackAck(`${cards.withObjectParticle(cards.subject(meta))} 찾고 있어요. 잠시만요.`);
   }
 
   /**

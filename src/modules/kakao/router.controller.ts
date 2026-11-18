@@ -196,7 +196,7 @@ export class RouterController {
     //    늦었을 뿐이므로 늦게 보낸다.
     if (callbackUrl) {
       void this.pushWhenReady(running, callbackUrl, botNameOf(payload));
-      return t.callbackAck('찾고 있어요. 잠시만요 🔍');
+      return t.callbackAck('찾고 있어요. 잠시만요.');
     }
 
     // 콜백이 꺼져 있으면 밀어줄 길이 없다. 다시 물으면 따뜻해진 캐시가 바로 답한다.
@@ -299,8 +299,11 @@ export class RouterController {
         );
       }
       // 나라를 또 말했다 — 그 나라 안에서 다시 되묻는다(대기 상태를 되살린다).
+      //
+      // ⚠️ **두 번째 되묻기는 짧게 간다**(`again`). 이 사람은 바로 앞 턴에서 예문까지
+      //    달린 같은 안내를 이미 봤다. 그대로 또 내보내면 자기 말이 안 들린 줄 안다.
       this.pending.remember(req.userKey, waiting);
-      return cards.askPlaceNameOnly(waiting.kind, place.canonicalName, req.botName);
+      return cards.askPlaceNameOnly(waiting.kind, place.canonicalName, req.botName, { again: true });
     }
 
     // 3. 1차 필터 — 여행과 무관하면 AI 를 아예 부르지 않는다.

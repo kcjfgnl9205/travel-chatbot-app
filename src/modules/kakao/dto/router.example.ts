@@ -92,7 +92,7 @@ export const CARD_RESPONSE_EXAMPLE = {
       },
       // 고지 말풍선은 **할 말이 있을 때만** 붙는다. 날짜·인원을 말하지 않은 질문이면
       // 이 말풍선 없이 카드 하나만 나간다.
-      { simpleText: { text: '날짜·인원(4명, 9월 22~24일)은 반영되지 않았어요.' } },
+      { simpleText: { text: '날짜·인원(9월 22~24일, 4명)은 반영되지 않았어요.' } },
       // ⚠️ **퀵리플라이 자리를 대신하는 말풍선이다.** 팀채팅 챗봇은 QuickReplies 를
       // 지원하지 않아서(그룹 챗봇 beta 가이드 표 3) 단톡방에서는 아무것도 안 보였다.
       // 누르면 입력창에 `@봇이름` 이 들어간다 — 멘션이 없으면 봇이 아예 못 듣는다.
@@ -110,7 +110,7 @@ export const CARD_RESPONSE_EXAMPLE = {
 export const CALLBACK_ACK_EXAMPLE = {
   version: '2.0',
   useCallback: true,
-  data: { text: '오사카 호텔을 찾고 있어요. 잠시만요 🔍' },
+  data: { text: '오사카 호텔을 찾고 있어요. 잠시만요.' },
 };
 
 /** 캐시 미스 + 콜백 꺼짐. 스웨거에서 Execute 하면 보통 이게 나온다. */
@@ -120,7 +120,7 @@ export const SEARCH_STARTED_EXAMPLE = {
     outputs: [
       {
         simpleText: {
-          text: '오사카 호텔을 찾고 있어요 🔍\n정리가 끝나면 바로 보여드릴게요. 잠시 뒤 다시 물어봐 주세요!',
+          text: '오사카 호텔을 찾고 있어요.\n정리가 끝나면 바로 보여드릴게요. 잠시 뒤 다시 말씀해 주세요.',
         },
       },
       // ⚠️ **퀵리플라이 자리를 대신하는 말풍선이다.** 팀채팅 챗봇은 QuickReplies 를
@@ -141,7 +141,7 @@ export const BUSY_EXAMPLE = {
   version: '2.0',
   template: {
     outputs: [
-      { simpleText: { text: '오사카 호텔을 먼저 찾고 있어요 🔍\n잠시 뒤 다시 물어봐 주세요!' } },
+      { simpleText: { text: '오사카 호텔 정보를 이미 찾고 있어요.\n잠시 후 ‘오사카 호텔 추천해줘’라고 다시 말씀해 주세요.' } },
       // ⚠️ **퀵리플라이 자리를 대신하는 말풍선이다.** 팀채팅 챗봇은 QuickReplies 를
       // 지원하지 않아서(그룹 챗봇 beta 가이드 표 3) 단톡방에서는 아무것도 안 보였다.
       // 누르면 입력창에 `@봇이름` 이 들어간다 — 멘션이 없으면 봇이 아예 못 듣는다.

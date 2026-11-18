@@ -129,10 +129,21 @@ describe('POST /api/v1/kakao/router', () => {
     const notice = noticeOf(body);
 
     // ⚠️ 날짜·인원은 알리면서 테마만 침묵하면 **그것만 반영된 줄 안다.**
-    //    "아이랑" 을 '인원' 이라고 부르면 사용자가 자기 말과 못 잇는다.
-    expect(notice).toContain('테마');
-    expect(notice).toContain('아이랑');
-    expect(notice).toContain('반영되지 않았어요');
+    //    관광지는 이름표('테마')를 붙이지 않고 **사용자가 말한 표현을 그대로** 적는다 —
+    //    "아이랑" 을 '인원' 이라고 부르면 자기 말과 못 잇기 때문이다.
+    expect(notice).toContain('요청하신 조건(아이랑)은 관광지 목록에 반영되지 않았어요');
+  });
+
+  /**
+   * ⚠️ **괄호 안 순서는 사용자가 말한 순서가 아니다.** 조건을 긁는 정규식이
+   *    인원(`\d+명`)부터 돌아서 "11월 20일 3명" 도 `['3명', '11월 20일']` 로 온다.
+   *    그대로 적으면 「3명, 11월 20일」이 되어 자기가 말한 차례와 어긋난다.
+   */
+  it('무시한 조건은 날짜를 먼저 적는다', async () => {
+    const body = await askUntilCard(ctx.app, '오사카 관광지 11월 20일 3명 추천해줘');
+    const notice = noticeOf(body);
+
+    expect(notice).toContain('요청하신 조건(11월 20일, 3명)은 관광지 목록에 반영되지 않았어요');
   });
 
   /**
@@ -622,7 +633,7 @@ describe('POST /api/v1/kakao/router', () => {
       );
 
       const tail = res.body.template.outputs[2].textCard.description as string;
-      const example = /「(.+?)」/s.exec(tail)![1];
+      const example = /‘(.+?)’/s.exec(tail)![1];
       expect(example).toContain('서울에서 도쿄 항공권');
 
       // 예문을 그대로 보내면 되묻기가 아니라 평소 경로를 타야 한다.
@@ -674,7 +685,7 @@ describe('POST /api/v1/kakao/router', () => {
     const res = await post(ctx.app, kakaoPayload('서울 항공권 찾아줘'));
 
     expect(textOf(res.body)).toContain('서울 기준으로 보니 도착지와 같아요');
-    expect(textOf(res.body)).toContain('「부산에서 서울 항공권」');
+    expect(textOf(res.body)).toContain('‘부산에서 서울 항공권’');
   });
 
   it('공항 없는 출발지는 서울로 바꾸지 않고 다시 묻는다 — "강릉에서 제주"', async () => {
@@ -754,7 +765,7 @@ describe('POST /api/v1/kakao/router', () => {
     const res = await post(ctx.app, kakaoPayload('베트남 여행지 추천해줘'));
     const card = listCardOf(res.body);
 
-    expect(card.header.title).toBe('베트남의 어느 도시를 둘러보고 싶으세요?');
+    expect(card.header.title).toBe('베트남의 어느 도시를 찾으세요?');
     // ⚠️ 예전에는 베트남을 물어도 오사카·도쿄·후쿠오카를 권했다. 딴소리였다.
     expect(card.items.map((i: any) => i.title)).toEqual(['다낭', '하노이', '호치민', '나트랑']);
     // 처음 가는 사람은 도시 이름만 보고 못 고른다.
@@ -774,12 +785,15 @@ describe('POST /api/v1/kakao/router', () => {
 
     expect(outputs).toHaveLength(2);
     const guide = outputs[1].textCard;
-    expect(guide.description).toContain('다른 도시를 찾고 있나요?');
+    expect(guide.description).toContain('찾으시는 도시가 없나요?');
+    // ⚠️ **글이 가리키는 버튼 이름은 버튼 라벨과 같아야 한다.** 없는 버튼을 찾으면 막힌다.
+    expect(guide.description).toContain('아래 @가자고 TST 버튼');
     // 나라와 상관없는 도시를 예로 들면 안내가 아니라 딴소리다.
-    expect(guide.description).toContain('「하롱베이 호텔 추천해줘」');
+    const example = /‘(.+?)’/s.exec(guide.description)![1];
+    expect(example).toBe('하롱베이 호텔 추천해줘');
     // ⚠️ **예문에서 @봇이름 을 뺀다.** 버튼이 멘션을 넣어주는데 예문에도 적어두면
     //    그대로 따라 친 사람의 입력창에 멘션이 두 번 들어간다.
-    expect(guide.description).not.toContain('@가자고');
+    expect(example).not.toContain('@');
     expect(guide.buttons).toEqual([{ label: '@가자고 TST', action: 'mention' }]);
   });
 
@@ -848,12 +862,40 @@ describe('POST /api/v1/kakao/router', () => {
     // ⚠️ 카카오에는 입력창을 미리 채우는 버튼이 없다. 그래서 한 번 되묻고 다음 발화를 받는다.
     const asked = await post(ctx.app, kakaoPayload('호텔 다른 도시'));
     // ⚠️ 멘션을 빼먹으면 봇이 못 듣는다. 안내에 그 방법이 들어가야 한다.
-    expect(textOf(asked.body)).toMatch(/도시 이름을 보내주세요|멘션/);
+    expect(textOf(asked.body)).toMatch(/도시 이름을.*말씀해 주세요|멘션/);
 
     // 사용자가 도시 이름만 보낸다. "다낭" 에는 여행 신호가 없어서 원래는 도움말로 떨어진다.
     const body = await askUntilCard(ctx.app, '다낭');
 
     expect(listCardOf(body).header.title).toContain('다낭');
+  });
+
+  /**
+   * ⚠️ **예시 도시는 물어본 나라에서 고른다.** 예전에는 나라와 상관없이 「예) 다낭」이
+   *    고정으로 붙어서, 태국을 묻는 사람에게 베트남 도시를 권했다 — 되묻기가 아니라
+   *    딴소리이고, 시킨 대로 "다낭" 을 치면 태국이 아닌 곳으로 간다.
+   */
+  it('되묻기 예문은 물어본 나라의 도시로 든다', async () => {
+    await post(ctx.app, kakaoPayload('태국 관광지 추천해줘', { userKey: 'th' }));
+
+    const res = await post(ctx.app, kakaoPayload('다른 도시', { userKey: 'th' }));
+    const text = textOf(res.body);
+
+    expect(text).toContain('태국의 어느 도시를 찾으세요?');
+    expect(text).toContain('치앙마이');
+    expect(text).not.toContain('다낭');
+  });
+
+  /**
+   * ⚠️ **같은 안내를 두 번 내보내면 봇이 안 들은 것처럼 보인다.** 나라를 또 말한 사람은
+   *    바로 앞 턴에서 예문까지 달린 안내를 이미 봤다. 두 번째는 묻는 말만 남긴다.
+   */
+  it('나라를 또 말하면 두 번째 되묻기는 짧게 간다', async () => {
+    await post(ctx.app, kakaoPayload('관광지 다른 도시', { userKey: 'jp' }));
+
+    const res = await post(ctx.app, kakaoPayload('일본', { userKey: 'jp' }));
+
+    expect(textOf(res.body)).toBe('어느 도시의 관광지를 찾으세요?\n도시 이름을 말씀해 주세요.');
   });
 
   it('멘션만 온 발화도 되묻기를 이어간다 — 버튼이 전송돼 버려도 대화가 안 끊긴다', async () => {
@@ -882,7 +924,7 @@ describe('POST /api/v1/kakao/router', () => {
 
     const res = await post(ctx.app, kakaoPayload('일본여행지'));
 
-    expect(listCardOf(res.body).header.title).toBe('일본의 어느 도시를 둘러보고 싶으세요?');
+    expect(listCardOf(res.body).header.title).toBe('일본의 어느 도시를 찾으세요?');
   });
 
   it('되묻기 상태여도 지명 같지 않은 말은 받지 않는다', async () => {

@@ -161,12 +161,12 @@ flowchart LR
     <div class="case">
       <div class="left"><div class="label">도착지가 없을 때</div><div class="says"><span>항공권 찾아줘</span><span>비행기표 알아봐줘</span><small>예시 문장과 [@가자고] 버튼이 나갑니다. 버튼을 누르면 입력창에 멘션이 들어갑니다.</small></div></div>
       <div class="chat"><div class="ava">가</div><div class="stack"><div class="bubble">어느 도시의 항공권을 찾으세요?
-아래 버튼을 누르고 「오사카 항공권 찾아줘」처럼 보내주세요.</div><div class="card"><div class="tc">가자고에게 이어서 말하기</div><div class="btns"><span>@가자고</span></div></div></div></div>
+아래 @가자고 버튼을 누르고 ‘오사카 항공권 찾아줘’처럼 말씀해 주세요.</div><div class="card"><div class="tc">가자고에게 이어서 말하기</div><div class="btns"><span>@가자고</span></div></div></div></div>
     </div>
     <div class="case">
       <div class="left"><div class="label">나라만 말했을 때</div><div class="says"><span>일본 항공권</span><span>베트남 비행기</span><small>인기 도시 4곳 중 하나를 누르면 「서울에서 도쿄 항공권 찾아줘」가 전송돼 ①로 갑니다. 목록에 없는 도시는 아래 카드의 버튼으로 직접 보냅니다.</small></div></div>
-      <div class="chat"><div class="ava">가</div><div class="stack"><div class="card"><div class="card-h">일본의 어느 도시로 가시나요?</div><div class="row"><div><b>도쿄</b><small>신주쿠 · 시부야</small></div></div><div class="row"><div><b>오사카</b><small>난바 · 우메다</small></div></div><div class="row"><div><b>후쿠오카</b><small>하카타 · 텐진</small></div></div><div class="row"><div><b>…</b><small>1곳 더</small></div></div></div><div class="card"><div class="tc">다른 도시를 찾고 있나요?
-아래 버튼을 누르고 「서울에서 삿포로 항공권 찾아줘」처럼 보내주세요.</div><div class="btns"><span>@가자고</span></div></div></div></div>
+      <div class="chat"><div class="ava">가</div><div class="stack"><div class="card"><div class="card-h">일본의 어느 도시로 가시나요?</div><div class="row"><div><b>도쿄</b><small>신주쿠 · 시부야</small></div></div><div class="row"><div><b>오사카</b><small>난바 · 우메다</small></div></div><div class="row"><div><b>후쿠오카</b><small>하카타 · 텐진</small></div></div><div class="row"><div><b>…</b><small>1곳 더</small></div></div></div><div class="card"><div class="tc">찾으시는 도시가 없나요?
+아래 @가자고 버튼을 누르고 ‘서울에서 삿포로 항공권 찾아줘’처럼 말씀해 주세요.</div><div class="btns"><span>@가자고</span></div></div></div></div>
     </div>
     <p class="next"><b>다음:</b> 둘 다 5분 안에 「@가자고 다낭」처럼 지명만 답해도 이어집니다. 나라를 또 말하면 「베트남 어디로 가세요?」로 한 번 더 묻습니다.</p>
   </article>
@@ -205,7 +205,7 @@ flowchart LR
 
 <section class="watch">
   <h2>알아두면 좋은 동작</h2>
-  <ul><li><b>항공권은 「찾고 있어요」와 「검색 안 됨」이 없습니다.</b> AI 를 부르지 않고 링크만 만들어서 늘 바로 답합니다. 의도 해석에 모델이 필요한 문장만 3.5초를 넘겨 「아직 정리 중이에요 🔍」가 날 수 있습니다.</li><li><b>도시를 두 개 말하면 앞이 출발지입니다.</b> 「오사카 도쿄 항공권」 → 오사카→도쿄. 「에서」를 붙이면 그쪽이 출발지가 됩니다.</li><li><b>만료된 링크를 누르면</b> 「링크 정보를 불러오지 못했어요 · 잠시 후 다시 열어보시거나, 가자고에게 같은 내용을 다시 요청해 주세요.」 페이지가 뜹니다.</li></ul>
+  <ul><li><b>항공권은 「찾고 있어요」와 「검색 안 됨」이 없습니다.</b> AI 를 부르지 않고 링크만 만들어서 늘 바로 답합니다. 의도 해석에 모델이 필요한 문장만 3.5초를 넘겨 「아직 정리 중이에요.」가 날 수 있습니다.</li><li><b>도시를 두 개 말하면 앞이 출발지입니다.</b> 「오사카 도쿄 항공권」 → 오사카→도쿄. 「에서」를 붙이면 그쪽이 출발지가 됩니다.</li><li><b>만료된 링크를 누르면</b> 「링크 정보를 불러오지 못했어요 · 잠시 후 다시 열어보시거나, 가자고에게 같은 내용을 다시 요청해 주세요.」 페이지가 뜹니다.</li></ul>
 </section>
 
 <section class="more">
